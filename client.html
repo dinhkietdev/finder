@@ -34,3 +34,55 @@
         
         .image-container { position: relative; width: 100%; height: 220px; background: #000; cursor: pointer; }
         .image-container img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; transition: opacity 0.3s
+            :root { --bg-dark: #09090b; --bg-card: #18181b; --text-main: #f8fafc; --accent: #3b82f6; }
+        body { background: var(--bg-dark); color: var(--text-main); }
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 24px; padding: 20px; }
+        .photo-card { background: var(--bg-card); border-radius: 12px; overflow: hidden; }
+        .image-container img { width: 100%; height: 250px; object-fit: cover; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand-title">FINDERPICTURE</div>
+    </header>
+
+    <div class="gallery-container">
+        <div class="gallery-grid" id="gallery">
+            <p style="text-align:center;">⏳ Đang tải ảnh từ Server...</p>
+        </div>
+    </div>
+
+    <script>
+        // CẤU HÌNH ĐỊA CHỈ SERVER CỦA BẠN TẠI ĐÂY
+        const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
+        const urlParams = new URLSearchParams(window.location.search);
+        const folderId = urlParams.get('id');
+
+        async function loadGallery() {
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const gallery = document.getElementById('gallery');
+                    gallery.innerHTML = '';
+                    data.files.forEach(file => {
+                        gallery.innerHTML += `
+                            <div class="photo-card">
+                                <div class="image-container">
+                                    <img src="${file.thumbnail}" alt="${file.shortName}">
+                                </div>
+                                <div style="padding:10px;">${file.shortName}</div>
+                            </div>
+                        `;
+                    });
+                }
+            } catch (e) {
+                document.getElementById('gallery').innerHTML = "❌ Không thể kết nối tới Server.";
+            }
+        }
+
+        loadGallery();
+    </script>
+</body>
+</html>
