@@ -15,6 +15,11 @@ app.use((req, res, next) => {
     next();
 });
 
+// THÊM ĐOẠN NÀY ĐỂ XỬ LÝ ĐƯỜNG DẪN GỐC
+app.get('/', (req, res) => {
+    res.send('🚀 Hệ thống Server Cloud của FinderPicture Studio đang hoạt động ổn định!');
+});
+
 const TOKEN_PATH = path.join(__dirname, 'session-token.json');
 const DB_PATH = path.join(__dirname, 'database.json'); 
 
