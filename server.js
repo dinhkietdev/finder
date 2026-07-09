@@ -1,0 +1,177 @@
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const { google } = require('googleapis');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(__dirname));
+
+app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    next();
+});
+
+const TOKEN_PATH = path.join(__dirname, 'session-token.json');
+const DB_PATH = path.join(__dirname, 'database.json'); 
+
+let likedImagesDatabase = {};
+let albumCacheDatabase = {}; 
+let albumSettingsDatabase = {}; 
+let bannedAlbums = [];
+let finalizedDatabase = {}; 
+
+if (fs.existsSync(DB_PATH)) {
+    try { 
+        const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); 
+        likedImagesDatabase = db.likedImagesDatabase || {};
+        albumSettingsDatabase = db.albumSettingsDatabase || {};
+        bannedAlbums = db.bannedAlbums || [];
+        finalizedDatabase = db.finalizedDatabase || {};
+    } catch (e) {}
+}
+
+function saveDB() {
+    try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
+}
+
+function getOAuth2Client() {
+    const credentialsPath = path.join(__dirname, 'oauth-credentials.json');
+    if (!fs.existsSync(credentialsPath)) return null;
+    const content = fs.readFileSync(credentialsPath, 'utf8');
+    const credentials = JSON.parse(content);
+    const { client_id, client_secret } = credentials.installed || credentials.web;
+    return new google.auth.OAuth2(client_id, client_secret);
+}
+
+function getStoredTokens() {
+    if (fs.existsSync(TOKEN_PATH)) return JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+    return null;
+}
+
+app.post('/api/auth/save-token', (req, res) => {
+    const { tokens } = req.body;
+    if (!tokens) return res.status(400).json({ error: "Thiếu Token" });
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
+    res.json({ success: true });
+});
+
+app.post('/api/album/:folderId/settings', (req, res) => {
+    const { folderId } = req.params;
+    const { isEnabled, text, maxSelections } = req.body;
+    
+    if(!albumSettingsDatabase[folderId]) {
+        albumSettingsDatabase[folderId] = { 
+            isEnabled: isEnabled !== undefined ? isEnabled : true, 
+            text: text || "FINDERPICTURE STUDIO", 
+            maxSelections: parseInt(maxSelections) || 0 
+        };
+    } else {
+        if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
+        if (text !== undefined) albumSettingsDatabase[folderId].text = text;
+        if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = parseInt(maxSelections) || 0;
+    }
+    saveDB();
+    res.json({ success: true });
+});
+
+app.post('/api/album/:folderId/finalize', (req, res) => {
+    const { folderId } = req.params;
+    finalizedDatabase[folderId] = true;
+    saveDB();
+    res.json({ success: true });
+});
+
+app.delete('/api/album/:folderId', (req, res) => {
+    const { folderId } = req.params;
+    if (!bannedAlbums.includes(folderId)) bannedAlbums.push(folderId);
+    delete albumCacheDatabase[folderId];
+    delete likedImagesDatabase[folderId];
+    delete albumSettingsDatabase[folderId];
+    delete finalizedDatabase[folderId];
+    saveDB();
+    res.json({ success: true, message: "Album đã bị hủy!" });
+});
+
+app.delete('/api/album/flush-all/data', (req, res) => {
+    albumCacheDatabase = {}; likedImagesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
+    saveDB();
+    res.json({ success: true, message: "All data cleared" });
+});
+
+app.get('/api/album/:folderId', async (req, res) => {
+    try {
+        let { folderId } = req.params;
+        if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
+
+        const currentAlbumLikes = likedImagesDatabase[folderId] || {};
+        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0 };
+        const isFinalized = !!finalizedDatabase[folderId];
+
+        if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0) {
+            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+        }
+
+        const tokens = getStoredTokens();
+        if (!tokens) return res.status(401).json({ error: "Chưa có Token xác thực." });
+        const oauth2Client = getOAuth2Client();
+        oauth2Client.setCredentials(tokens);
+        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+        const response = await drive.files.list({
+            q: `'${folderId}' in parents and trashed = false`,
+            includeItemsFromAllDrives: true, supportsAllDrives: true,
+            fields: 'files(id, name, webContentLink, thumbnailLink)',
+            pageSize: 500
+        });
+
+        const files = (response.data.files || []).map(file => {
+            const nameWithoutExt = path.basename(file.name, path.extname(file.name));
+            let thumb = file.thumbnailLink || file.webContentLink || '';
+            if (thumb.includes('=s220')) thumb = thumb.replace('=s220', '=s800');
+            else if (file.thumbnailLink) thumb += '=s800';
+            return { id: file.id, fullName: file.name, shortName: nameWithoutExt, thumbnail: thumb, originalUrl: file.webContentLink };
+        });
+
+        albumCacheDatabase[folderId] = files;
+        res.json({ success: true, folderId, files, liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/album/:folderId/toggle-like', (req, res) => {
+    const { folderId } = req.params;
+    if (finalizedDatabase[folderId]) return res.status(403).json({ error: "Album đã chốt, không thể thay đổi." }); 
+    const { fileName, isLiked, note } = req.body;
+    if (!likedImagesDatabase[folderId]) likedImagesDatabase[folderId] = {};
+    likedImagesDatabase[folderId][fileName] = { isLiked, note: note || "" };
+    saveDB();
+    res.json({ success: true });
+});
+
+app.get('/api/album/:folderId/liked/all', (req, res) => {
+    const { folderId } = req.params;
+    const currentAlbumLikes = likedImagesDatabase[folderId] || {};
+    const isFinalized = !!finalizedDatabase[folderId];
+    const likedFilesMap = {};
+    
+    Object.keys(currentAlbumLikes).forEach(key => {
+        const item = currentAlbumLikes[key];
+        const isLiked = typeof item === 'object' ? item.isLiked : item;
+        if (isLiked) likedFilesMap[key] = typeof item === 'object' ? item.note : "";
+    });
+    
+    res.json({ success: true, folderId, liked_files: likedFilesMap, isFinalized });
+});
+
+const PORT = process.env.PORT || 5000;
+
+// Tránh lỗi chiếm dụng cổng khi chạy trên Vercel
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server FinderPicture chạy tại cổng ${PORT}`));
+}
+
+// Bắt buộc phải có dòng này để Vercel đọc được API
+module.exports = app;
