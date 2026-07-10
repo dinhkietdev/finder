@@ -78,7 +78,6 @@
         .thumb-btn img { width: 92px; height: 92px; object-fit: cover; display: block; }
         .thumb-btn.active { border-color: var(--accent); }
         .thumb-btn.selected::after { content: '✓'; position: absolute; color: #fff; background: rgba(34,197,94,0.95); padding: 4px 6px; border-radius: 999px; font-size: 10px; margin: 6px; }
-        .compare-mark { position:absolute; top:5px; left:5px; z-index:2; display:grid; place-items:center; width:20px; height:20px; border-radius:50%; background:#3b82f6; color:#fff; font-size:11px; font-weight:800; box-shadow:0 2px 6px rgba(0,0,0,.4); }
 
         .finalized-banner { display: none; padding: 12px 16px; border-radius: 12px; background: linear-gradient(90deg, #7c3aed, #6d28d9); color: white; text-align: center; font-weight: 700; }
 
@@ -220,8 +219,7 @@
             currentIndex: 0,
             isLoading: false,
             maxSelections: 0,
-            isFinalized: false,
-            compareImages: []
+            isFinalized: false
         };
 
         const elements = {
@@ -230,22 +228,6 @@
             selectedImagesSection: document.getElementById('selectedImagesSection'),
             jumpToCurrent: document.getElementById('jumpToCurrent'),
             jumpToSelected: document.getElementById('jumpToSelected'),
-            compareBtn: document.getElementById('compareBtn'),
-            compareModal: document.getElementById('compareModal'),
-            compareStage: document.getElementById('compareStage'),
-            compareImageA: document.getElementById('compareImageA'),
-            compareImageB: document.getElementById('compareImageB'),
-            compareMobileA: document.getElementById('compareMobileA'),
-            compareMobileB: document.getElementById('compareMobileB'),
-            compareLabelA: document.getElementById('compareLabelA'),
-            compareLabelB: document.getElementById('compareLabelB'),
-            compareTitle: document.getElementById('compareTitle'),
-            compareSlider: document.getElementById('compareSlider'),
-            compareSplit: document.getElementById('compareSplit'),
-            compareZoomLabel: document.getElementById('compareZoomLabel'),
-            compareSwapBtn: document.getElementById('compareSwapBtn'),
-            compareResetBtn: document.getElementById('compareResetBtn'),
-            compareCloseBtn: document.getElementById('compareCloseBtn'),
             photoName: document.getElementById('photoName'),
             photoIndexLabel: document.getElementById('photoIndexLabel'),
             selectedCountLabel: document.getElementById('selectedCountLabel'),
@@ -285,13 +267,6 @@
         let panY = 0;
         let panPointer = null;
         const activePointers = new Map();
-        let compareZoom = 1;
-        let comparePanX = 0;
-        let comparePanY = 0;
-        let comparePanPointer = null;
-        let comparePinchDistance = 0;
-        let comparePinchScale = 1;
-        const comparePointers = new Map();
 
         function setMessage(message, type = 'info') {
             elements.statusMessage.textContent = message;
@@ -316,9 +291,6 @@
         }
 
         function render() {
-            const compareCount = state.compareImages.length;
-            elements.compareBtn.textContent = compareCount === 2 ? '⇄ Mở so sánh 2 ảnh' : `⇄ Chọn ảnh để so sánh (${compareCount}/2)`;
-            elements.compareBtn.classList.toggle('active', compareCount > 0);
             if (!state.images.length) {
                 elements.mainImage.src = '';
                 elements.photoName.textContent = 'Không có ảnh nào';
@@ -368,12 +340,6 @@
                 if (index === state.currentIndex) thumbBtn.classList.add('active');
                 if (img.selected) thumbBtn.classList.add('selected');
                 thumbBtn.innerHTML = `<img loading="lazy" decoding="async" src="${img.thumbnail || img.originalUrl || ''}" alt="${img.shortName || img.fullName || 'Ảnh'}">`;
-                const compareIndex = state.compareImages.findIndex(item => item.id === img.id);
-                if (compareIndex >= 0) {
-                    const marker = document.createElement('span');
-                    marker.className = 'compare-mark'; marker.textContent = compareIndex === 0 ? 'A' : 'B';
-                    thumbBtn.appendChild(marker);
-                }
                 thumbBtn.onclick = () => {
                     state.currentIndex = index;
                     render();
@@ -463,75 +429,6 @@
             panPointer = null;
         }
 
-        function compareImageUrl(image) {
-            return image.lightbox || image.preview || image.thumbnail || image.originalUrl || '';
-        }
-
-        function applyCompareView() {
-            compareZoom = Math.max(1, Math.min(4, compareZoom));
-            if (compareZoom === 1) { comparePanX = 0; comparePanY = 0; }
-            const bounds = elements.compareStage.getBoundingClientRect();
-            const maxX = Math.max(0, bounds.width * (compareZoom - 1) / 2);
-            const maxY = Math.max(0, bounds.height * (compareZoom - 1) / 2);
-            comparePanX = Math.max(-maxX, Math.min(maxX, comparePanX));
-            comparePanY = Math.max(-maxY, Math.min(maxY, comparePanY));
-            const transform = `translate(${comparePanX}px, ${comparePanY}px) scale(${compareZoom})`;
-            [elements.compareImageA, elements.compareImageB, elements.compareMobileA, elements.compareMobileB]
-                .forEach(image => image.style.transform = transform);
-            elements.compareZoomLabel.textContent = `${Math.round(compareZoom * 100)}%`;
-        }
-
-        function updateCompareSlider() {
-            const value = Number(elements.compareSlider.value);
-            elements.compareMobileA.style.clipPath = `inset(0 ${100 - value}% 0 0)`;
-            elements.compareSplit.style.left = `${value}%`;
-        }
-
-        function resetCompareView() {
-            compareZoom = 1; comparePanX = 0; comparePanY = 0;
-            elements.compareSlider.value = 50;
-            updateCompareSlider(); applyCompareView();
-        }
-
-        function openCompareMode() {
-            if (state.compareImages.length !== 2) {
-                setMessage('Chọn hai ảnh để bắt đầu so sánh.', 'error');
-                return;
-            }
-            const [imageA, imageB] = state.compareImages;
-            const urlA = compareImageUrl(imageA); const urlB = compareImageUrl(imageB);
-            elements.compareImageA.src = urlA; elements.compareMobileA.src = urlA;
-            elements.compareImageB.src = urlB; elements.compareMobileB.src = urlB;
-            elements.compareLabelA.textContent = `A · ${imageA.shortName || imageA.fullName}`;
-            elements.compareLabelB.textContent = `B · ${imageB.shortName || imageB.fullName}`;
-            elements.compareTitle.textContent = 'So sánh ảnh A và B';
-            elements.compareModal.classList.add('open');
-            elements.compareModal.setAttribute('aria-hidden', 'false');
-            resetCompareView();
-        }
-
-        function closeCompareMode() {
-            elements.compareModal.classList.remove('open');
-            elements.compareModal.setAttribute('aria-hidden', 'true');
-            comparePointers.clear(); comparePanPointer = null; comparePinchDistance = 0;
-        }
-
-        function toggleCompareCurrent() {
-            const current = getCurrentImage();
-            if (!current) return;
-            const existingIndex = state.compareImages.findIndex(image => image.id === current.id);
-            if (existingIndex >= 0) {
-                state.compareImages.splice(existingIndex, 1);
-                render(); setMessage('Đã bỏ ảnh này khỏi so sánh.');
-                return;
-            }
-            if (state.compareImages.length === 2) return openCompareMode();
-            state.compareImages.push(current);
-            render();
-            if (state.compareImages.length === 2) openCompareMode();
-            else setMessage('Đã chọn ảnh A. Chuyển sang ảnh khác rồi bấm So sánh để chọn ảnh B.', 'success');
-        }
-
         function showRobotStatus(message, repeat = false) {
             window.clearTimeout(robotMessageTimeout);
             window.clearInterval(robotMessageInterval);
@@ -560,54 +457,6 @@
         }
 
         elements.mainImage.addEventListener('click', openLightbox);
-        elements.compareBtn.addEventListener('click', toggleCompareCurrent);
-        elements.compareCloseBtn.addEventListener('click', closeCompareMode);
-        elements.compareResetBtn.addEventListener('click', resetCompareView);
-        elements.compareSwapBtn.addEventListener('click', () => {
-            if (state.compareImages.length !== 2) return;
-            state.compareImages.reverse();
-            openCompareMode();
-        });
-        elements.compareSlider.addEventListener('input', updateCompareSlider);
-        elements.compareStage.addEventListener('wheel', event => {
-            event.preventDefault();
-            compareZoom += event.deltaY < 0 ? 0.25 : -0.25;
-            applyCompareView();
-        }, { passive: false });
-        elements.compareStage.addEventListener('dblclick', () => {
-            compareZoom = compareZoom > 1 ? 1 : 2.5;
-            applyCompareView();
-        });
-        elements.compareStage.addEventListener('pointerdown', event => {
-            if (event.target.closest('input, button')) return;
-            elements.compareStage.setPointerCapture?.(event.pointerId);
-            comparePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-            if (comparePointers.size === 2) {
-                comparePanPointer = null;
-                const [a, b] = [...comparePointers.values()];
-                comparePinchDistance = Math.hypot(a.x - b.x, a.y - b.y);
-                comparePinchScale = compareZoom;
-            } else if (compareZoom > 1) comparePanPointer = event.pointerId;
-        });
-        elements.compareStage.addEventListener('pointermove', event => {
-            if (!comparePointers.has(event.pointerId)) return;
-            const previous = comparePointers.get(event.pointerId);
-            comparePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-            if (comparePointers.size === 2 && comparePinchDistance) {
-                const [a, b] = [...comparePointers.values()];
-                compareZoom = comparePinchScale * (Math.hypot(a.x - b.x, a.y - b.y) / comparePinchDistance);
-                applyCompareView();
-            } else if (comparePanPointer === event.pointerId && compareZoom > 1) {
-                comparePanX += event.clientX - previous.x;
-                comparePanY += event.clientY - previous.y;
-                applyCompareView();
-            }
-        });
-        ['pointerup', 'pointercancel'].forEach(type => elements.compareStage.addEventListener(type, event => {
-            comparePointers.delete(event.pointerId);
-            if (comparePanPointer === event.pointerId) comparePanPointer = null;
-            if (comparePointers.size < 2) comparePinchDistance = 0;
-        }));
         elements.lightboxImage.addEventListener('error', () => {
             const fallback = elements.lightboxImage.dataset.fallback;
             if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
@@ -839,7 +688,6 @@
         elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
         elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && elements.compareModal.classList.contains('open')) return closeCompareMode();
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();
             if (event.key === 'ArrowLeft') prevImage();
