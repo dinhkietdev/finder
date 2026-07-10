@@ -369,11 +369,13 @@ async function inspectImageQuality(folderPath, file) {
 
     let sum = 0;
     let darkPixels = 0;
-    let brightPixels = 0;
+    let clippedPixels = 0;
+    let nearClippedPixels = 0;
     for (const value of data) {
         sum += value;
         if (value < 28) darkPixels++;
-        if (value > 235) brightPixels++;
+        if (value >= 250) clippedPixels++;
+        if (value >= 242) nearClippedPixels++;
     }
 
     // Trung bình độ lớn Laplacian: ảnh càng ít chi tiết/cạnh, giá trị càng thấp.
@@ -392,7 +394,8 @@ async function inspectImageQuality(folderPath, file) {
         file,
         brightness: Math.round(sum / data.length),
         darkRatio: darkPixels / data.length,
-        brightRatio: brightPixels / data.length,
+        highlightClipRatio: clippedPixels / data.length,
+        nearHighlightRatio: nearClippedPixels / data.length,
         sharpness: Number((laplacianTotal / Math.max(samples, 1)).toFixed(1))
     };
     qualityCache.set(cacheKey, result);
@@ -423,7 +426,11 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }
     const results = metrics.map(item => {
         const issues = [];
         if (item.brightness < 58 || item.darkRatio > 0.62) issues.push('Thiếu sáng');
-        if (item.brightness > 202 || item.brightRatio > 0.32) issues.push('Có nguy cơ cháy sáng');
+        // Chỉ cảnh báo khi có đủ vùng sáng bị mất chi tiết, không chỉ vì ảnh
+        // có nền trắng hoặc ánh sáng mạnh. Hai ngưỡng giúp giảm cảnh báo giả.
+        if (item.highlightClipRatio > 0.025 && item.brightness > 205) issues.push('Cháy sáng');
+        else if ((item.highlightClipRatio > 0.008 && item.brightness > 190) ||
+            (item.nearHighlightRatio > 0.16 && item.brightness > 198)) issues.push('Có nguy cơ cháy sáng');
         if (item.sharpness <= softImageThreshold && item.sharpness < 13) issues.push('Có thể out nét');
         return { ...item, issues, score: Math.max(0, 100 - issues.length * 28) };
     });
