@@ -40,7 +40,8 @@
       {
         "provider": "github",
         "owner": "dinhkietdev",
-        "repo": "finder"
+        "repo": "finder",
+        "releaseType": "release"
       }
     ],
     "nsis": {
