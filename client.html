@@ -101,6 +101,47 @@
         .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
         .robot-button img { width:100%; height:100%; object-fit:contain; border-radius:50%; image-rendering:auto; display:block; }
 
+        /* Finder client visual system — quiet, editorial, touch-first */
+        :root { --bg-dark:#070b14; --bg-card:rgba(16,22,35,.88); --bg-soft:#182235; --text-main:#f7f9fc; --text-muted:#9aa9c0; --accent:#7c8cff; --accent-2:#3bd9a0; --border:rgba(181,198,224,.14); --surface:rgba(255,255,255,.055); }
+        body { min-height:100vh; background:radial-gradient(circle at 12% -10%,rgba(124,140,255,.23),transparent 34%),radial-gradient(circle at 88% 0%,rgba(59,217,160,.12),transparent 28%),var(--bg-dark); letter-spacing:.01em; }
+        .panel { background:var(--bg-card); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); box-shadow:0 18px 55px rgba(0,0,0,.24); }
+        .header-panel { border-radius:24px; }
+        .brand-title { font-size:30px; letter-spacing:.18em; background:linear-gradient(120deg,#fff 20%,#bec7ff 75%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+        .subtext { font-size:12px; }
+        .stat-chip { min-width:116px; background:var(--surface); border-color:var(--border); }
+        .stat-chip strong { font-variant-numeric:tabular-nums; }
+        .viewer-panel { padding:18px; }
+        .viewer-shell { min-height:clamp(340px,62vh,670px); background:linear-gradient(135deg,#080c13,#111a2a); isolation:isolate; }
+        .viewer-shell.loading::after { content:''; position:absolute; inset:0; z-index:1; background:linear-gradient(100deg,transparent 25%,rgba(255,255,255,.09) 48%,transparent 70%); animation:shimmer 1.15s infinite; pointer-events:none; }
+        .viewer-shell.loading::before { content:'Đang tối ưu ảnh xem trước…'; position:absolute; z-index:2; bottom:18px; left:50%; transform:translateX(-50%); padding:8px 12px; border-radius:999px; background:rgba(7,11,20,.72); color:#dbe5ff; font-size:12px; }
+        @keyframes shimmer { from { transform:translateX(-100%); } to { transform:translateX(100%); } }
+        .viewer-shell img { transition:opacity .18s ease; }
+        .viewer-shell.loading img { opacity:.28; }
+        .viewer-overlay button { width:48px; height:48px; border:1px solid rgba(255,255,255,.18); background:rgba(8,12,20,.56); backdrop-filter:blur(8px); }
+        .photo-meta { padding:16px 2px 8px; }
+        .photo-name { font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:50vw; }
+        .photo-badge { border:1px solid rgba(255,255,255,.12); font-weight:700; }
+        .btn { min-height:44px; border-radius:13px; letter-spacing:.01em; }
+        .btn-primary { background:linear-gradient(135deg,#8a98ff,#6272f5); box-shadow:0 8px 22px rgba(98,114,245,.24); }
+        .btn-success { background:linear-gradient(135deg,#44dda7,#1fbb83); box-shadow:0 8px 22px rgba(31,187,131,.2); }
+        .btn-warning { background:var(--surface); color:#f8d89b; border:1px solid rgba(245,158,11,.25); }
+        .sidebar-panel { background:rgba(14,20,32,.72); }
+        .selection-item { background:rgba(255,255,255,.045); border-color:var(--border); }
+        .selection-item::before { content:'✓'; display:inline-grid; place-items:center; float:left; width:20px; height:20px; margin:0 8px 4px 0; border-radius:50%; background:rgba(59,217,160,.2); color:#80f1c7; font-size:12px; }
+        .gallery-panel { padding:15px 16px 18px; }
+        .gallery-heading { display:flex; justify-content:space-between; align-items:center; margin:0 2px 12px; font-size:13px; color:var(--text-muted); }
+        .gallery-heading strong { color:var(--text-main); font-size:15px; }
+        .thumb-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; overflow:visible; padding:0; }
+        .thumb-btn { width:100%; aspect-ratio:1; border-radius:14px; border:1px solid var(--border); background:#0d1320; transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease; }
+        .thumb-btn:hover { transform:translateY(-2px); border-color:rgba(135,150,255,.9); }
+        .thumb-btn img { width:100%; height:100%; }
+        .thumb-btn.active { border-color:#9da8ff; box-shadow:0 0 0 3px rgba(124,140,255,.22); }
+        .thumb-btn.selected::after { top:6px; right:6px; margin:0; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+        .image-lightbox { background:rgba(3,6,12,.97); }
+        .lightbox-toolbar { top:max(14px,env(safe-area-inset-top)); right:14px; }
+        .lightbox-toolbar button { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); border-color:rgba(255,255,255,.18); }
+        .zoom-tip { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); }
+
         @media (max-width: 900px) {
             .content-grid { grid-template-columns: 1fr; }
             .header-panel { grid-template-columns:1fr; justify-items:center; text-align:center; }
@@ -125,6 +166,56 @@
             .thumb-btn, .thumb-btn img { width:74px; height:74px; }
             .help-robot { right:14px; bottom:14px; }
             .robot-button { width:54px; height:54px; font-size:28px; }
+            .header-panel { border-radius:18px; }
+            .intro { order:-1; }
+            .stats { width:100%; display:grid; grid-template-columns:1fr 1fr; }
+            .stat-chip { min-width:0; }
+            .viewer-panel { padding:10px; }
+            .viewer-shell { min-height:56vh; border-radius:16px; }
+            .viewer-overlay button { width:44px; height:44px; }
+            .photo-meta { padding:13px 4px 5px; }
+            .photo-name { max-width:58vw; }
+            .hint { font-size:12px; }
+            .action-row { position:sticky; bottom:8px; z-index:8; padding:9px; margin:8px -2px 0; border:1px solid var(--border); border-radius:16px; background:rgba(10,15,26,.88); backdrop-filter:blur(15px); }
+            .action-row .btn { min-width:0; }
+            .note-box { min-height:82px; }
+            .gallery-panel { padding:13px 10px 16px; }
+            .thumb-strip { grid-template-columns:repeat(3,1fr); gap:7px; }
+            .thumb-btn { border-radius:11px; }
+            .image-lightbox { align-items:center; }
+            .lightbox-image { max-width:100vw; }
+            .zoom-tip { bottom:max(14px,env(safe-area-inset-bottom)); max-width:calc(100vw - 28px); overflow:hidden; text-overflow:ellipsis; }
+        }
+
+        /* Final client polish: touch-first gallery and clear loading feedback. */
+        html { scroll-behavior:smooth; }
+        body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        button, textarea { -webkit-tap-highlight-color:transparent; }
+        button:focus-visible, textarea:focus-visible { outline:3px solid rgba(124,140,255,.42); outline-offset:3px; }
+        .gallery-panel { overflow:hidden; }
+        .gallery-heading { position:sticky; top:0; z-index:3; padding:5px 2px 12px; background:linear-gradient(var(--bg-card) 72%,transparent); }
+        .gallery-heading span { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
+        .thumb-btn { content-visibility:auto; contain-intrinsic-size:92px; }
+        .thumb-btn img { opacity:0; transition:opacity .22s ease, transform .3s ease; }
+        .thumb-btn img.is-ready { opacity:1; }
+        .thumb-btn::before { content:''; position:absolute; inset:0; background:linear-gradient(110deg,#111a2a 25%,#243149 45%,#111a2a 65%); background-size:220% 100%; animation:thumbShimmer 1.25s linear infinite; }
+        .thumb-btn.is-ready::before { display:none; }
+        .thumb-btn:hover img.is-ready { transform:scale(1.04); }
+        @keyframes thumbShimmer { to { background-position:-220% 0; } }
+        .viewer-shell { touch-action:pan-y; }
+        .viewer-shell img { user-select:none; -webkit-user-drag:none; }
+        .lightbox-loading { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:10px 14px; border-radius:999px; color:#dbe5ff; background:rgba(18,27,43,.86); border:1px solid rgba(255,255,255,.16); font-size:13px; backdrop-filter:blur(12px); }
+        .lightbox-loading.hidden { display:none; }
+        .image-lightbox { overscroll-behavior:contain; }
+        .lightbox-image { user-select:none; -webkit-user-drag:none; }
+        @media (max-width:560px) {
+            body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
+            .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
+            .thumb-btn { min-height:0; contain-intrinsic-size:74px; }
+            .selection-list { scroll-snap-type:y proximity; }
+            .selection-item { scroll-snap-align:start; }
+            .lightbox-toolbar { left:12px; right:12px; justify-content:flex-end; }
+            .lightbox-toolbar button { min-width:44px; min-height:44px; }
         }
     </style>
 </head>
@@ -187,13 +278,15 @@
             </div>
         </div>
 
-        <div class="panel" style="padding: 14px 16px;">
+        <div class="panel gallery-panel">
+            <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
 
     <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
         <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
+        <div id="lightboxLoading" class="lightbox-loading">Đang tải ảnh chất lượng cao…</div>
         <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
         <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
     </div>
@@ -246,6 +339,7 @@
             finalizedBanner: document.getElementById('finalizedBanner'),
             imageLightbox: document.getElementById('imageLightbox'),
             lightboxImage: document.getElementById('lightboxImage'),
+            lightboxLoading: document.getElementById('lightboxLoading'),
             closeLightboxBtn: document.getElementById('closeLightboxBtn'),
             lightboxSelectBtn: document.getElementById('lightboxSelectBtn'),
             lightboxNoteBtn: document.getElementById('lightboxNoteBtn'),
@@ -256,7 +350,8 @@
             helpRobot: document.getElementById('helpRobot'),
             robotButton: document.getElementById('robotButton'),
             robotMessage: document.querySelector('#helpRobot .robot-message'),
-            noteSection: document.getElementById('noteSection')
+            noteSection: document.getElementById('noteSection'),
+            galleryCount: document.getElementById('galleryCount')
         };
         let zoomScale = 1;
         let robotMessageTimeout = null;
@@ -267,6 +362,16 @@
         let panY = 0;
         let panPointer = null;
         const activePointers = new Map();
+        const thumbObserver = 'IntersectionObserver' in window
+            ? new IntersectionObserver(entries => entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const image = entry.target;
+                const button = image.closest('.thumb-btn');
+                image.src = image.dataset.src || '';
+                image.addEventListener('load', () => { image.classList.add('is-ready'); button?.classList.add('is-ready'); }, { once:true });
+                thumbObserver.unobserve(image);
+            }), { rootMargin:'360px 0px' })
+            : null;
 
         function setMessage(message, type = 'info') {
             elements.statusMessage.textContent = message;
@@ -304,7 +409,11 @@
 
             const current = getCurrentImage();
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
-            elements.mainImage.src = imgUrl || '';
+            if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
+                elements.viewerShell.classList.add('loading');
+                elements.mainImage.dataset.imageId = String(current.id || current.fullName);
+                elements.mainImage.src = imgUrl || '';
+            }
             elements.mainImage.decoding = 'async';
             elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
             elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
@@ -316,6 +425,7 @@
             elements.photoStatusBadge.textContent = current.selected ? 'Đã chọn' : 'Chưa chọn';
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
+            elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
             elements.lightboxSelectBtn.textContent = current.selected ? '✓ Đã chọn' : '✓ Chọn';
@@ -339,15 +449,32 @@
                 thumbBtn.className = 'thumb-btn';
                 if (index === state.currentIndex) thumbBtn.classList.add('active');
                 if (img.selected) thumbBtn.classList.add('selected');
-                thumbBtn.innerHTML = `<img loading="lazy" decoding="async" src="${img.thumbnail || img.originalUrl || ''}" alt="${img.shortName || img.fullName || 'Ảnh'}">`;
+                const thumbImg = document.createElement('img');
+                thumbImg.loading = 'lazy';
+                thumbImg.decoding = 'async';
+                thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
+                thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
+                thumbBtn.appendChild(thumbImg);
                 thumbBtn.onclick = () => {
                     state.currentIndex = index;
                     render();
                 };
                 elements.thumbStrip.appendChild(thumbBtn);
+                if (thumbObserver) thumbObserver.observe(thumbImg);
+                else { thumbImg.src = thumbImg.dataset.src; thumbImg.addEventListener('load', () => thumbImg.classList.add('is-ready'), { once:true }); }
             });
 
             renderSelectionList();
+            preloadNearbyImages();
+        }
+
+        function preloadNearbyImages() {
+            [-1, 1, 2].forEach(offset => {
+                const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
+                if (!image?.preview) return;
+                const preload = new Image();
+                preload.src = image.preview;
+            });
         }
 
         function renderSelectionList() {
@@ -414,6 +541,7 @@
             const highResolutionUrl = current.lightbox || `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2200`;
             elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
             elements.lightboxImage.src = highResolutionUrl;
+            elements.lightboxLoading.classList.remove('hidden');
             zoomScale = 1;
             panX = 0; panY = 0; panPointer = null;
             elements.lightboxImage.style.transformOrigin = 'center';
@@ -457,10 +585,14 @@
         }
 
         elements.mainImage.addEventListener('click', openLightbox);
+        elements.mainImage.addEventListener('load', () => elements.viewerShell.classList.remove('loading'));
+        elements.mainImage.addEventListener('error', () => { elements.viewerShell.classList.remove('loading'); setMessage('Không thể tải ảnh xem trước. Hãy thử ảnh khác.', 'error'); });
         elements.lightboxImage.addEventListener('error', () => {
+            elements.lightboxLoading.classList.add('hidden');
             const fallback = elements.lightboxImage.dataset.fallback;
             if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
         });
+        elements.lightboxImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
         elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox) closeLightbox(); });
         elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
