@@ -67,16 +67,47 @@ async function loadPersistentState() {
     const snapshot = await firebaseDb.ref('finderPictureState').once('value');
     const state = snapshot.val();
     if (!state) return;
-    likedImagesDatabase = state.likedImagesDatabase || {};
+    likedImagesDatabase = deserializeLikedImages(state.likedImagesDatabase || {});
     albumSettingsDatabase = state.albumSettingsDatabase || {};
     bannedAlbums = state.bannedAlbums || [];
     finalizedDatabase = state.finalizedDatabase || {};
 }
 
+// Firebase Realtime Database cấm . # $ / [ ] trong key. Tên file ảnh thường
+// có dấu chấm (ví dụ EOSR4592.JPG), nên chỉ mã hóa key khi ghi lên Firebase.
+function serializeLikedImages(likedImages) {
+    return Object.fromEntries(Object.entries(likedImages).map(([folderId, files]) => [
+        folderId,
+        Object.fromEntries(Object.entries(files || {}).map(([fileName, value]) => [
+            `file_${Buffer.from(fileName, 'utf8').toString('base64url')}`,
+            value
+        ]))
+    ]));
+}
+
+function deserializeLikedImages(likedImages) {
+    return Object.fromEntries(Object.entries(likedImages).map(([folderId, files]) => [
+        folderId,
+        Object.fromEntries(Object.entries(files || {}).map(([storedKey, value]) => {
+            if (!storedKey.startsWith('file_')) return [storedKey, value];
+            try {
+                return [Buffer.from(storedKey.slice(5), 'base64url').toString('utf8'), value];
+            } catch (error) {
+                return [storedKey, value];
+            }
+        }))
+    ]));
+}
+
 async function persistState() {
     saveDB();
     if (firebaseDb) {
-        await firebaseDb.ref('finderPictureState').set({ likedImagesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase });
+        await firebaseDb.ref('finderPictureState').set({
+            likedImagesDatabase: serializeLikedImages(likedImagesDatabase),
+            albumSettingsDatabase,
+            bannedAlbums,
+            finalizedDatabase
+        });
     }
 }
 
