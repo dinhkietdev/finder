@@ -4,6 +4,8 @@ const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
+const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getDatabase } = require('firebase-admin/database');
 
 const app = express();
 app.use(cors());
@@ -27,6 +29,24 @@ let albumCacheDatabase = {};
 let albumSettingsDatabase = {}; 
 let bannedAlbums = [];
 let finalizedDatabase = {}; 
+let firebaseDb = null;
+
+// Vercel không giữ được file giữa các lần chạy. Khi cấu hình Firebase, toàn bộ
+// trạng thái album sẽ được lưu bền vững; máy local vẫn có thể dùng database.json.
+try {
+    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
+        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+        : null;
+    const databaseURL = process.env.FIREBASE_DATABASE_URL;
+    if (serviceAccount && databaseURL) {
+        const firebaseApp = getApps().length
+            ? getApps()[0]
+            : initializeApp({ credential: cert(serviceAccount), databaseURL });
+        firebaseDb = getDatabase(firebaseApp);
+    }
+} catch (error) {
+    console.error('Không thể khởi tạo Firebase:', error.message);
+}
 
 if (fs.existsSync(DB_PATH)) {
     try { 
@@ -40,6 +60,24 @@ if (fs.existsSync(DB_PATH)) {
 
 function saveDB() {
     try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
+}
+
+async function loadPersistentState() {
+    if (!firebaseDb) return;
+    const snapshot = await firebaseDb.ref('finderPictureState').once('value');
+    const state = snapshot.val();
+    if (!state) return;
+    likedImagesDatabase = state.likedImagesDatabase || {};
+    albumSettingsDatabase = state.albumSettingsDatabase || {};
+    bannedAlbums = state.bannedAlbums || [];
+    finalizedDatabase = state.finalizedDatabase || {};
+}
+
+async function persistState() {
+    saveDB();
+    if (firebaseDb) {
+        await firebaseDb.ref('finderPictureState').set({ likedImagesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase });
+    }
 }
 
 function getOAuth2Client() {
@@ -85,7 +123,8 @@ app.post('/api/auth/save-token', (req, res) => {
     res.json({ success: true });
 });
 
-app.post('/api/album/:folderId/settings', (req, res) => {
+app.post('/api/album/:folderId/settings', async (req, res) => {
+    await loadPersistentState();
     const { folderId } = req.params;
     const { isEnabled, text, maxSelections } = req.body;
     
@@ -100,36 +139,39 @@ app.post('/api/album/:folderId/settings', (req, res) => {
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = parseInt(maxSelections) || 0;
     }
-    saveDB();
+    await persistState();
     res.json({ success: true });
 });
 
-app.post('/api/album/:folderId/finalize', (req, res) => {
+app.post('/api/album/:folderId/finalize', async (req, res) => {
+    await loadPersistentState();
     const { folderId } = req.params;
     finalizedDatabase[folderId] = true;
-    saveDB();
+    await persistState();
     res.json({ success: true });
 });
 
-app.delete('/api/album/:folderId', (req, res) => {
+app.delete('/api/album/:folderId', async (req, res) => {
+    await loadPersistentState();
     const { folderId } = req.params;
     if (!bannedAlbums.includes(folderId)) bannedAlbums.push(folderId);
     delete albumCacheDatabase[folderId];
     delete likedImagesDatabase[folderId];
     delete albumSettingsDatabase[folderId];
     delete finalizedDatabase[folderId];
-    saveDB();
+    await persistState();
     res.json({ success: true, message: "Album đã bị hủy!" });
 });
 
-app.delete('/api/album/flush-all/data', (req, res) => {
+app.delete('/api/album/flush-all/data', async (req, res) => {
     albumCacheDatabase = {}; likedImagesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
-    saveDB();
+    await persistState();
     res.json({ success: true, message: "All data cleared" });
 });
 
 app.get('/api/album/:folderId', async (req, res) => {
     try {
+        await loadPersistentState();
         let { folderId } = req.params;
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
@@ -171,17 +213,36 @@ app.get('/api/album/:folderId', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/album/:folderId/toggle-like', (req, res) => {
+app.post('/api/album/:folderId/toggle-like', async (req, res) => {
+    await loadPersistentState();
     const { folderId } = req.params;
     if (finalizedDatabase[folderId]) return res.status(403).json({ error: "Album đã chốt, không thể thay đổi." }); 
     const { fileName, isLiked, note } = req.body;
+    if (!fileName || typeof fileName !== 'string') return res.status(400).json({ error: "Tên ảnh không hợp lệ." });
     if (!likedImagesDatabase[folderId]) likedImagesDatabase[folderId] = {};
+
+    // Luôn kiểm tra ở server để không thể vượt giới hạn chỉ bằng cách gọi API trực tiếp.
+    const maxSelections = Number(albumSettingsDatabase[folderId]?.maxSelections) || 0;
+    const existingLike = likedImagesDatabase[folderId][fileName];
+    const wasLiked = typeof existingLike === 'object' ? !!existingLike?.isLiked : !!existingLike;
+    if (isLiked && !wasLiked && maxSelections > 0) {
+        const selectedCount = Object.values(likedImagesDatabase[folderId])
+            .filter(item => (typeof item === 'object' ? item.isLiked : item)).length;
+        if (selectedCount >= maxSelections) {
+            return res.status(400).json({
+                success: false,
+                code: 'SELECTION_LIMIT_REACHED',
+                error: `Album này chỉ cho phép chọn tối đa ${maxSelections} ảnh.`
+            });
+        }
+    }
     likedImagesDatabase[folderId][fileName] = { isLiked, note: note || "" };
-    saveDB();
+    await persistState();
     res.json({ success: true });
 });
 
-app.get('/api/album/:folderId/liked/all', (req, res) => {
+app.get('/api/album/:folderId/liked/all', async (req, res) => {
+    await loadPersistentState();
     const { folderId } = req.params;
     const currentAlbumLikes = likedImagesDatabase[folderId] || {};
     const isFinalized = !!finalizedDatabase[folderId];

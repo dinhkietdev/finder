@@ -153,7 +153,9 @@
         const state = {
             images: [],
             currentIndex: 0,
-            isLoading: false
+            isLoading: false,
+            maxSelections: 0,
+            isFinalized: false
         };
 
         const elements = {
@@ -187,6 +189,17 @@
             return state.images[state.currentIndex] || null;
         }
 
+        function selectedCount() {
+            return state.images.filter(item => item.selected).length;
+        }
+
+        function canSelect(image) {
+            if (!image || image.selected || state.maxSelections <= 0) return true;
+            if (selectedCount() < state.maxSelections) return true;
+            setMessage(`⚠️ Album này chỉ cho phép chọn tối đa ${state.maxSelections} ảnh.`, 'error');
+            return false;
+        }
+
         function render() {
             if (!state.images.length) {
                 elements.mainImage.src = '';
@@ -206,13 +219,18 @@
             elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
             elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
             elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
-            elements.selectedCountLabel.textContent = state.images.filter(item => item.selected).length;
+            const currentSelectedCount = selectedCount();
+            elements.selectedCountLabel.textContent = state.maxSelections > 0
+                ? `${currentSelectedCount}/${state.maxSelections}`
+                : currentSelectedCount;
             elements.photoStatusBadge.textContent = current.selected ? 'Đã chọn' : 'Chưa chọn';
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
             elements.noteInput.value = current.note || '';
+            [elements.selectBtn, elements.saveNoteBtn, elements.confirmBtn, elements.confirmAllBtn, elements.noteInput]
+                .forEach(element => { element.disabled = state.isFinalized; });
 
             elements.thumbStrip.innerHTML = '';
             state.images.forEach((img, index) => {
@@ -292,6 +310,10 @@
                     note: current.note
                 })
             });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || 'Không thể lưu dữ liệu');
+            }
             const data = await response.json();
             if (!data.success) throw new Error(data.error || 'Không thể lưu dữ liệu');
             return data;
@@ -312,8 +334,10 @@
                     return;
                 }
 
-                if (data.isFinalized) elements.finalizedBanner.style.display = 'block';
+                state.isFinalized = !!data.isFinalized;
+                if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
                 else elements.finalizedBanner.style.display = 'none';
+                state.maxSelections = Number(data.settings?.maxSelections) || 0;
 
                 state.images = (data.files || []).map(file => ({
                     ...file,
@@ -343,6 +367,7 @@
         elements.selectBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current) return;
+            if (!current.selected && !canSelect(current)) return;
             current.selected = !current.selected;
             try {
                 await saveCurrentSelection();
@@ -370,6 +395,7 @@
         elements.confirmBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current) return;
+            if (!canSelect(current)) return;
             current.selected = true;
             try {
                 await saveCurrentSelection();
@@ -387,17 +413,30 @@
                 setMessage('⚠️ Chưa có ảnh nào được chọn để xác nhận.', 'error');
                 return;
             }
+            if (!window.confirm(`Xác nhận chốt ${selectedImages.length} ảnh đã chọn? Sau khi chốt, album sẽ không thể thay đổi.`)) return;
 
             try {
                 for (const item of selectedImages) {
                     item.note = item.note || '';
-                    await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+                    const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ fileName: item.fullName, isLiked: true, note: item.note })
                     });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error || 'Không thể xác nhận ảnh');
+                    }
                 }
-                setMessage(`✔️ Đã xác nhận ${selectedImages.length} ảnh đã chọn.`, 'success');
+                const finalizeResponse = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/finalize`, { method: 'POST' });
+                if (!finalizeResponse.ok) {
+                    const errorData = await finalizeResponse.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Không thể chốt album');
+                }
+                state.isFinalized = true;
+                elements.finalizedBanner.style.display = 'block';
+                render();
+                setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');
             } catch (error) {
                 setMessage(`❌ ${error.message}`, 'error');
             }
