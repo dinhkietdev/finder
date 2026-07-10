@@ -19,16 +19,17 @@
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        body { background: linear-gradient(135deg, var(--bg-dark), #111827); color: var(--text-main); padding: 20px 16px 80px; user-select: none; }
+        body { background: linear-gradient(135deg, var(--bg-dark), #111827); color: var(--text-main); padding: 20px 16px 100px; user-select: none; }
         button, textarea { font: inherit; }
 
         .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
         .panel { background: rgba(17, 24, 39, 0.95); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); }
 
-        .header-panel { padding: 20px 22px; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
-        .brand-title { font-size: 24px; font-weight: 800; letter-spacing: 1px; }
-        .subtext { color: var(--text-muted); margin-top: 4px; font-size: 13px; }
-        .stats { display: flex; flex-wrap: wrap; gap: 10px; }
+        .header-panel { padding: 18px 22px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; }
+        .intro { text-align: center; }
+        .brand-title { font-size: 28px; font-weight: 850; letter-spacing: 3px; color: #fff; }
+        .subtext { color: var(--text-muted); margin-top: 6px; font-size: 13px; }
+        .stats { display: flex; flex-wrap: wrap; gap: 10px; justify-self: end; }
         .stat-chip { background: var(--bg-soft); padding: 10px 12px; border-radius: 999px; min-width: 110px; text-align: center; border: 1px solid var(--border); }
         .stat-chip strong { display: block; font-size: 14px; }
         .stat-chip span { font-size: 11px; color: var(--text-muted); }
@@ -36,7 +37,7 @@
         .content-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 18px; }
         .viewer-panel { padding: 16px; }
         .viewer-shell { position: relative; border-radius: 16px; overflow: hidden; background: #000; min-height: 460px; display: flex; align-items: center; justify-content: center; }
-        .viewer-shell img { width: 100%; height: 100%; max-height: 70vh; object-fit: contain; display: block; }
+        .viewer-shell img { width: 100%; height: 100%; max-height: 70vh; object-fit: contain; display: block; cursor: zoom-in; }
         .viewer-overlay { position: absolute; inset: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px; pointer-events: none; }
         .viewer-overlay button { pointer-events: auto; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,0.65); color: #fff; font-size: 20px; cursor: pointer; }
 
@@ -77,9 +78,42 @@
 
         .finalized-banner { display: none; padding: 12px 16px; border-radius: 12px; background: linear-gradient(90deg, #7c3aed, #6d28d9); color: white; text-align: center; font-weight: 700; }
 
+        .image-lightbox { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.94); align-items:center; justify-content:center; touch-action:none; }
+        .image-lightbox.open { display:flex; }
+        .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
+        .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
+        .lightbox-toolbar button { width:42px; height:42px; border:1px solid rgba(255,255,255,.35); border-radius:50%; background:rgba(15,23,42,.75); color:#fff; font-size:20px; cursor:pointer; }
+        .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
+        .help-robot { position:fixed; right:20px; bottom:20px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
+        .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
+        .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
+        .robot-button { width:58px; height:58px; border:0; border-radius:50%; background:linear-gradient(145deg,#60a5fa,#2563eb); box-shadow:0 10px 24px rgba(37,99,235,.5); color:#fff; font-size:31px; cursor:pointer; animation:robot-wave 2.5s ease-in-out infinite; }
+        @keyframes robot-wave { 0%,100% { transform:rotate(0deg) translateY(0); } 15% { transform:rotate(-10deg); } 30% { transform:rotate(10deg); } 45% { transform:rotate(-8deg) translateY(-3px); } }
+
         @media (max-width: 900px) {
             .content-grid { grid-template-columns: 1fr; }
-            .header-panel { flex-direction: column; align-items: flex-start; }
+            .header-panel { grid-template-columns:1fr; justify-items:center; text-align:center; }
+            .stats { justify-self:center; }
+            .viewer-shell { min-height: min(65vh, 520px); }
+        }
+        @media (max-width: 560px) {
+            body { padding: 10px 10px 92px; }
+            .container { gap:12px; }
+            .panel { border-radius:14px; }
+            .header-panel { padding:16px 12px; }
+            .brand-title { font-size:25px; }
+            .subtext { line-height:1.7; max-width:300px; }
+            .stat-chip { min-width:100px; padding:8px 10px; }
+            .viewer-panel, .sidebar-panel { padding:12px; }
+            .viewer-shell { min-height:52vh; border-radius:12px; }
+            .viewer-overlay { padding:8px; }
+            .viewer-overlay button { width:40px; height:40px; }
+            .action-row .btn { flex:1; min-width:calc(50% - 5px); }
+            .note-box { min-height:92px; }
+            .selection-list { max-height:220px; }
+            .thumb-btn, .thumb-btn img { width:74px; height:74px; }
+            .help-robot { right:14px; bottom:14px; }
+            .robot-button { width:54px; height:54px; font-size:28px; }
         }
     </style>
 </head>
@@ -88,9 +122,10 @@
         <div id="finalizedBanner" class="finalized-banner">ALBUM ĐÃ ĐƯỢC CHỐT - KHÔNG THỂ THAY ĐỔI</div>
 
         <div class="panel header-panel">
-            <div>
-                <div class="brand-title">FINDERPICTURE</div>
-                <div class="subtext">Vuốt để xem ảnh • Chọn ảnh • Ghi chú • Xác nhận</div>
+            <div></div>
+            <div class="intro">
+                <div class="brand-title">FINDER</div>
+                <div class="subtext">👆 Vuốt xem ảnh &nbsp;•&nbsp; ✅ Chọn ảnh &nbsp;•&nbsp; 📝 Ghi chú &nbsp;•&nbsp; 🔒 Chốt lựa chọn</div>
             </div>
             <div class="stats">
                 <div class="stat-chip">
@@ -144,6 +179,16 @@
         </div>
     </div>
 
+    <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
+        <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
+        <div class="lightbox-toolbar"><button id="zoomOutBtn" aria-label="Thu nhỏ">−</button><button id="zoomInBtn" aria-label="Phóng to">+</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
+        <div class="zoom-tip">Chạm hai lần hoặc dùng hai ngón tay để phóng to</div>
+    </div>
+    <div id="helpRobot" class="help-robot">
+        <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
+        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ">🤖</button>
+    </div>
+
     <script>
         const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
         const urlParams = new URLSearchParams(window.location.search);
@@ -173,8 +218,19 @@
             prevBtn: document.getElementById('prevBtn'),
             nextBtn: document.getElementById('nextBtn'),
             viewerShell: document.getElementById('viewerShell'),
-            finalizedBanner: document.getElementById('finalizedBanner')
+            finalizedBanner: document.getElementById('finalizedBanner'),
+            imageLightbox: document.getElementById('imageLightbox'),
+            lightboxImage: document.getElementById('lightboxImage'),
+            zoomInBtn: document.getElementById('zoomInBtn'),
+            zoomOutBtn: document.getElementById('zoomOutBtn'),
+            closeLightboxBtn: document.getElementById('closeLightboxBtn'),
+            helpRobot: document.getElementById('helpRobot'),
+            robotButton: document.getElementById('robotButton')
         };
+        let zoomScale = 1;
+        let pinchStartDistance = 0;
+        let pinchStartScale = 1;
+        const activePointers = new Map();
 
         function setMessage(message, type = 'info') {
             elements.statusMessage.textContent = message;
@@ -279,6 +335,27 @@
             render();
         }
 
+        function applyZoom() {
+            zoomScale = Math.max(1, Math.min(4, zoomScale));
+            elements.lightboxImage.style.transform = `scale(${zoomScale})`;
+        }
+
+        function openLightbox() {
+            const current = getCurrentImage();
+            if (!current) return;
+            elements.lightboxImage.src = current.originalUrl || current.thumbnail || elements.mainImage.src;
+            zoomScale = 1;
+            applyZoom();
+            elements.imageLightbox.classList.add('open');
+            elements.imageLightbox.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeLightbox() {
+            elements.imageLightbox.classList.remove('open');
+            elements.imageLightbox.setAttribute('aria-hidden', 'true');
+            activePointers.clear();
+        }
+
         function attachSwipe() {
             let startX = 0;
             elements.viewerShell.addEventListener('touchstart', (event) => {
@@ -293,6 +370,40 @@
                 }
             }, { passive: true });
         }
+
+        elements.mainImage.addEventListener('click', openLightbox);
+        elements.closeLightboxBtn.addEventListener('click', closeLightbox);
+        elements.zoomInBtn.addEventListener('click', () => { zoomScale += 0.5; applyZoom(); });
+        elements.zoomOutBtn.addEventListener('click', () => { zoomScale -= 0.5; applyZoom(); });
+        elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox) closeLightbox(); });
+        elements.imageLightbox.addEventListener('dblclick', () => { zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
+        elements.imageLightbox.addEventListener('wheel', event => {
+            event.preventDefault();
+            zoomScale += event.deltaY < 0 ? 0.25 : -0.25;
+            applyZoom();
+        }, { passive: false });
+        elements.imageLightbox.addEventListener('pointerdown', event => {
+            activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 2) {
+                const [a, b] = [...activePointers.values()];
+                pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
+                pinchStartScale = zoomScale;
+            }
+        });
+        elements.imageLightbox.addEventListener('pointermove', event => {
+            if (!activePointers.has(event.pointerId)) return;
+            activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 2 && pinchStartDistance) {
+                const [a, b] = [...activePointers.values()];
+                zoomScale = pinchStartScale * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStartDistance);
+                applyZoom();
+            }
+        });
+        ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            activePointers.delete(event.pointerId);
+            if (activePointers.size < 2) pinchStartDistance = 0;
+        }));
+        elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
 
         async function saveCurrentSelection() {
             const current = getCurrentImage();
@@ -432,6 +543,7 @@
         elements.prevBtn.addEventListener('click', prevImage);
         elements.nextBtn.addEventListener('click', nextImage);
         document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();
             if (event.key === 'ArrowLeft') prevImage();
         });
