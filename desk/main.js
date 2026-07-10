@@ -91,6 +91,10 @@ function getServerJson(pathname, headers = {}) {
     });
 }
 
+function postServerJson(pathname, payload, headers = {}) {
+    return postJson(`${ONLINE_SERVER}${pathname}`, payload, headers);
+}
+
 function loadAuthSession() {
     try { return fs.existsSync(AUTH_SESSION_PATH) ? JSON.parse(fs.readFileSync(AUTH_SESSION_PATH, 'utf8')) : null; }
     catch (error) { return null; }
@@ -424,55 +428,41 @@ ipcMain.handle('get-culling-preview', async (event, { folderPath, file }) => {
 
 function authenticateCasi(requireFullDriveScope = false) {
     return new Promise((resolve, reject) => {
-        const credentialsPath = path.join(__dirname, 'oauth-credentials.json');
-        if (!fs.existsSync(credentialsPath)) return reject(new Error("Thiếu file oauth-credentials.json!"));
-        const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
-        const { client_id, client_secret } = credentials.installed || credentials.web;
-        
         const PORT = 3000;
         const redirectUri = `http://localhost:${PORT}/oauth2callback`;
-        oauth2Client = new google.auth.OAuth2(client_id, client_secret, redirectUri);
-
-        if (fs.existsSync(LOCAL_TOKEN_PATH)) {
-            try {
-                const storedTokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
-                oauth2Client.setCredentials(storedTokens);
-                const postData = JSON.stringify({ tokens: storedTokens });
-                const reqToServer = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: '/api/auth/save-token', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData), ...serverAuthHeaders() } }); 
-                reqToServer.write(postData); reqToServer.end();
-                const grantedScopes = (storedTokens.scope || '').split(' ');
-                if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
-                    return resolve(oauth2Client);
-                }
-            } catch(e) {}
-        }
-
-        shell.openExternal(oauth2Client.generateAuthUrl({
-            access_type: 'offline',
-            prompt: 'consent',
-            scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file']
-        }));
-
-        const server = http.createServer(async (req, res) => {
-            try {
-                if (req.url.indexOf('/oauth2callback') > -1) {
+        const createClient = clientId => new google.auth.OAuth2(clientId, undefined, redirectUri);
+        const connect = async () => {
+            const authorization = await postServerJson('/api/auth/drive-authorize', { requireFullDriveScope }, serverAuthHeaders());
+            if (!authorization.clientId) throw new Error('Máy chủ chưa cấu hình Google Drive OAuth.');
+            oauth2Client = createClient(authorization.clientId);
+            shell.openExternal(authorization.authUrl);
+            const server = http.createServer(async (req, res) => {
+                try {
+                    if (!req.url.includes('/oauth2callback')) return res.end();
                     const qs = new URL(req.url, `http://localhost:${PORT}`).searchParams;
                     const code = qs.get('code');
+                    const state = qs.get('state');
+                    const result = await postServerJson('/api/auth/drive-exchange', { code, state }, serverAuthHeaders());
                     res.end('Xac thuc thanh cong! Vui long quay lai ung dung Finder.');
                     server.close();
-                    
-                    const { tokens } = await oauth2Client.getToken(code);
-                    if (requireFullDriveScope && !tokens.scope) tokens.scope = 'https://www.googleapis.com/auth/drive';
-                    oauth2Client.setCredentials(tokens);
-                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
-
-                    const postData = JSON.stringify({ tokens });
-                    const options = { hostname: ONLINE_DOMAIN, port: 443, path: '/api/auth/save-token', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData), ...serverAuthHeaders() } };
-                    const reqToServer = https.request(options); reqToServer.write(postData); reqToServer.end();
+                    oauth2Client.setCredentials(result.tokens);
+                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(result.tokens), 'utf8');
                     resolve(oauth2Client);
+                } catch (error) { server.close(); reject(error); }
+            }).listen(PORT);
+        };
+        getServerJson('/api/auth/drive-token', serverAuthHeaders()).then(session => {
+            if (session.tokens && session.clientId) {
+                const grantedScopes = (session.tokens.scope || '').split(' ');
+                if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
+                    oauth2Client = createClient(session.clientId);
+                    oauth2Client.setCredentials(session.tokens);
+                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(session.tokens), 'utf8');
+                    return resolve(oauth2Client);
                 }
-            } catch (e) { server.close(); reject(e); }
-        }).listen(PORT);
+            }
+            connect().catch(reject);
+        }).catch(() => connect().catch(reject));
     });
 }
 

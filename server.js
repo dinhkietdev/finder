@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getDatabase } = require('firebase-admin/database');
@@ -32,6 +33,7 @@ let bannedAlbums = [];
 let finalizedDatabase = {}; 
 let firebaseDb = null;
 let firebaseAuth = null;
+const driveOAuthStates = new Map();
 
 // Vercel không giữ được file giữa các lần chạy. Khi cấu hình Firebase, toàn bộ
 // trạng thái album sẽ được lưu bền vững; máy local vẫn có thể dùng database.json.
@@ -114,13 +116,13 @@ async function persistState() {
     }
 }
 
-function getOAuth2Client() {
+function getOAuth2Client(redirectUri) {
     // 1. Ưu tiên đọc từ biến môi trường trên Vercel (Bảo mật cao nhất)
     if (process.env.GOOGLE_OAUTH_CREDENTIALS) {
         try {
             const credentials = JSON.parse(process.env.GOOGLE_OAUTH_CREDENTIALS);
             const { client_id, client_secret } = credentials.installed || credentials.web;
-            return new google.auth.OAuth2(client_id, client_secret);
+            return new google.auth.OAuth2(client_id, client_secret, redirectUri);
         } catch (e) {
             console.error("Lỗi định dạng GOOGLE_OAUTH_CREDENTIALS");
         }
@@ -132,7 +134,16 @@ function getOAuth2Client() {
     const content = fs.readFileSync(credentialsPath, 'utf8');
     const credentials = JSON.parse(content);
     const { client_id, client_secret } = credentials.installed || credentials.web;
-    return new google.auth.OAuth2(client_id, client_secret);
+    return new google.auth.OAuth2(client_id, client_secret, redirectUri);
+}
+
+function getGoogleClientId() {
+    try {
+        const credentials = process.env.GOOGLE_OAUTH_CREDENTIALS
+            ? JSON.parse(process.env.GOOGLE_OAUTH_CREDENTIALS)
+            : JSON.parse(fs.readFileSync(path.join(__dirname, 'oauth-credentials.json'), 'utf8'));
+        return (credentials.installed || credentials.web)?.client_id || null;
+    } catch (error) { return null; }
 }
 
 // ĐOẠN QUAN TRỌNG NHẤT ĐỂ CHẠY TRÊN VERCEL
@@ -228,7 +239,40 @@ app.post('/api/auth/save-token', requireStudioUser, requireApprovedStudio, async
 
 app.get('/api/auth/drive-token', requireStudioUser, requireApprovedStudio, async (req, res) => {
     const tokens = (await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).once('value')).val();
-    res.json({ success: true, tokens: tokens || null });
+    res.json({ success: true, tokens: tokens || null, clientId: getGoogleClientId() });
+});
+
+// Desktop chỉ nhận client_id công khai. Client secret luôn ở Vercel và chỉ dùng
+// để đổi authorization code thành token sau khi người dùng đã đăng nhập Finder.
+app.post('/api/auth/drive-authorize', requireStudioUser, requireApprovedStudio, async (req, res) => {
+    const redirectUri = 'http://localhost:3000/oauth2callback';
+    const oauth2Client = getOAuth2Client(redirectUri);
+    if (!oauth2Client) return res.status(503).json({ error: 'Máy chủ chưa cấu hình Google Drive OAuth.' });
+    const state = crypto.randomBytes(32).toString('base64url');
+    driveOAuthStates.set(state, { uid: req.user.uid, expiresAt: Date.now() + 10 * 60 * 1000 });
+    const requireFullDriveScope = !!req.body?.requireFullDriveScope;
+    res.json({
+        success: true,
+        clientId: getGoogleClientId(),
+        authUrl: oauth2Client.generateAuthUrl({
+            access_type: 'offline', prompt: 'consent', state,
+            scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file']
+        })
+    });
+});
+
+app.post('/api/auth/drive-exchange', requireStudioUser, requireApprovedStudio, async (req, res) => {
+    const { state, code } = req.body || {};
+    const request = driveOAuthStates.get(state);
+    driveOAuthStates.delete(state);
+    if (!request || request.uid !== req.user.uid || request.expiresAt < Date.now()) return res.status(400).json({ error: 'Yêu cầu xác thực Google Drive đã hết hạn.' });
+    if (!code) return res.status(400).json({ error: 'Thiếu mã xác thực Google Drive.' });
+    try {
+        const oauth2Client = getOAuth2Client('http://localhost:3000/oauth2callback');
+        const { tokens } = await oauth2Client.getToken(code);
+        await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).set(tokens);
+        res.json({ success: true, tokens, clientId: getGoogleClientId() });
+    } catch (error) { res.status(400).json({ error: `Không thể xác thực Google Drive: ${error.message}` }); }
 });
 
 app.post('/api/album/:folderId/settings', requireStudioUser, requireApprovedStudio, async (req, res) => {
