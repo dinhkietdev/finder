@@ -125,7 +125,6 @@
                 <div class="action-row">
                     <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
                     <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
-                    <button id="confirmBtn" class="btn btn-primary">✔️ Xác nhận ảnh này</button>
                 </div>
 
                 <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
@@ -170,7 +169,6 @@
             thumbStrip: document.getElementById('thumbStrip'),
             selectBtn: document.getElementById('selectBtn'),
             saveNoteBtn: document.getElementById('saveNoteBtn'),
-            confirmBtn: document.getElementById('confirmBtn'),
             confirmAllBtn: document.getElementById('confirmAllBtn'),
             prevBtn: document.getElementById('prevBtn'),
             nextBtn: document.getElementById('nextBtn'),
@@ -229,7 +227,7 @@
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
             elements.noteInput.value = current.note || '';
-            [elements.selectBtn, elements.saveNoteBtn, elements.confirmBtn, elements.confirmAllBtn, elements.noteInput]
+            [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
                 .forEach(element => { element.disabled = state.isFinalized; });
 
             elements.thumbStrip.innerHTML = '';
@@ -392,21 +390,6 @@
                 render();
                 setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
             } catch (error) {
-                setMessage(`❌ ${error.message}`, 'error');
-            }
-        });
-
-        elements.confirmBtn.addEventListener('click', async () => {
-            const current = getCurrentImage();
-            if (!current) return;
-            if (!canSelect(current)) return;
-            current.selected = true;
-            try {
-                await saveCurrentSelection();
-                render();
-                setMessage('✔️ Đã xác nhận ảnh này.', 'success');
-            } catch (error) {
-                current.selected = false;
                 setMessage(`❌ ${error.message}`, 'error');
             }
         });
