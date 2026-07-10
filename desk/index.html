@@ -348,6 +348,7 @@
         let authStudio = null;
         let authIsRegister = false;
         let updateReadyToInstall = false;
+        let manualUpdateUrl = '';
         let currentFolder = ""; let scannedImages = []; let filteredImages = []; let cullingResults = []; let syncSourceFolder = "";
         let folderIdBeingEdited = null; 
         let pendingResumeData = null;
@@ -392,6 +393,7 @@
 
         document.getElementById('update-action').addEventListener('click', async () => {
             const button = document.getElementById('update-action');
+            if (manualUpdateUrl) return ipcRenderer.invoke('open-external-link', manualUpdateUrl);
             if (updateReadyToInstall) return ipcRenderer.invoke('install-update');
             button.disabled = true;
             const result = await ipcRenderer.invoke('download-update');
@@ -402,6 +404,7 @@
             if (data.status === 'available') showUpdateOverlay(`Finder ${data.version} đã sẵn sàng. Bạn cần cập nhật để tiếp tục sử dụng.`, 'Tải bản cập nhật');
             if (data.status === 'downloading') showUpdateOverlay(`Đang tải bản cập nhật… ${data.percent || 0}%`, 'Đang tải...', true);
             if (data.status === 'downloaded') { updateReadyToInstall = true; showUpdateOverlay(`Finder ${data.version} đã tải xong. Ứng dụng sẽ khởi động lại để hoàn tất.`, 'Khởi động lại và cập nhật'); }
+            if (data.status === 'manual-available') { manualUpdateUrl = data.url; showUpdateOverlay(`Đã có Finder ${data.version}. Tải bản DMG mới để cập nhật trên Mac.`, 'Mở trang tải bản cập nhật'); }
             if (data.status === 'error') showUpdateOverlay(`Không thể kiểm tra/cập nhật: ${data.message}`, 'Thử lại');
         });
 

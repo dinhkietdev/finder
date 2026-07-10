@@ -149,7 +149,20 @@ ipcMain.handle('check-for-updates', async () => {
     // Bản macOS hiện được phát hành unsigned/notarized chưa đầy đủ. Việc để
     // electron-updater tự thay thế app sẽ bị Gatekeeper từ chối do chữ ký.
     // Cho Mac cập nhật thủ công bằng DMG; Windows vẫn auto-update bình thường.
-    if (process.platform === 'darwin') return { success: true, skipped: true, manual: true };
+    if (process.platform === 'darwin') {
+        try {
+            const latest = await new Promise((resolve, reject) => {
+                const request = https.request({ hostname: 'api.github.com', path: '/repos/dinhkietdev/finder/releases/latest', method: 'GET', headers: { 'User-Agent': 'Finder-Desktop' } }, response => {
+                    let body = ''; response.on('data', chunk => body += chunk);
+                    response.on('end', () => { try { const data = JSON.parse(body); response.statusCode >= 400 ? reject(new Error(data.message || 'GitHub error')) : resolve(data); } catch (error) { reject(error); } });
+                });
+                request.on('error', reject); request.end();
+            });
+            const latestVersion = String(latest.tag_name || '').replace(/^v/, '');
+            if (latestVersion && latestVersion !== app.getVersion()) sendUpdateStatus('manual-available', { version: latestVersion, url: latest.html_url || 'https://github.com/dinhkietdev/finder/releases' });
+        } catch (error) { console.warn('Không thể kiểm tra bản Mac mới:', error.message); }
+        return { success: true, skipped: true, manual: true };
+    }
     if (updateCheckStarted) return { success: true, checking: true };
     updateCheckStarted = true;
     try { await autoUpdater.checkForUpdates(); return { success: true }; }
