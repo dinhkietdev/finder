@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Finder</title>
+    <style>
+        :root { --ink: #182230; --muted: #667085; --line: #e7eaf0; --panel: rgba(255,255,255,.88); --brand: #635bff; --brand-dark: #4f46e5; --mint: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; min-height: 100vh; background: #f7f8fc; color: var(--ink); letter-spacing: -.01em; }
+        body::before { content: ''; position: fixed; width: 520px; height: 520px; top: -250px; right: -120px; background: radial-gradient(circle, rgba(99,91,255,.13), transparent 68%); pointer-events: none; }
+
+        .sidebar { width: 252px; background: #151b2b; color: #cbd5e1; display: flex; flex-direction: column; padding: 22px 14px; box-shadow: 12px 0 35px rgba(15,23,42,.07); z-index: 1; }
+        .sidebar-brand { display: flex; align-items: center; gap: 10px; margin: 0 10px 40px; font-size: 21px; font-weight: 800; color: #fff; letter-spacing: -.04em; }
+        .sidebar-brand::before { content: 'F'; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: linear-gradient(135deg, #8b84ff, #5a51f5); color: white; font-size: 15px; box-shadow: 0 7px 16px rgba(99,91,255,.34); }
+        .nav-item { padding: 12px 14px; margin-bottom: 5px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; transition: .2s ease; border: 0; }
+        .nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
+        .nav-item.active { background: rgba(122,115,255,.18); color: #b9b5ff; box-shadow: inset 0 0 0 1px rgba(163,158,255,.12); }
+
+        .main-content { flex: 1; padding: 42px clamp(28px, 5vw, 70px); overflow-y: auto; position: relative; }
+        .view-section { display: none; }
+        .view-section.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        h2 { color: var(--ink); margin-bottom: 28px; font-size: 28px; line-height: 1.2; letter-spacing: -.045em; border: 0; padding: 0; }
+        h3 { color: var(--ink); font-size: 15px; margin-bottom: 17px; letter-spacing: -.02em; }
+        .box { background: var(--panel); padding: 25px; border-radius: 16px; margin-bottom: 18px; box-shadow: 0 12px 28px rgba(16,24,40,.045); border: 1px solid rgba(226,232,240,.9); backdrop-filter: blur(12px); }
+        
+        button { padding: 10px 15px; margin: 5px 0; background: var(--brand); color: white; border: none; border-radius: 9px; cursor: pointer; font-weight: 700; transition: all .2s ease; font-size: 13px; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 3px 8px rgba(99,91,255,.2); }
+        button:hover { background: var(--brand-dark); transform: translateY(-1px); box-shadow: 0 6px 13px rgba(99,91,255,.25); }
+        button:disabled { background: #a9b1c1 !important; cursor: not-allowed; transform: none !important; box-shadow: none; } 
+        button.btn-danger { background: #ef4444; } button.btn-danger:hover { background: #dc2626; }
+        button.btn-success { background: var(--mint); box-shadow: 0 3px 8px rgba(16,185,129,.18); } button.btn-success:hover { background: #059669; }
+        button.btn-outline { background: #fff; border: 1px solid #d9dee8; color: #475569; box-shadow: none; } button.btn-outline:hover { background: #f8fafc; border-color: #bfc7d6; }
+        
+        .input-group { margin-bottom: 15px; }
+        .input-group label { display: block; font-size: 13px; font-weight: 650; margin-bottom: 7px; color: #475569; }
+        .input-group input[type="text"], .input-group input[type="number"], .input-group select { width: 100%; max-width: 450px; padding: 11px 13px; border: 1px solid #d9dee8; border-radius: 9px; font-size: 13px; transition: .2s; background: #fff; color: var(--ink); outline: none; }
+        .input-group input:focus, .input-group select:focus { border-color: #8b84ff; box-shadow: 0 0 0 3px rgba(99,91,255,.12); }
+        
+        #progress-container { display: none; margin-top: 15px; background: #e2e8f0; border-radius: 6px; height: 22px; width: 100%; max-width: 450px; position: relative; overflow: hidden;}
+        #progress-bar { background: #10b981; width: 0%; height: 100%; transition: width 0.1s ease; }
+        #progress-text { position: absolute; width: 100%; text-align: center; top: 0; font-size: 12px; line-height: 22px; color: #0f172a; font-weight: bold; }
+
+        .sync-tracker-container { display: none; margin-top: 20px; background: #e2e8f0; border-radius: 8px; height: 28px; width: 100%; position: relative; overflow: hidden; }
+        .sync-tracker-bar { background: linear-gradient(90deg, #ef4444, #f43f5e); width: 0%; height: 100%; transition: width 0.2s ease; }
+        .sync-tracker-text { position: absolute; width: 100%; text-align: center; top: 0; font-size: 13px; line-height: 28px; color: #fff; font-weight: bold; text-shadow: 0px 1px 2px rgba(0,0,0,0.6); }
+
+        .album-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; margin-top: 15px; }
+        .album-card { background: #ffffff; border: 1px solid #e8ebf1; border-radius: 15px; overflow: hidden; box-shadow: 0 6px 18px rgba(16,24,40,.045); transition: all .22s ease; position: relative; display: flex; flex-direction: column; }
+        .album-card:hover { transform: translateY(-4px); box-shadow: 0 17px 28px rgba(16,24,40,.11); border-color: #d5d9ff; }
+        
+        .album-thumb-wrapper { width: 100%; height: 160px; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;}
+        .album-thumb-wrapper img { width: 100%; height: 100%; object-fit: cover; }
+        .album-thumb-placeholder { font-size: 40px; color: #475569; position: absolute; }
+        
+        .album-badge { position: absolute; top: 12px; right: 12px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 2;}
+        .album-badge.waiting { background: #fef08a; color: #854d0e; }
+        .album-badge.done { background: #bbf7d0; color: #166534; }
+
+        .album-info-box { padding: 17px; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
+        .album-title-text { font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .album-date-text { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+        
+        .album-btn-row { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #f1f5f9; padding-top: 12px; }
+        .album-btn-row button { margin: 0; padding: 6px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; }
+        .btn-trash { background: #fee2e2; color: #ef4444; border: 1px solid #fecaca; }
+        .btn-trash:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+
+        /* BẢNG MODAL SỬA SỐ LƯỢNG ẢNH */
+        .custom-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(4px); z-index: 9999; align-items: center; justify-content: center; }
+        .custom-modal-box { background: white; padding: 26px; border-radius: 16px; width: 350px; box-shadow: 0 24px 60px rgba(0,0,0,.24); animation: popIn 0.3s ease; }
+        @keyframes popIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .custom-modal-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; color: #0f172a; }
+        .custom-modal-input { width: 100%; padding: 12px; border: 1px solid #cbd5e1; border-radius: 9px; margin-bottom: 20px; font-size: 15px; outline: none; transition: border 0.2s;}
+        .custom-modal-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(99,91,255,.12); }
+        @media (max-width: 720px) { .sidebar { width: 66px; padding: 18px 8px; } .sidebar-brand { font-size: 0; margin: 0 auto 35px; } .sidebar-brand::before { font-size: 15px; } .nav-item { font-size: 0; height: 42px; padding: 0; } .nav-item::after { content: '•'; font-size: 23px; display: block; text-align: center; line-height: 38px; } .main-content { padding: 28px 20px; } }
+        .custom-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+        .culling-panel { display: none; margin-top: 18px; padding: 14px; max-width: 900px; border: 1px solid #dddafe; border-radius: 13px; background: #f8f8ff; }
+        .culling-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; font-size: 13px; color: #4b5563; }
+        .culling-list { display: grid; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 2px; }
+        .culling-group { background: #fff; border: 1px solid #e8e9f7; border-radius: 10px; overflow: hidden; }
+        .culling-group summary { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; cursor: pointer; color: #344054; font-size: 12px; font-weight: 750; list-style: none; }
+        .culling-group summary::-webkit-details-marker { display: none; }
+        .culling-group summary::after { content: '⌄'; color: #667085; font-size: 15px; transition: transform .15s ease; }
+        .culling-group[open] summary::after { transform: rotate(180deg); }
+        .culling-count { margin-left: auto; margin-right: 10px; padding: 2px 7px; border-radius: 20px; color: #635bff; background: #efeeff; font-size: 11px; }
+        .culling-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(195px, 1fr)); gap: 7px; padding: 0 9px 9px; }
+        .culling-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px; background: #fff; border: 1px solid #eef0f5; border-radius: 8px; cursor: pointer; }
+        .culling-item:has(input:not(:checked)) { opacity: .55; background: #fafafa; }
+        .culling-item input { margin-top: 3px; accent-color: var(--brand); }
+        .culling-file { display: block; max-width: 155px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 12px; font-weight: 700; }
+        .culling-issues { display: block; margin-top: 3px; color: #b45309; font-size: 11px; line-height: 1.35; }
+        .culling-issues.good { color: #059669; }
+        .image-preview-box { width: min(940px, 94vw); padding: 14px; }
+        .image-preview-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+        .image-preview-title { font-size: 14px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .image-preview-image { display: block; width: 100%; max-height: 76vh; object-fit: contain; border-radius: 10px; background: #101828; }
+        .dashboard-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; margin-bottom:28px; }
+        .dashboard-heading h2 { margin:0 0 7px; }
+        .dashboard-heading p { color:var(--muted); font-size:14px; }
+        .dashboard-stats { display:grid; grid-template-columns:repeat(4, minmax(150px, 1fr)); gap:14px; margin-bottom:22px; }
+        .dashboard-stat { padding:18px; border:1px solid #e8ebf1; border-radius:15px; background:var(--panel); box-shadow:0 8px 20px rgba(16,24,40,.035); }
+        .dashboard-stat-value { display:block; color:var(--ink); font-size:28px; font-weight:800; letter-spacing:-.05em; }
+        .dashboard-stat-label { display:block; margin-top:4px; color:var(--muted); font-size:12px; font-weight:650; }
+        .dashboard-grid { display:grid; grid-template-columns:minmax(0, 1.3fr) minmax(280px, .7fr); gap:18px; }
+        .dashboard-panel { padding:22px; background:var(--panel); border:1px solid #e8ebf1; border-radius:16px; box-shadow:0 10px 24px rgba(16,24,40,.04); }
+        .dashboard-panel-title { margin-bottom:14px; font-size:15px; font-weight:780; }
+        .dashboard-list { display:grid; gap:8px; }
+        .dashboard-album { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 0; border-bottom:1px solid #eef0f4; }
+        .dashboard-album:last-child { border-bottom:0; }
+        .dashboard-album-name { display:block; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:13px; font-weight:720; }
+        .dashboard-album-meta { display:block; margin-top:3px; color:var(--muted); font-size:11px; }
+        .dashboard-status { padding:4px 8px; border-radius:999px; background:#fff4d6; color:#9a6700; font-size:11px; font-weight:720; white-space:nowrap; }
+        .dashboard-status.done { background:#ddf7e9; color:#087443; }
+        .dashboard-empty { padding:20px 0; color:var(--muted); font-size:13px; text-align:center; }
+        .calendar-panel { margin-top:18px; }
+        .calendar-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+        .calendar-month { font-size:15px; font-weight:780; text-transform:capitalize; }
+        .calendar-controls { display:flex; gap:6px; }
+        .calendar-controls button { margin:0; padding:6px 10px; box-shadow:none; }
+        .calendar-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; }
+        .calendar-weekday { padding:0 2px 5px; color:var(--muted); font-size:11px; font-weight:750; text-align:center; }
+        .calendar-day { min-height:68px; padding:7px; border:1px solid #edf0f5; border-radius:10px; background:#fff; }
+        .calendar-day.empty { background:transparent; border-color:transparent; }
+        .calendar-day.today { border-color:#a5a0ff; box-shadow:inset 0 0 0 1px #dddafe; }
+        .calendar-date { display:block; color:#667085; font-size:11px; font-weight:700; }
+        .calendar-event { display:block; margin-top:4px; padding:2px 4px; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:#f0efff; color:#5148d9; font-size:10px; font-weight:700; }
+        .calendar-event.done { background:#e5f8ed; color:#087443; }
+        .auth-overlay { position:fixed; inset:0; z-index:20000; display:grid; place-items:center; padding:24px; background:radial-gradient(circle at top right, #34308d, #151b2b 55%, #0d1220); }
+        .auth-card { width:min(420px, 100%); padding:30px; border:1px solid rgba(255,255,255,.14); border-radius:20px; background:rgba(255,255,255,.96); box-shadow:0 30px 70px rgba(0,0,0,.32); }
+        .auth-logo { display:flex; align-items:center; gap:10px; font-size:23px; font-weight:800; color:var(--ink); }
+        .auth-logo::before { content:'F'; display:grid; place-items:center; width:32px; height:32px; border-radius:10px; background:var(--brand); color:#fff; font-size:15px; }
+        .auth-subtitle { margin:10px 0 22px; color:var(--muted); font-size:13px; line-height:1.5; }
+        .auth-card input { width:100%; margin:6px 0; padding:12px; border:1px solid #d9dee8; border-radius:9px; outline:0; }
+        .auth-card input:focus { border-color:#8b84ff; box-shadow:0 0 0 3px rgba(99,91,255,.12); }
+        .auth-card button { width:100%; justify-content:center; margin-top:10px; }
+        .auth-message { min-height:20px; margin-top:12px; color:#b42318; font-size:12px; text-align:center; }
+        .auth-switch { color:#5b54da; cursor:pointer; font-weight:700; }
+        .update-overlay { display:none; position:fixed; inset:0; z-index:21000; place-items:center; padding:24px; background:rgba(11,16,32,.78); backdrop-filter:blur(8px); }
+        .update-card { width:min(390px, 100%); padding:28px; border-radius:18px; background:#fff; box-shadow:0 25px 60px rgba(0,0,0,.28); text-align:center; }
+        .update-card h3 { margin-bottom:9px; color:var(--ink); font-size:19px; }
+        .update-card p { color:var(--muted); font-size:13px; line-height:1.5; }
+        .update-card button { width:100%; justify-content:center; margin-top:18px; }
+        @media (max-width: 960px) { .dashboard-stats { grid-template-columns:repeat(2, 1fr); } .dashboard-grid { grid-template-columns:1fr; } }
+    </style>
+</head>
+<body>
+    <div id="auth-overlay" class="auth-overlay">
+        <form id="auth-form" class="auth-card">
+            <div class="auth-logo">Finder</div>
+            <p id="auth-subtitle" class="auth-subtitle">Đăng nhập để truy cập không gian làm việc của studio.</p>
+            <input id="auth-studio-name" type="text" placeholder="Tên studio" style="display:none;" autocomplete="organization">
+            <input id="auth-email" type="email" placeholder="Email studio" required autocomplete="email">
+            <input id="auth-password" type="password" placeholder="Mật khẩu" required minlength="6" autocomplete="current-password">
+            <button id="auth-submit" class="btn-success" type="submit">Đăng nhập</button>
+            <p id="auth-message" class="auth-message"></p>
+            <p style="margin-top:14px; text-align:center; font-size:12px; color:#667085;"><span id="auth-switch" class="auth-switch">Đăng ký studio mới</span></p>
+        </form>
+    </div>
+    <div id="update-overlay" class="update-overlay">
+        <div class="update-card">
+            <h3>Cần cập nhật Finder</h3>
+            <p id="update-message">Đang kiểm tra phiên bản mới nhất...</p>
+            <button id="update-action" type="button" class="btn-success">Tải bản cập nhật</button>
+        </div>
+    </div>
+    <div class="sidebar">
+        <div class="sidebar-brand">Finder</div>
+        <div class="nav-item active" data-view="view-dashboard" onclick="switchView('view-dashboard', this); loadDashboard();">▣ &nbsp;Tổng quan</div>
+        <div class="nav-item" data-view="view-upload" onclick="switchView('view-upload', this)">↑ &nbsp;Tạo album</div>
+        <div class="nav-item" data-view="view-history" onclick="switchView('view-history', this); loadAlbumHistory();">▦ &nbsp;Thư viện</div>
+        <div class="nav-item" data-view="view-sync" onclick="switchView('view-sync', this); loadAlbumHistory();">◌ &nbsp;Công cụ</div>
+    </div>
+
+    <div class="main-content">
+        <div id="view-dashboard" class="view-section active">
+            <div class="dashboard-heading">
+                <div><h2>Tổng quan công việc</h2><p>Theo dõi album và những việc cần xử lý trong một nơi.</p></div>
+                <button type="button" class="btn-success" onclick="openDashboardUpload()">+ Tạo album mới</button>
+            </div>
+            <div class="dashboard-stats">
+                <div class="dashboard-stat"><span class="dashboard-stat-value" id="dashboard-total">0</span><span class="dashboard-stat-label">Tổng album</span></div>
+                <div class="dashboard-stat"><span class="dashboard-stat-value" id="dashboard-waiting">0</span><span class="dashboard-stat-label">Đang chờ khách chọn</span></div>
+                <div class="dashboard-stat"><span class="dashboard-stat-value" id="dashboard-done">0</span><span class="dashboard-stat-label">Đã hoàn tất / chốt</span></div>
+                <div class="dashboard-stat"><span class="dashboard-stat-value" id="dashboard-limited">0</span><span class="dashboard-stat-label">Album có giới hạn chọn</span></div>
+            </div>
+            <div class="dashboard-grid">
+                <div class="dashboard-panel"><div class="dashboard-panel-title">Album gần đây</div><div id="dashboard-recent" class="dashboard-list"></div></div>
+                <div class="dashboard-panel"><div class="dashboard-panel-title">Việc cần làm</div><div id="dashboard-tasks" class="dashboard-list"></div></div>
+            </div>
+            <div id="dashboard-approvals" class="dashboard-panel calendar-panel" style="display:none;"><div class="dashboard-panel-title">Yêu cầu studio chờ duyệt</div><div id="dashboard-approval-list" class="dashboard-list"></div></div>
+            <div class="dashboard-panel calendar-panel">
+                <div class="calendar-header"><div class="calendar-month" id="dashboard-calendar-title">Lịch công việc</div><div class="calendar-controls"><button type="button" id="dashboard-calendar-prev" class="btn-outline">←</button><button type="button" id="dashboard-calendar-today" class="btn-outline">Hôm nay</button><button type="button" id="dashboard-calendar-next" class="btn-outline">→</button></div></div>
+                <div id="dashboard-calendar" class="calendar-grid"></div>
+            </div>
+        </div>
+
+        <div id="view-upload" class="view-section">
+            <h2>Tạo album mới</h2>
+            <div class="box">
+                <h3>01 — Chọn thư mục ảnh</h3>
+                <button id="btn-select">Chọn thư mục & quét ảnh</button>
+                <p id="selected-path" style="color: #10b981; font-weight: bold; margin-top: 10px; font-size: 13px;"></p>
+                <p id="scan-result" style="margin-top: 10px; font-size: 13px;"></p>
+                <button id="btn-cull" class="btn-outline" style="display:none; margin-top:12px;">✦ Kiểm tra lại chất lượng ảnh</button>
+                <div id="culling-panel" class="culling-panel">
+                    <div class="culling-summary">
+                        <span id="culling-summary-text">Đang phân tích ảnh...</span>
+                        <button id="btn-keep-all" type="button" class="btn-outline">Bỏ chọn tất cả</button>
+                    </div>
+                    <div id="culling-list" class="culling-list"></div>
+                </div>
+            </div>
+
+            <div class="box" id="upload-section">
+                <h3>02 — Cấu hình album</h3>
+                <div class="input-group">
+                    <label>Tên thư mục trên Drive (Tên khách hàng):</label>
+                    <input type="text" id="folder-name-input" placeholder="Ví dụ: Anh_Cuoi_Tuan_Ngoc">
+                </div>
+                <!-- Tạm ẩn phần bản quyền, giữ nguyên để tiếp tục phát triển sau. -->
+                <div class="input-group" style="display:none; margin-bottom: 12px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; max-width: 450px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px; font-size: 13px;">
+                        <input type="checkbox" id="watermark-toggle-input" checked> 🔒 Khóa cứng đóng dấu bản quyền
+                    </label>
+                    <input type="text" id="watermark-text-input" value="ĐÌNH KIỆT PHOTOGRAPHY" placeholder="Tên chữ bản quyền...">
+                </div>
+
+                <div class="input-group" style="margin-bottom: 12px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; max-width: 600px;">
+                    <label>Thư mục đích trên Google Drive <span style="font-weight:400; color:#64748b;">(tùy chọn)</span></label>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <input type="text" id="drive-parent-path" value="Drive của tôi (thư mục gốc)" readonly style="flex:1; min-width:250px;">
+                        <button type="button" id="btn-choose-drive-folder" class="btn-outline">☁️ Chọn thư mục</button>
+                        <button type="button" id="btn-clear-drive-folder" class="btn-outline">↺ Thư mục gốc</button>
+                    </div>
+                </div>
+                
+                <div class="input-group" style="margin-bottom: 12px; background: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; max-width: 450px;">
+                    <label style="font-size: 13px; color: #1e3a8a;">Giới hạn số lượng ảnh khách được chọn:</label>
+                    <input type="number" id="max-selections-input" placeholder="Ví dụ: 30 (Để trống nếu Không giới hạn)">
+                </div>
+
+                <button id="btn-upload" class="btn-success" disabled>🚀 Tự động đẩy lên Đám mây</button>
+                <div id="progress-container"><div id="progress-bar"></div><div id="progress-text">0%</div></div>
+                <p id="upload-status" style="margin-top: 15px; font-size: 13px; line-height: 1.5;"></p>
+                <div id="resume-upload-box" style="display:none; margin-top:12px; padding:12px; background:#fff7ed; border:1px solid #fdba74; border-radius:8px; max-width:600px;">
+                    <div style="font-size:13px; color:#9a3412; margin-bottom:8px;">Lần tải trước bị gián đoạn. Các ảnh đã tải xong sẽ được giữ nguyên.</div>
+                    <button type="button" id="btn-resume-upload" class="btn-success">▶ Tiếp tục tải lên</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="view-history" class="view-section">
+            <h2>Thư viện album</h2>
+            <div class="album-grid" id="history-grid-container"></div>
+            <div class="box" id="sync-progress-box-wrapper" style="margin-top: 30px; display: none;">
+                <div id="sync-progress-box" class="sync-tracker-container">
+                    <div id="sync-progress-bar" class="sync-tracker-bar"></div>
+                    <div id="sync-progress-text" class="sync-tracker-text">0%</div>
+                </div>
+                <p id="sync-global-status" style="margin-top: 10px; font-size: 13px; font-weight: 600; color: #0f172a; text-align: center;"></p>
+            </div>
+        </div>
+
+        <div id="view-sync" class="view-section">
+            <h2>Khôi phục file gốc</h2>
+            <div class="box">
+                <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">Chỉ sử dụng tính năng này khi bạn lỡ di dời thư mục ảnh sang vị trí khác.</p>
+                <div class="input-group">
+                    <label>1. Chọn Album từ lịch sử hệ thống:</label>
+                    <select id="sync-folder-select" onchange="toggleManualIdInput()"><option value="">-- Đang tải danh sách... --</option></select>
+                    <input type="text" id="sync-folder-id-manual" style="display:none; margin-top:10px;" placeholder="Dán mã ID Drive trực tiếp tại đây...">
+                </div>
+                <button id="btn-sync-select-folder" class="btn-outline">2. Trỏ đường dẫn tới folder RAW</button>
+                <p id="sync-source-path" style="color: #06b6d4; font-weight: bold; margin: 10px 0; font-size: 12px;"></p>
+                <button id="btn-sync-execute" class="btn-danger" style="display: none;">3. Tiến hành tách lọc file</button>
+                <div id="manual-sync-progress-box" class="sync-tracker-container">
+                    <div id="manual-sync-progress-bar" class="sync-tracker-bar"></div>
+                    <div id="manual-sync-progress-text" class="sync-tracker-text">0%</div>
+                </div>
+                <p id="sync-status-msg" style="font-weight: bold; margin-top: 15px; text-align: center;"></p>
+            </div>
+            
+            <h2 style="margin-top: 40px; color: #c2414b;">Dọn dẹp hệ thống</h2>
+            <div class="box">
+                <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">Tính năng này sẽ xóa sạch bộ nhớ tạm (Cache) của tất cả mọi khách hàng trên đám mây.</p>
+                <button class="btn-danger" onclick="flushAllServerCache()">🧹 Xóa sạch Cache trên Cloud Server</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="custom-modal-overlay" id="edit-limit-modal">
+        <div class="custom-modal-box">
+            <div class="custom-modal-title">Cài đặt số lượng ảnh</div>
+            <p style="font-size: 13px; color: #64748b; margin-bottom: 10px;">Nhập số ảnh tối đa khách được phép chọn. (Nhập 0 để cho phép chọn thoải mái).</p>
+            <input type="number" id="edit-limit-input" class="custom-modal-input" placeholder="Ví dụ: 30">
+            <div class="custom-modal-actions">
+                <button class="btn-outline" onclick="closeEditLimitModal()">Hủy bỏ</button>
+                <button class="btn-success" onclick="saveNewLimit()">Lưu thay đổi</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="custom-modal-overlay" id="drive-folder-modal">
+        <div class="custom-modal-box" style="width:min(680px, 92vw);">
+            <div class="custom-modal-title">Chọn thư mục Google Drive</div>
+            <p id="drive-folder-breadcrumb" style="font-size:13px; color:#2563eb; overflow-wrap:anywhere; margin-bottom:12px;"></p>
+            <div id="drive-folder-list" style="max-height:360px; overflow:auto; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:16px;"></div>
+            <div class="custom-modal-actions" style="justify-content:space-between;">
+                <button type="button" id="btn-drive-back" class="btn-outline">← Quay lại</button>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" id="btn-drive-cancel" class="btn-outline">Hủy</button>
+                    <button type="button" id="btn-drive-select-current" class="btn-success">Chọn thư mục này</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="custom-modal-overlay" id="image-preview-modal">
+        <div class="custom-modal-box image-preview-box">
+            <div class="image-preview-header">
+                <div id="image-preview-title" class="image-preview-title">Xem ảnh</div>
+                <button type="button" id="btn-close-preview" class="btn-outline">Đóng</button>
+            </div>
+            <img id="image-preview-image" class="image-preview-image" alt="Ảnh xem trước">
+        </div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        // Phải trùng với server tạo link cho khách để desktop và trang khách đọc cùng dữ liệu.
+        const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
+        let authSession = null;
+        let authStudio = null;
+        let authIsRegister = false;
+        let updateReadyToInstall = false;
+        let currentFolder = ""; let scannedImages = []; let filteredImages = []; let cullingResults = []; let syncSourceFolder = "";
+        let folderIdBeingEdited = null; 
+        let pendingResumeData = null;
+        let albumSyncTimer = null;
+        let isAlbumSyncing = false;
+        let driveNavigation = [{ id: null, path: 'Drive của tôi' }];
+        let selectedDriveFolder = { id: null, path: 'Drive của tôi' };
+        let dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        let dashboardAlbums = [];
+
+        function setAuthMode(isRegister) {
+            authIsRegister = isRegister;
+            document.getElementById('auth-studio-name').style.display = isRegister ? 'block' : 'none';
+            document.getElementById('auth-submit').textContent = isRegister ? 'Gửi yêu cầu đăng ký' : 'Đăng nhập';
+            document.getElementById('auth-subtitle').textContent = isRegister ? 'Studio mới sẽ cần được quản trị viên xét duyệt trước khi dùng Finder.' : 'Đăng nhập để truy cập không gian làm việc của studio.';
+            document.getElementById('auth-switch').textContent = isRegister ? 'Đã có tài khoản? Đăng nhập' : 'Đăng ký studio mới';
+            document.getElementById('auth-message').textContent = '';
+        }
+
+        async function checkStudioAccess(session, studioName = '') {
+            const response = await fetch(`${ONLINE_SERVER}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.idToken}` }, body: JSON.stringify({ studioName }) });
+            const body = await response.text();
+            let data;
+            try { data = JSON.parse(body); }
+            catch (error) { throw new Error(`Máy chủ xác thực đang gặp lỗi (${response.status}). Vui lòng kiểm tra Vercel Logs.`); }
+            if (!response.ok || !data.success) throw new Error(data.error || 'Không thể kiểm tra quyền truy cập.');
+            if (data.studio.status !== 'active') throw new Error(data.studio.status === 'rejected' ? 'Yêu cầu đăng ký đã bị từ chối. Vui lòng liên hệ quản trị viên.' : 'Tài khoản đã đăng ký và đang chờ quản trị viên xét duyệt.');
+            authSession = session;
+            authStudio = data.studio;
+            await ipcRenderer.invoke('auth-sync-drive-token');
+            document.getElementById('auth-overlay').style.display = 'none';
+            loadDashboard();
+            ipcRenderer.invoke('check-for-updates');
+        }
+
+        function showUpdateOverlay(message, actionText, disabled = false) {
+            document.getElementById('update-message').textContent = message;
+            const button = document.getElementById('update-action');
+            button.textContent = actionText; button.disabled = disabled;
+            document.getElementById('update-overlay').style.display = 'grid';
+        }
+
+        document.getElementById('update-action').addEventListener('click', async () => {
+            const button = document.getElementById('update-action');
+            if (updateReadyToInstall) return ipcRenderer.invoke('install-update');
+            button.disabled = true;
+            const result = await ipcRenderer.invoke('download-update');
+            if (!result.success) showUpdateOverlay(`Không thể tải bản cập nhật: ${result.error}`, 'Thử lại');
+        });
+
+        ipcRenderer.on('update-status', (event, data) => {
+            if (data.status === 'available') showUpdateOverlay(`Finder ${data.version} đã sẵn sàng. Bạn cần cập nhật để tiếp tục sử dụng.`, 'Tải bản cập nhật');
+            if (data.status === 'downloading') showUpdateOverlay(`Đang tải bản cập nhật… ${data.percent || 0}%`, 'Đang tải...', true);
+            if (data.status === 'downloaded') { updateReadyToInstall = true; showUpdateOverlay(`Finder ${data.version} đã tải xong. Ứng dụng sẽ khởi động lại để hoàn tất.`, 'Khởi động lại và cập nhật'); }
+            if (data.status === 'error') showUpdateOverlay(`Không thể kiểm tra/cập nhật: ${data.message}`, 'Thử lại');
+        });
+
+        document.getElementById('auth-form').addEventListener('submit', async event => {
+            event.preventDefault();
+            const submit = document.getElementById('auth-submit'); const message = document.getElementById('auth-message');
+            const email = document.getElementById('auth-email').value.trim(); const password = document.getElementById('auth-password').value;
+            const studioName = document.getElementById('auth-studio-name').value.trim();
+            if (authIsRegister && !studioName) { message.textContent = 'Vui lòng nhập tên studio.'; return; }
+            submit.disabled = true; message.style.color = '#667085'; message.textContent = 'Đang xử lý...';
+            const result = await ipcRenderer.invoke('auth-sign-in', { email, password, isRegister: authIsRegister });
+            try {
+                if (!result.success) throw new Error(result.error);
+                await checkStudioAccess(result.session, studioName);
+            } catch (error) {
+                if (authIsRegister && String(error.message).includes('EMAIL_EXISTS')) {
+                    setAuthMode(false);
+                    document.getElementById('auth-email').value = email;
+                    document.getElementById('auth-message').style.color = '#667085';
+                    document.getElementById('auth-message').textContent = 'Email này đã đăng ký. Hãy nhập mật khẩu để đăng nhập.';
+                } else {
+                    message.style.color = '#b42318';
+                    message.textContent = String(error.message).includes('USER_DISABLED')
+                        ? 'Tài khoản này đang bị vô hiệu hóa. Vui lòng liên hệ quản trị viên để bật lại quyền đăng nhập.'
+                        : error.message;
+                }
+            }
+            finally { submit.disabled = false; }
+        });
+        document.getElementById('auth-switch').addEventListener('click', () => setAuthMode(!authIsRegister));
+        (async () => {
+            const session = await ipcRenderer.invoke('auth-session');
+            if (!session?.idToken) return;
+            try { await checkStudioAccess(session); }
+            catch (error) { document.getElementById('auth-message').textContent = 'Vui lòng đăng nhập lại để tiếp tục.'; }
+        })();
+
+        function escapeHtml(value = '') {
+            return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+        }
+
+        function updateDrivePath() {
+            document.getElementById('drive-parent-path').value = selectedDriveFolder.id
+                ? selectedDriveFolder.path
+                : 'Drive của tôi (thư mục gốc)';
+        }
+
+        async function restoreLastDriveFolder() {
+            const lastFolder = await ipcRenderer.invoke('get-last-drive-folder');
+            if (!lastFolder?.id) return;
+            selectedDriveFolder = { id: lastFolder.id, path: lastFolder.path || 'Drive của tôi' };
+            driveNavigation = [{ ...selectedDriveFolder }];
+            updateDrivePath();
+        }
+
+        function syncSelectedImages() {
+            filteredImages = cullingResults.length
+                ? cullingResults.filter(item => item.keep).map(item => item.file)
+                : filteredImages;
+            const reviewCount = cullingResults.filter(item => item.issues.length).length;
+            document.getElementById('culling-summary-text').textContent = `${filteredImages.length}/${cullingResults.length} ảnh sẽ được tải lên${reviewCount ? ` · ${reviewCount} ảnh cần xem lại` : ' · Chất lượng ổn'}`;
+            document.getElementById('btn-upload').disabled = filteredImages.length === 0;
+            const keepAllButton = document.getElementById('btn-keep-all');
+            const allKept = cullingResults.length && cullingResults.every(item => item.keep);
+            keepAllButton.textContent = allKept ? 'Bỏ chọn tất cả' : 'Giữ tất cả';
+        }
+
+        async function openCullingPreview(item) {
+            const modal = document.getElementById('image-preview-modal');
+            document.getElementById('image-preview-title').textContent = item.file;
+            document.getElementById('image-preview-image').removeAttribute('src');
+            modal.style.display = 'flex';
+            const result = await ipcRenderer.invoke('get-culling-preview', { folderPath: currentFolder, file: item.file });
+            if (result.success) document.getElementById('image-preview-image').src = result.dataUrl;
+            else document.getElementById('image-preview-title').textContent = result.error;
+        }
+
+        function renderCullingResults() {
+            const list = document.getElementById('culling-list');
+            list.innerHTML = '';
+            const groups = [
+                ['Có thể out nét', item => item.issues.includes('Có thể out nét')],
+                ['Thiếu sáng', item => item.issues.includes('Thiếu sáng')],
+                ['Có nguy cơ cháy sáng', item => item.issues.includes('Có nguy cơ cháy sáng')],
+                ['Chất lượng ổn', item => !item.issues.length]
+            ];
+            groups.forEach(([groupName, matches]) => {
+                const items = cullingResults.filter(matches).sort((a, b) => a.file.localeCompare(b.file));
+                if (!items.length) return;
+                const group = document.createElement('details');
+                group.className = 'culling-group'; group.open = groupName !== 'Chất lượng ổn';
+                const summary = document.createElement('summary');
+                const title = document.createElement('span'); title.textContent = groupName;
+                const count = document.createElement('span'); count.className = 'culling-count'; count.textContent = `${items.length} ảnh`;
+                summary.append(title, count); group.appendChild(summary);
+                const groupItems = document.createElement('div'); groupItems.className = 'culling-items';
+                items.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'culling-item';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox'; checkbox.checked = item.keep;
+                checkbox.title = item.keep ? 'Bỏ chọn ảnh này' : 'Giữ ảnh này';
+                checkbox.addEventListener('click', event => event.stopPropagation());
+                checkbox.addEventListener('change', () => { item.keep = checkbox.checked; syncSelectedImages(); });
+                const details = document.createElement('span');
+                const filename = document.createElement('span');
+                filename.className = 'culling-file'; filename.textContent = item.file;
+                const issues = document.createElement('span');
+                issues.className = `culling-issues${item.issues.length ? '' : ' good'}`;
+                issues.textContent = item.issues.length ? item.issues.join(' · ') : 'Chất lượng ổn';
+                details.append(filename, issues); row.append(checkbox, details);
+                row.addEventListener('click', () => openCullingPreview(item));
+                groupItems.appendChild(row);
+                });
+                group.appendChild(groupItems); list.appendChild(group);
+            });
+            syncSelectedImages();
+        }
+
+        async function loadDriveFolders() {
+            const current = driveNavigation[driveNavigation.length - 1];
+            const list = document.getElementById('drive-folder-list');
+            document.getElementById('drive-folder-breadcrumb').textContent = current.path;
+            document.getElementById('btn-drive-back').disabled = driveNavigation.length === 1;
+            list.innerHTML = '<div style="padding:16px; color:#64748b;">Đang tải thư mục...</div>';
+            const result = await ipcRenderer.invoke('list-drive-folders', current.id);
+            if (!result.success) {
+                list.innerHTML = `<div style="padding:16px; color:#ef4444;">Không thể tải thư mục: ${escapeHtml(result.error)}</div>`;
+                return;
+            }
+            list.innerHTML = '';
+            if (!result.folders.length) list.innerHTML = '<div style="padding:16px; color:#64748b;">Thư mục này chưa có thư mục con.</div>';
+            result.folders.forEach(folder => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'btn-outline';
+                button.style.cssText = 'width:100%; margin:0; padding:12px; border:0; border-bottom:1px solid #e2e8f0; border-radius:0; justify-content:flex-start;';
+                button.textContent = `📁 ${folder.name}`;
+                button.onclick = () => {
+                    driveNavigation.push({ id: folder.id, path: `${current.path} / ${folder.name}` });
+                    loadDriveFolders();
+                };
+                list.appendChild(button);
+            });
+        }
+
+        function switchView(viewId, btnElement) {
+            document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+            btnElement.classList.add('active');
+            document.getElementById('sync-progress-box-wrapper').style.display = 'none';
+        }
+
+        function openDashboardUpload() {
+            switchView('view-upload', document.querySelector('.nav-item[data-view="view-upload"]'));
+        }
+
+        function createDashboardAlbumRow(album, actionLabel, onAction) {
+            const row = document.createElement('div'); row.className = 'dashboard-album';
+            const info = document.createElement('div');
+            const name = document.createElement('span'); name.className = 'dashboard-album-name'; name.textContent = album.name || 'Album chưa đặt tên';
+            const meta = document.createElement('span'); meta.className = 'dashboard-album-meta'; meta.textContent = `${album.date || 'Chưa có ngày tạo'} · ${album.maxSelections ? `Giới hạn ${album.maxSelections} ảnh` : 'Không giới hạn'}`;
+            info.append(name, meta);
+            const action = document.createElement('button'); action.type = 'button'; action.className = 'btn-outline'; action.style.cssText = 'margin:0; padding:6px 9px; font-size:11px;'; action.textContent = actionLabel;
+            action.addEventListener('click', onAction);
+            row.append(info, action); return row;
+        }
+
+        function parseDashboardDate(value) {
+            if (!value) return null;
+            const nativeDate = new Date(value);
+            if (!Number.isNaN(nativeDate.getTime()) && /\d{4}-\d{2}-\d{2}/.test(value)) return nativeDate;
+            const match = String(value).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            return match ? new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1])) : null;
+        }
+
+        async function getDashboardLiveAlbum(album) {
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`);
+                const data = await response.json();
+                if (!data.success) throw new Error('Không thể đồng bộ');
+                const selectedCount = Object.keys(data.liked_files || {}).length;
+                const manuallyDone = /đã\s*(xong|chốt|hoàn)/i.test(album.status || '');
+                const isFinalized = !!data.isFinalized;
+                return { ...album, selectedCount, isFinalized, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
+            } catch (error) {
+                return { ...album, selectedCount: 0, isFinalized: false, finalizedAt: null, isDone: /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
+            }
+        }
+
+        function addCalendarEvent(cell, label, isDone = false) {
+            const event = document.createElement('span'); event.className = `calendar-event${isDone ? ' done' : ''}`; event.textContent = label; cell.appendChild(event);
+        }
+
+        function renderDashboardCalendar() {
+            const calendar = document.getElementById('dashboard-calendar');
+            const monthFormatter = new Intl.DateTimeFormat('vi-VN', { month: 'long', year: 'numeric' });
+            document.getElementById('dashboard-calendar-title').textContent = `Lịch công việc · ${monthFormatter.format(dashboardMonth)}`;
+            calendar.innerHTML = '';
+            ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].forEach(day => { const label = document.createElement('div'); label.className = 'calendar-weekday'; label.textContent = day; calendar.appendChild(label); });
+            const firstDay = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth(), 1);
+            const leadingDays = (firstDay.getDay() + 6) % 7;
+            const daysInMonth = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1, 0).getDate();
+            for (let i = 0; i < leadingDays; i++) { const empty = document.createElement('div'); empty.className = 'calendar-day empty'; calendar.appendChild(empty); }
+            const today = new Date();
+            for (let day = 1; day <= daysInMonth; day++) {
+                const cell = document.createElement('div'); cell.className = 'calendar-day';
+                if (today.getFullYear() === dashboardMonth.getFullYear() && today.getMonth() === dashboardMonth.getMonth() && today.getDate() === day) cell.classList.add('today');
+                const date = document.createElement('span'); date.className = 'calendar-date'; date.textContent = day; cell.appendChild(date);
+                const events = [];
+                dashboardAlbums.forEach(album => {
+                    const createdAt = parseDashboardDate(album.date);
+                    const finalizedAt = parseDashboardDate(album.finalizedAt);
+                    if (createdAt && createdAt.getFullYear() === dashboardMonth.getFullYear() && createdAt.getMonth() === dashboardMonth.getMonth() && createdAt.getDate() === day) events.push({ label: `Tạo · ${album.name}`, done: false });
+                    if (finalizedAt && finalizedAt.getFullYear() === dashboardMonth.getFullYear() && finalizedAt.getMonth() === dashboardMonth.getMonth() && finalizedAt.getDate() === day) events.push({ label: `Cần edit · ${album.name}`, done: true });
+                });
+                events.slice(0, 2).forEach(item => addCalendarEvent(cell, item.label, item.done));
+                if (events.length > 2) addCalendarEvent(cell, `+${events.length - 2} việc`, false);
+                calendar.appendChild(cell);
+            }
+        }
+
+        async function loadStudioApprovals() {
+            const panel = document.getElementById('dashboard-approvals');
+            const list = document.getElementById('dashboard-approval-list');
+            if (authStudio?.role !== 'admin' || !authSession?.idToken) { panel.style.display = 'none'; return; }
+            panel.style.display = 'block'; list.innerHTML = '<div class="dashboard-empty">Đang tải yêu cầu...</div>';
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/admin/studios`, { headers: { Authorization: `Bearer ${authSession.idToken}` } });
+                const data = await response.json();
+                if (!data.success) throw new Error(data.error);
+                const pending = (data.studios || []).filter(studio => studio.status === 'pending');
+                list.innerHTML = '';
+                if (!pending.length) { list.innerHTML = '<div class="dashboard-empty">Không có studio nào đang chờ duyệt.</div>'; return; }
+                pending.forEach(studio => {
+                    const row = document.createElement('div'); row.className = 'dashboard-album';
+                    const info = document.createElement('div');
+                    const name = document.createElement('span'); name.className = 'dashboard-album-name'; name.textContent = studio.name || 'Studio chưa đặt tên';
+                    const email = document.createElement('span'); email.className = 'dashboard-album-meta'; email.textContent = studio.email || '';
+                    info.append(name, email);
+                    const actions = document.createElement('div'); actions.style.cssText = 'display:flex; gap:6px;';
+                    [['Duyệt', 'active', 'btn-success'], ['Từ chối', 'rejected', 'btn-danger']].forEach(([label, status, className]) => {
+                        const button = document.createElement('button'); button.type = 'button'; button.className = className; button.style.cssText = 'margin:0; padding:6px 9px; font-size:11px;'; button.textContent = label;
+                        button.addEventListener('click', async () => {
+                            button.disabled = true;
+                            await fetch(`${ONLINE_SERVER}/api/admin/studios/${studio.id}/approval`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession.idToken}` }, body: JSON.stringify({ status }) });
+                            loadStudioApprovals();
+                        });
+                        actions.appendChild(button);
+                    });
+                    row.append(info, actions); list.appendChild(row);
+                });
+            } catch (error) { list.innerHTML = '<div class="dashboard-empty">Không thể tải yêu cầu xét duyệt.</div>'; }
+        }
+
+        async function loadDashboard() {
+            const recent = document.getElementById('dashboard-recent');
+            const tasks = document.getElementById('dashboard-tasks');
+            recent.innerHTML = '<div class="dashboard-empty">Đang đồng bộ trạng thái album...</div>';
+            tasks.innerHTML = '';
+            const history = await ipcRenderer.invoke('get-history');
+            dashboardAlbums = await Promise.all(history.map(getDashboardLiveAlbum));
+            const waiting = dashboardAlbums.filter(album => !album.isDone);
+            const done = dashboardAlbums.filter(album => album.isDone);
+            document.getElementById('dashboard-total').textContent = dashboardAlbums.length;
+            document.getElementById('dashboard-waiting').textContent = waiting.length;
+            document.getElementById('dashboard-done').textContent = done.length;
+            document.getElementById('dashboard-limited').textContent = dashboardAlbums.filter(album => Number(album.maxSelections) > 0).length;
+
+            recent.innerHTML = '';
+            if (!dashboardAlbums.length) recent.innerHTML = '<div class="dashboard-empty">Chưa có album nào. Hãy tạo album đầu tiên của bạn.</div>';
+            dashboardAlbums.slice(0, 6).forEach(album => {
+                const row = createDashboardAlbumRow(album, 'Mở album', () => ipcRenderer.invoke('open-external-link', album.link));
+                const status = document.createElement('span'); status.className = `dashboard-status${album.isDone ? ' done' : ''}`;
+                status.textContent = album.isFinalized ? `Đã chốt · ${album.selectedCount} ảnh` : album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : (album.status || 'Đang chờ khách chọn');
+                row.insertBefore(status, row.lastElementChild); recent.appendChild(row);
+            });
+
+            const readyToEdit = dashboardAlbums.filter(album => album.isFinalized).sort((a, b) => (parseDashboardDate(a.finalizedAt)?.getTime() || 0) - (parseDashboardDate(b.finalizedAt)?.getTime() || 0));
+            if (readyToEdit.length) {
+                readyToEdit.slice(0, 5).forEach((album, index) => {
+                    const row = createDashboardAlbumRow(album, `Ưu tiên ${index + 1}`, () => ipcRenderer.invoke('open-external-link', album.link));
+                    const status = document.createElement('span'); status.className = 'dashboard-status done'; status.textContent = `Cần edit · ${album.selectedCount} ảnh`;
+                    row.insertBefore(status, row.lastElementChild); tasks.appendChild(row);
+                });
+            } else {
+                tasks.innerHTML = '<div class="dashboard-empty">Chưa có album nào được khách chốt để edit.</div>';
+            }
+            renderDashboardCalendar();
+            loadStudioApprovals();
+        }
+
+        document.getElementById('dashboard-calendar-prev').addEventListener('click', () => {
+            dashboardMonth = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() - 1, 1);
+            renderDashboardCalendar();
+        });
+        document.getElementById('dashboard-calendar-next').addEventListener('click', () => {
+            dashboardMonth = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1, 1);
+            renderDashboardCalendar();
+        });
+        document.getElementById('dashboard-calendar-today').addEventListener('click', () => {
+            dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+            renderDashboardCalendar();
+        });
+
+        document.getElementById('btn-select').addEventListener('click', async () => {
+            currentFolder = await ipcRenderer.invoke('select-folder');
+            if (currentFolder) { 
+                document.getElementById('selected-path').innerText = currentFolder; 
+                document.getElementById('scan-result').innerHTML = `⏳ Đang tự động quét ảnh...`;
+                
+                scannedImages = await ipcRenderer.invoke('scan-images', currentFolder);
+                filteredImages = [...scannedImages];
+                document.getElementById('scan-result').innerHTML = `✅ Đã tự động nhận diện <b>${filteredImages.length}</b> ảnh JPG.`;
+                cullingResults = [];
+                document.getElementById('culling-panel').style.display = 'none';
+                document.getElementById('btn-cull').style.display = 'none';
+                if (filteredImages.length > 0) document.getElementById('btn-upload').disabled = false;
+                if (scannedImages.length) runCullingAnalysis();
+            }
+        });
+
+        async function runCullingAnalysis() {
+            const button = document.getElementById('btn-cull');
+            const panel = document.getElementById('culling-panel');
+            button.disabled = true; panel.style.display = 'block';
+            document.getElementById('culling-summary-text').textContent = `Đang phân tích ${scannedImages.length} ảnh trên máy…`;
+            document.getElementById('culling-list').innerHTML = '';
+            const result = await ipcRenderer.invoke('analyze-image-quality', { folderPath: currentFolder, imageFiles: scannedImages });
+            button.disabled = false;
+            if (!result.success) {
+                document.getElementById('culling-summary-text').textContent = `Không thể phân tích: ${result.error}`;
+                return;
+            }
+            cullingResults = result.results.map(item => ({ ...item, keep: true }));
+            renderCullingResults();
+            if (result.skipped) document.getElementById('culling-summary-text').textContent += ` · Bỏ qua ${result.skipped} tệp không đọc được`;
+        }
+
+        document.getElementById('btn-cull').addEventListener('click', runCullingAnalysis);
+
+        document.getElementById('btn-keep-all').addEventListener('click', () => {
+            const shouldKeep = !cullingResults.every(item => item.keep);
+            cullingResults.forEach(item => item.keep = shouldKeep);
+            renderCullingResults();
+        });
+
+        document.getElementById('btn-close-preview').addEventListener('click', () => {
+            document.getElementById('image-preview-modal').style.display = 'none';
+        });
+        document.getElementById('image-preview-modal').addEventListener('click', event => {
+            if (event.target.id === 'image-preview-modal') event.currentTarget.style.display = 'none';
+        });
+
+        restoreLastDriveFolder();
+        loadDashboard();
+
+        document.getElementById('btn-upload').addEventListener('click', async () => {
+            const customFolderName = document.getElementById('folder-name-input').value.trim();
+            const watermarkToggle = document.getElementById('watermark-toggle-input').checked;
+            const watermarkText = document.getElementById('watermark-text-input').value.trim();
+            const maxSelections = document.getElementById('max-selections-input').value.trim(); 
+
+            document.getElementById('progress-container').style.display = "block";
+            document.getElementById('upload-status').innerText = "Đang thiết lập cổng kết nối bảo mật...";
+            document.getElementById('btn-upload').disabled = true;
+
+            const result = await ipcRenderer.invoke('upload-to-drive', { 
+                folderPath: currentFolder, 
+                imageFiles: filteredImages, 
+                customFolderName, 
+                watermarkToggle, 
+                watermarkText,
+                maxSelections,
+                driveParentId: selectedDriveFolder.id,
+                driveParentPath: selectedDriveFolder.path
+            });
+
+            if (result.success) { 
+                pendingResumeData = null;
+                document.getElementById('resume-upload-box').style.display = 'none';
+                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b><br><br>🔗 Link gửi khách hàng: <a href="javascript:void(0)" onclick="ipcRenderer.invoke('open-external-link', '${result.folderLink}')">${result.folderLink}</a>`; 
+            } else { 
+                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`; 
+                document.getElementById('btn-upload').disabled = false; 
+                pendingResumeData = result.resumeData || null;
+                document.getElementById('resume-upload-box').style.display = pendingResumeData ? 'block' : 'none';
+            }
+        });
+
+        document.getElementById('btn-resume-upload').addEventListener('click', async () => {
+            if (!pendingResumeData) return;
+            const button = document.getElementById('btn-resume-upload');
+            button.disabled = true;
+            document.getElementById('progress-container').style.display = 'block';
+            document.getElementById('upload-status').innerText = 'Đang tiếp tục tải các ảnh còn lại...';
+            const result = await ipcRenderer.invoke('upload-to-drive', { resumeData: pendingResumeData });
+            button.disabled = false;
+            if (result.success) {
+                pendingResumeData = null;
+                document.getElementById('resume-upload-box').style.display = 'none';
+                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hoàn tất!</b><br><br>🔗 Link gửi khách hàng: <a href="javascript:void(0)" onclick="ipcRenderer.invoke('open-external-link', '${result.folderLink}')">${result.folderLink}</a>`;
+            } else {
+                pendingResumeData = result.resumeData || pendingResumeData;
+                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`;
+            }
+        });
+
+        ipcRenderer.on('upload-progress', (event, data) => {
+            document.getElementById('progress-bar').style.width = data.progress + "%";
+            document.getElementById('progress-text').innerText = `${data.progress}%`;
+            document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile}`;
+        });
+
+        ipcRenderer.on('sync-progress', (event, data) => {
+            document.getElementById('sync-progress-bar').style.width = data.progress + "%";
+            document.getElementById('sync-progress-text').innerText = `${data.progress}% (${data.count})`;
+            document.getElementById('sync-global-status').innerText = `Đang phân loại tệp: ${data.currentFile}`;
+        });
+
+        ipcRenderer.on('sync-progress-manual', (event, data) => {
+            document.getElementById('manual-sync-progress-bar').style.width = data.progress + "%";
+            document.getElementById('manual-sync-progress-text').innerText = `${data.progress}%`;
+            document.getElementById('sync-status-msg').innerText = `Đang phân loại tệp: ${data.currentFile}`;
+        });
+
+        async function loadAlbumHistory() {
+            const gridContainer = document.getElementById('history-grid-container');
+            const syncSelect = document.getElementById('sync-folder-select');
+            
+            gridContainer.innerHTML = '<p style="text-align:center; grid-column:1/-1; padding:30px; color:#64748b;">⏳ Đang tải kho dữ liệu...</p>';
+            syncSelect.innerHTML = '<option value="">-- Bấm để chọn Album cần gom RAW --</option>';
+
+            const history = await ipcRenderer.invoke('get-history');
+            if(history.length === 0) { 
+                gridContainer.innerHTML = '<p style="text-align:center; grid-column:1/-1; padding:40px; color:#94a3b8; font-weight:500;">🗄️ Chưa có dữ liệu Album nào được tạo trên App này.</p>'; 
+                syncSelect.innerHTML += '<option value="MANUAL">✏️ Nhập ID thủ công (Nâng cao)</option>';
+                return; 
+            }
+
+            gridContainer.innerHTML = '';
+            history.forEach(album => {
+                const badgeClass = album.status.includes('Đã xong') ? 'album-badge done' : 'album-badge waiting';
+                const card = document.createElement('div');
+                card.className = 'album-card';
+                
+                const limitText = album.maxSelections ? `${album.maxSelections} ảnh` : `Không`;
+
+                card.innerHTML = `
+                    <div class="album-thumb-wrapper">
+                        <span class="album-thumb-placeholder" id="placeholder-${album.id}">📸</span>
+                        <img id="thumb-img-${album.id}" src="" onerror="this.style.display='none';" style="display:none;">
+                        <span class="album-badge ${badgeClass}" id="status-${album.id}" onclick="toggleStatus('${album.id}')" style="cursor:pointer;" title="Click đổi trạng thái nhanh">${album.status}</span>
+                    </div>
+                    <div class="album-info-box">
+                        <div>
+                            <div class="album-title-text" title="${album.name}">${album.name}</div>
+                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-date-text" title="${escapeHtml(album.localPath || '')}" style="overflow-wrap:anywhere;">📁 Máy: ${escapeHtml(album.localPath || 'Không còn đường dẫn')}</div>
+                            <div class="album-date-text" title="${escapeHtml(album.drivePath || '')}" style="overflow-wrap:anywhere;">☁️ Drive: ${escapeHtml(album.drivePath || 'Drive của tôi')}</div>
+                        </div>
+                        <div class="album-btn-row">
+                            <button class="btn-check" id="check-btn-${album.id}" onclick="checkProgress('${album.id}', this)">📊 Kiểm tra</button>
+                            <button class="btn-danger btn-sync" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
+                            <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
+                            <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
+                            <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
+                        </div>
+                    </div>
+                `;
+                gridContainer.appendChild(card);
+
+                ipcRenderer.invoke('get-album-thumbnail', album.localPath).then(thumbUri => {
+                    if (thumbUri) {
+                        const imgEl = document.getElementById(`thumb-img-${album.id}`);
+                        const placeholder = document.getElementById(`placeholder-${album.id}`);
+                        if (imgEl) { imgEl.src = thumbUri; imgEl.style.display = 'block'; }
+                        if (placeholder) placeholder.style.display = 'none';
+                    }
+                });
+
+                const option = document.createElement('option');
+                option.value = album.id;
+                option.text = `📸 ${album.name}`;
+                syncSelect.appendChild(option);
+            });
+
+            syncSelect.innerHTML += '<option value="MANUAL">✏️ Nhập ID thủ công (Nâng cao)</option>';
+            syncAlbumProgress();
+            if (!albumSyncTimer) albumSyncTimer = window.setInterval(syncAlbumProgress, 10000);
+        }
+
+        async function syncAlbumProgress() {
+            if (isAlbumSyncing || !document.getElementById('view-history').classList.contains('active')) return;
+            isAlbumSyncing = true;
+            try {
+                const history = await ipcRenderer.invoke('get-history');
+                await Promise.all(history.map(album => {
+                    const button = document.getElementById(`check-btn-${album.id}`);
+                    return button ? checkProgress(album.id, button, true) : Promise.resolve();
+                }));
+            } finally {
+                isAlbumSyncing = false;
+            }
+        }
+
+        document.getElementById('btn-choose-drive-folder').addEventListener('click', async () => {
+            driveNavigation = [{ id: null, path: 'Drive của tôi' }];
+            document.getElementById('drive-folder-modal').style.display = 'flex';
+            await loadDriveFolders();
+        });
+
+        document.getElementById('btn-clear-drive-folder').addEventListener('click', () => {
+            selectedDriveFolder = { id: null, path: 'Drive của tôi' };
+            updateDrivePath();
+        });
+
+        document.getElementById('btn-drive-back').addEventListener('click', async () => {
+            if (driveNavigation.length > 1) {
+                driveNavigation.pop();
+                await loadDriveFolders();
+            }
+        });
+
+        document.getElementById('btn-drive-cancel').addEventListener('click', () => {
+            document.getElementById('drive-folder-modal').style.display = 'none';
+        });
+
+        document.getElementById('btn-drive-select-current').addEventListener('click', () => {
+            const current = driveNavigation[driveNavigation.length - 1];
+            selectedDriveFolder = { id: current.id, path: current.path };
+            updateDrivePath();
+            document.getElementById('drive-folder-modal').style.display = 'none';
+        });
+
+        // ================= HÀM XỬ LÝ BẢNG SỬA SỐ LƯỢNG ĐÃ VÁ LỖI =================
+        function openEditLimitModal(folderId, currentLimit) {
+            folderIdBeingEdited = folderId;
+            document.getElementById('edit-limit-input').value = currentLimit > 0 ? currentLimit : "";
+            document.getElementById('edit-limit-modal').style.display = 'flex';
+            document.getElementById('edit-limit-input').focus();
+        }
+
+        function closeEditLimitModal() {
+            document.getElementById('edit-limit-modal').style.display = 'none';
+            folderIdBeingEdited = null;
+        }
+
+        async function saveNewLimit() {
+            if (!folderIdBeingEdited) return;
+            
+            const newLimit = document.getElementById('edit-limit-input').value;
+            // 🚨 SỬA LỖI TẠI ĐÂY: Phải giam lại ID trước khi gọi hàm đóng Modal (Vì hàm đóng Modal sẽ xóa biến ID này)
+            const targetFolderId = folderIdBeingEdited;
+            
+            closeEditLimitModal();
+            
+            const result = await ipcRenderer.invoke('update-album-settings', { 
+                folderId: targetFolderId, 
+                maxSelections: newLimit 
+            });
+            
+            if (result.success) {
+                alert("Đã cập nhật giới hạn ảnh thành công và đồng bộ lên Cloud!");
+                loadAlbumHistory(); 
+            }
+        }
+        // ================= KẾT THÚC =================
+
+        async function toggleStatus(folderId) {
+            const span = document.getElementById(`status-${folderId}`);
+            const newStatus = span.innerText.includes('chờ') ? 'Đã xong' : 'Đang chờ khách chọn';
+            await ipcRenderer.invoke('update-status', { id: folderId, status: newStatus });
+            loadAlbumHistory();
+        }
+
+        async function checkProgress(folderId, btn, silent = false) {
+            if (!silent) btn.innerText = "⏳...";
+            try {
+                const res = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const data = await res.json();
+                if(data.success) { 
+                    const count = Object.keys(data.liked_files).length;
+                    if (data.isFinalized) {
+                        btn.innerHTML = `🔒 ĐÃ CHỐT: ${count} tấm`;
+                        btn.style.background = "#8b5cf6"; 
+                        btn.style.color = "#fff";
+                        btn.style.border = "none";
+                        document.getElementById(`status-${folderId}`).innerText = "Đã chốt (Khóa)";
+                        document.getElementById(`status-${folderId}`).className = "album-badge done";
+                    } else {
+                        btn.innerHTML = `✅ Đang chọn: ${count} tấm`;
+                        btn.style.background = "#10b981"; 
+                        btn.style.color = "#fff";
+                        btn.style.border = "none";
+                    }
+                }
+            } catch (e) { if (!silent) btn.innerText = "❌ Lỗi"; }
+        }
+
+        async function deleteAlbumFromApp(folderId) {
+            if (confirm("Kiệt có chắc chắn muốn xóa bộ album này không?\nLink web cũ sẽ bị vô hiệu hóa hoàn toàn và khách hàng sẽ không thể truy cập được nữa.")) {
+                const result = await ipcRenderer.invoke('delete-album', folderId);
+                if (result.success) {
+                    alert("Đã hủy link ảnh thành công!");
+                    loadAlbumHistory();
+                }
+            }
+        }
+
+        async function flushAllServerCache() {
+            if (confirm("Kiệt có chắc chắn muốn làm sạch toàn bộ Cache trên Cloud không?\nĐiều này sẽ giải phóng bộ nhớ của Server và làm mới toàn bộ kết nối.")) {
+                const result = await ipcRenderer.invoke('flush-all-data');
+                if (result.success) alert("Đã quét sạch toàn bộ dữ liệu tạm trên hệ thống Cloud!");
+            }
+        }
+
+        async function triggerAutoSync(folderId, btn) {
+            const progressWrapper = document.getElementById('sync-progress-box-wrapper');
+            progressWrapper.style.display = 'block';
+            document.getElementById('sync-progress-bar').style.width = '0%';
+            document.getElementById('sync-progress-text').innerText = '0%';
+            document.getElementById('sync-global-status').style.color = '#2563eb';
+            document.getElementById('sync-global-status').innerText = "Đang cào dữ liệu từ Server...";
+            
+            btn.innerText = "⏳ Quét..."; btn.disabled = true;
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const data = await response.json();
+                if (data.success) {
+                    btn.innerText = "⚙️ Đang bốc...";
+                    document.getElementById('sync-global-status').innerText = "Đang định vị file RAW gốc (.CR3)...";
+                    
+                    const result = await ipcRenderer.invoke('auto-sync-raw', { folderId, likedList: data.liked_files || {} });
+                    
+                    if(result.success) {
+                        btn.className = "btn-success"; btn.innerText = "✔️ Xong";
+                        document.getElementById('sync-progress-bar').style.width = '100%';
+                        document.getElementById('sync-progress-text').innerText = '100%';
+                        document.getElementById('sync-global-status').style.color = '#10b981';
+                        document.getElementById('sync-global-status').innerText = result.msg;
+
+                        setTimeout(() => { btn.innerText = "⚡ Gom RAW"; btn.disabled = false; btn.className = "btn-danger"; progressWrapper.style.display = 'none'; }, 4000);
+                    } else {
+                        alert(result.msg); btn.innerText = "⚡ Gom RAW"; btn.disabled = false; progressWrapper.style.display = 'none';
+                    }
+                }
+            } catch (error) { alert("Lỗi kết nối Server."); btn.innerText = "⚡ Gom RAW"; btn.disabled = false; progressWrapper.style.display = 'none'; }
+        }
+
+        function toggleManualIdInput() {
+            const selectVal = document.getElementById('sync-folder-select').value;
+            document.getElementById('sync-folder-id-manual').style.display = (selectVal === 'MANUAL') ? 'block' : 'none';
+        }
+
+        document.getElementById('btn-sync-select-folder').addEventListener('click', async () => {
+            syncSourceFolder = await ipcRenderer.invoke('select-folder');
+            if (syncSourceFolder) { document.getElementById('sync-source-path').innerText = syncSourceFolder; document.getElementById('btn-sync-execute').style.display = "block"; }
+        });
+
+        document.getElementById('btn-sync-execute').addEventListener('click', async () => {
+            let folderId = document.getElementById('sync-folder-select').value;
+            if (folderId === 'MANUAL') folderId = document.getElementById('sync-folder-id-manual').value.trim();
+            if (!folderId) return alert("Vui lòng chọn Album!");
+            
+            document.getElementById('manual-sync-progress-box').style.display = 'block';
+            document.getElementById('sync-status-msg').style.color = '#2563eb';
+            document.getElementById('sync-status-msg').innerText = "Đang tải danh sách...";
+
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const data = await response.json();
+                if (data.success) {
+                    const result = await ipcRenderer.invoke('sync-liked-images-manual', { sourceFolder: syncSourceFolder, likedList: data.liked_files || {} });
+                    document.getElementById('sync-status-msg').style.color = result.success ? '#10b981' : '#ef4444';
+                    document.getElementById('sync-status-msg').innerText = result.msg;
+                } else { document.getElementById('sync-status-msg').style.color = '#ef4444'; document.getElementById('sync-status-msg').innerText = data.error; }
+            } catch (error) { document.getElementById('sync-status-msg').style.color = '#ef4444'; document.getElementById('sync-status-msg').innerText = "Lỗi kết nối!"; }
+        });
+    </script>
+</body>
+</html>

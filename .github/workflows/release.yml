@@ -1,0 +1,61 @@
+name: Release Finder
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desk/**'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desk/package-lock.json
+      - run: npm ci
+      - name: Configure Firebase Authentication
+        run: node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      - name: Set release version
+        run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
+      - name: Build and publish macOS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac --publish always
+
+  build-windows:
+    needs: build-macos
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desk/package-lock.json
+      - run: npm ci
+      - name: Configure Firebase Authentication
+        run: node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      - name: Set release version
+        run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
+      - name: Build and publish Windows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish always

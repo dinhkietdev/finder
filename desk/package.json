@@ -1,0 +1,54 @@
+{
+  "name": "finder",
+  "productName": "Finder",
+  "version": "1.0.0",
+  "description": "Ứng dụng quản lý album Finder",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package:mac": "electron-builder --mac --dir",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.1.0",
+    "googleapis": "^144.0.0",
+    "sharp": "^0.35.3",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.finder.desktop",
+    "productName": "Finder",
+    "mac": {
+      "category": "public.app-category.photography",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "Finder"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "dinhkietdev",
+        "repo": "finder"
+      }
+    ],
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
+  },
+  "author": "Trần Đình Kiệt",
+  "license": "ISC"
+}

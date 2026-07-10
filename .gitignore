@@ -1,1 +1,18 @@
-oauth-credentials.json
+# Dependencies and build artifacts
+**/node_modules/
+**/dist/
+
+# Firebase / Google credentials and local sessions
+desk/firabase.json
+desk/oauth-credentials.json
+desk/firebase-auth-config.js
+sever/oauth-credentials.json
+sever/session-token.json
+sever/database.json
+**/.env
+**/.env.*
+*.pem
+*.p12
+
+# OS files
+.DS_Store
