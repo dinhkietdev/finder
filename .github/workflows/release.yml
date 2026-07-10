@@ -52,7 +52,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: v1.0.${{ github.run_number }}
-        run: gh release create "$TAG" --title "Finder $TAG" --generate-notes || true
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## Cài đặt macOS
+
+          1. Mở file **Finder-*.dmg** và kéo Finder vào thư mục **Applications**.
+          2. Nếu macOS chặn app, hãy nhấp Control + click vào Finder.app, chọn **Open**, rồi xác nhận **Open**.
+          3. Nếu vẫn hiện thông báo *Finder.app bị hỏng*, mở Terminal và chạy:
+
+          ```bash
+          xattr -cr /Applications/Finder.app
+          ```
+
+          Chỉ thực hiện bước 3 khi bạn tải Finder từ release chính thức này. Bản macOS hiện chưa được Apple notarize.
+          EOF
+          gh release create "$TAG" --title "Finder $TAG" --notes-file release-notes.md || true
       - name: Upload macOS release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
