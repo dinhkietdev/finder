@@ -41,10 +41,17 @@ jobs:
             git tag -a "$TAG" -m "Finder $TAG"
             git push origin "$TAG"
           fi
-      - name: Build and publish macOS
+      # Publish the two macOS formats one at a time.  electron-builder starts
+      # both uploads concurrently otherwise, which can leave a release with
+      # only its first asset.
+      - name: Build and publish macOS ZIP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --mac --publish always
+        run: npx electron-builder --mac zip --publish always
+      - name: Build and publish macOS DMG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --mac dmg --publish always
 
   build-windows:
     needs: build-macos
