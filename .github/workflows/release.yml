@@ -2,11 +2,6 @@ name: Release Finder
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'desk/**'
-      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
