@@ -1,6 +1,7 @@
 name: Release Finder
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
