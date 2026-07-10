@@ -5,34 +5,143 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>FinderPicture - Bàn giao & Chọn Ảnh</title>
     <style>
-        :root { --bg-dark: #09090b; --bg-card: #18181b; --text-main: #f8fafc; --text-muted: #94a3b8; --accent: #3b82f6; --success: #10b981; --border: #27272a; }
+        :root {
+            --bg-dark: #060816;
+            --bg-card: #111827;
+            --bg-soft: #1f2937;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-2: #22c55e;
+            --warning: #f59e0b;
+            --border: #2f3b52;
+            --danger: #ef4444;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        body { background: var(--bg-dark); color: var(--text-main); padding-bottom: 60px; user-select: none; }
-        
-        header { background: rgba(9, 9, 11, 0.85); backdrop-filter: blur(12px); padding: 20px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 15px; }
-        .brand-title { font-size: 20px; font-weight: 700; color: #fff; text-transform: uppercase; }
-        
-        .gallery-container { max-width: 1400px; margin: 30px auto; padding: 0 20px; }
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 24px; }
-        
-        .photo-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: relative; }
-        .image-container { position: relative; width: 100%; height: 250px; background: #000; overflow: hidden; }
-        .image-container img { width: 100%; height: 100%; object-fit: cover; }
-        
-        .finalized-banner { display: none; width: 100%; background: linear-gradient(90deg, #8b5cf6, #6d28d9); color: white; text-align: center; padding: 12px; font-weight: bold; }
-        .message-box { text-align: center; grid-column: 1 / -1; padding: 40px; color: var(--text-muted); }
+        body { background: linear-gradient(135deg, var(--bg-dark), #111827); color: var(--text-main); padding: 20px 16px 80px; user-select: none; }
+        button, textarea { font: inherit; }
+
+        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+        .panel { background: rgba(17, 24, 39, 0.95); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); }
+
+        .header-panel { padding: 20px 22px; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+        .brand-title { font-size: 24px; font-weight: 800; letter-spacing: 1px; }
+        .subtext { color: var(--text-muted); margin-top: 4px; font-size: 13px; }
+        .stats { display: flex; flex-wrap: wrap; gap: 10px; }
+        .stat-chip { background: var(--bg-soft); padding: 10px 12px; border-radius: 999px; min-width: 110px; text-align: center; border: 1px solid var(--border); }
+        .stat-chip strong { display: block; font-size: 14px; }
+        .stat-chip span { font-size: 11px; color: var(--text-muted); }
+
+        .content-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 18px; }
+        .viewer-panel { padding: 16px; }
+        .viewer-shell { position: relative; border-radius: 16px; overflow: hidden; background: #000; min-height: 460px; display: flex; align-items: center; justify-content: center; }
+        .viewer-shell img { width: 100%; height: 100%; max-height: 70vh; object-fit: contain; display: block; }
+        .viewer-overlay { position: absolute; inset: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px; pointer-events: none; }
+        .viewer-overlay button { pointer-events: auto; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,0.65); color: #fff; font-size: 20px; cursor: pointer; }
+
+        .photo-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0 8px; }
+        .photo-name { font-size: 16px; font-weight: 700; }
+        .photo-badge { padding: 6px 10px; border-radius: 999px; font-size: 12px; background: rgba(59,130,246,0.18); color: #bfdbfe; }
+
+        .action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+        .btn { border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; font-weight: 700; color: #fff; transition: transform 0.2s ease, opacity 0.2s ease; }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary { background: linear-gradient(135deg, var(--accent), #2563eb); }
+        .btn-success { background: linear-gradient(135deg, var(--accent-2), #16a34a); }
+        .btn-warning { background: linear-gradient(135deg, var(--warning), #d97706); }
+        .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--border); }
+        .btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25); }
+
+        .hint { margin-top: 10px; color: var(--text-muted); font-size: 13px; }
+        .note-box { width: 100%; min-height: 112px; margin-top: 8px; border-radius: 12px; border: 1px solid var(--border); padding: 12px; background: #0f172a; color: var(--text-main); resize: vertical; }
+        .note-box:focus { outline: 2px solid rgba(59,130,246,0.35); border-color: var(--accent); }
+        .status-message { margin-top: 10px; min-height: 24px; font-size: 13px; color: #bfdbfe; }
+        .status-message.error { color: #fecaca; }
+        .status-message.success { color: #bbf7d0; }
+
+        .sidebar-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .sidebar-title { font-size: 16px; font-weight: 700; }
+        .selection-list { display: flex; flex-direction: column; gap: 8px; max-height: 430px; overflow: auto; padding-right: 4px; }
+        .selection-item { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+        .selection-item strong { display: block; font-size: 13px; margin-bottom: 4px; }
+        .selection-item span { color: var(--text-muted); font-size: 12px; display: block; }
+        .empty-state { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+
+        .thumb-strip { display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px 2px; }
+        .thumb-btn { flex: 0 0 92px; border: 2px solid transparent; border-radius: 12px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
+        .thumb-btn img { width: 92px; height: 92px; object-fit: cover; display: block; }
+        .thumb-btn.active { border-color: var(--accent); }
+        .thumb-btn.selected::after { content: '✓'; position: absolute; color: #fff; background: rgba(34,197,94,0.95); padding: 4px 6px; border-radius: 999px; font-size: 10px; margin: 6px; }
+
+        .finalized-banner { display: none; padding: 12px 16px; border-radius: 12px; background: linear-gradient(90deg, #7c3aed, #6d28d9); color: white; text-align: center; font-weight: 700; }
+
+        @media (max-width: 900px) {
+            .content-grid { grid-template-columns: 1fr; }
+            .header-panel { flex-direction: column; align-items: flex-start; }
+        }
     </style>
 </head>
 <body>
-    <div id="finalizedBanner" class="finalized-banner">ALBUM ĐÃ ĐƯỢC CHỐT - KHÔNG THỂ THAY ĐỔI</div>
-    
-    <header>
-        <div class="brand-title">FINDERPICTURE</div>
-    </header>
+    <div class="container">
+        <div id="finalizedBanner" class="finalized-banner">ALBUM ĐÃ ĐƯỢC CHỐT - KHÔNG THỂ THAY ĐỔI</div>
 
-    <div class="gallery-container">
-        <div class="gallery-grid" id="gallery">
-            <div class="message-box">⏳ Đang tải ảnh từ Server...</div>
+        <div class="panel header-panel">
+            <div>
+                <div class="brand-title">FINDERPICTURE</div>
+                <div class="subtext">Vuốt để xem ảnh • Chọn ảnh • Ghi chú • Xác nhận</div>
+            </div>
+            <div class="stats">
+                <div class="stat-chip">
+                    <strong id="photoIndexLabel">0/0</strong>
+                    <span>Ảnh hiện tại</span>
+                </div>
+                <div class="stat-chip">
+                    <strong id="selectedCountLabel">0</strong>
+                    <span>Đã chọn</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <div class="panel viewer-panel">
+                <div class="viewer-shell" id="viewerShell">
+                    <img id="mainImage" src="" alt="Ảnh đang tải">
+                    <div class="viewer-overlay">
+                        <button id="prevBtn" aria-label="Ảnh trước">←</button>
+                        <button id="nextBtn" aria-label="Ảnh tiếp theo">→</button>
+                    </div>
+                </div>
+
+                <div class="photo-meta">
+                    <div>
+                        <div class="photo-name" id="photoName">Đang tải ảnh...</div>
+                        <div class="hint">Vuốt trái/phải trên ảnh để chuyển nhanh</div>
+                    </div>
+                    <div class="photo-badge" id="photoStatusBadge">Đang chờ</div>
+                </div>
+
+                <div class="action-row">
+                    <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
+                    <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
+                    <button id="confirmBtn" class="btn btn-primary">✔️ Xác nhận ảnh này</button>
+                </div>
+
+                <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
+                <textarea id="noteInput" class="note-box" placeholder="Nhập ghi chú cho khách, ví dụ cần chỉnh sửa hoặc ưu tiên..."></textarea>
+                <div id="statusMessage" class="status-message">Đang tải dữ liệu album...</div>
+            </div>
+
+            <div class="panel sidebar-panel">
+                <div class="sidebar-title">Ảnh đã chọn</div>
+                <div id="selectionList" class="selection-list"></div>
+                <button id="confirmAllBtn" class="btn btn-primary">✔️ Xác nhận tất cả ảnh đã chọn</button>
+            </div>
+        </div>
+
+        <div class="panel" style="padding: 14px 16px;">
+            <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
 
@@ -41,43 +150,268 @@
         const urlParams = new URLSearchParams(window.location.search);
         const folderId = urlParams.get('id');
 
-        async function loadGallery() {
-            const gallery = document.getElementById('gallery');
+        const state = {
+            images: [],
+            currentIndex: 0,
+            isLoading: false
+        };
+
+        const elements = {
+            mainImage: document.getElementById('mainImage'),
+            photoName: document.getElementById('photoName'),
+            photoIndexLabel: document.getElementById('photoIndexLabel'),
+            selectedCountLabel: document.getElementById('selectedCountLabel'),
+            photoStatusBadge: document.getElementById('photoStatusBadge'),
+            noteInput: document.getElementById('noteInput'),
+            statusMessage: document.getElementById('statusMessage'),
+            selectionList: document.getElementById('selectionList'),
+            thumbStrip: document.getElementById('thumbStrip'),
+            selectBtn: document.getElementById('selectBtn'),
+            saveNoteBtn: document.getElementById('saveNoteBtn'),
+            confirmBtn: document.getElementById('confirmBtn'),
+            confirmAllBtn: document.getElementById('confirmAllBtn'),
+            prevBtn: document.getElementById('prevBtn'),
+            nextBtn: document.getElementById('nextBtn'),
+            viewerShell: document.getElementById('viewerShell'),
+            finalizedBanner: document.getElementById('finalizedBanner')
+        };
+
+        function setMessage(message, type = 'info') {
+            elements.statusMessage.textContent = message;
+            elements.statusMessage.className = 'status-message';
+            if (type === 'error') elements.statusMessage.classList.add('error');
+            if (type === 'success') elements.statusMessage.classList.add('success');
+        }
+
+        function getCurrentImage() {
+            return state.images[state.currentIndex] || null;
+        }
+
+        function render() {
+            if (!state.images.length) {
+                elements.mainImage.src = '';
+                elements.photoName.textContent = 'Không có ảnh nào';
+                elements.photoIndexLabel.textContent = '0/0';
+                elements.selectedCountLabel.textContent = '0';
+                elements.photoStatusBadge.textContent = 'Trống';
+                elements.selectionList.innerHTML = '<div class="empty-state">Không có ảnh nào để hiển thị.</div>';
+                elements.thumbStrip.innerHTML = '';
+                return;
+            }
+
+            const current = getCurrentImage();
+            const isGoogleAvatar = current.thumbnail && current.thumbnail.includes('googleusercontent.com/profile');
+            const imgUrl = isGoogleAvatar ? current.originalUrl : (current.thumbnail || current.originalUrl);
+            elements.mainImage.src = imgUrl || '';
+            elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
+            elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
+            elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
+            elements.selectedCountLabel.textContent = state.images.filter(item => item.selected).length;
+            elements.photoStatusBadge.textContent = current.selected ? 'Đã chọn' : 'Chưa chọn';
+            elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
+            elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
+            elements.selectBtn.classList.toggle('active', !!current.selected);
+            elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
+            elements.noteInput.value = current.note || '';
+
+            elements.thumbStrip.innerHTML = '';
+            state.images.forEach((img, index) => {
+                const thumbBtn = document.createElement('button');
+                thumbBtn.className = 'thumb-btn';
+                if (index === state.currentIndex) thumbBtn.classList.add('active');
+                if (img.selected) thumbBtn.classList.add('selected');
+                thumbBtn.innerHTML = `<img src="${img.thumbnail || img.originalUrl || ''}" alt="${img.shortName || img.fullName || 'Ảnh'}">`;
+                thumbBtn.onclick = () => {
+                    state.currentIndex = index;
+                    render();
+                };
+                elements.thumbStrip.appendChild(thumbBtn);
+            });
+
+            renderSelectionList();
+        }
+
+        function renderSelectionList() {
+            const selectedImages = state.images.filter(item => item.selected);
+            elements.selectionList.innerHTML = '';
+
+            if (!selectedImages.length) {
+                elements.selectionList.innerHTML = '<div class="empty-state">Chưa có ảnh nào được chọn. Nhấn “Chọn ảnh” để lưu lựa chọn.</div>';
+                return;
+            }
+
+            selectedImages.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'selection-item';
+                card.innerHTML = `
+                    <strong>${item.shortName || item.fullName || 'Ảnh'}</strong>
+                    <span>${item.note ? item.note : 'Không có ghi chú'}</span>
+                `;
+                elements.selectionList.appendChild(card);
+            });
+        }
+
+        function nextImage() {
+            if (!state.images.length) return;
+            state.currentIndex = (state.currentIndex + 1) % state.images.length;
+            render();
+        }
+
+        function prevImage() {
+            if (!state.images.length) return;
+            state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
+            render();
+        }
+
+        function attachSwipe() {
+            let startX = 0;
+            elements.viewerShell.addEventListener('touchstart', (event) => {
+                startX = event.touches[0].clientX;
+            }, { passive: true });
+
+            elements.viewerShell.addEventListener('touchend', (event) => {
+                const delta = event.changedTouches[0].clientX - startX;
+                if (Math.abs(delta) > 60) {
+                    if (delta < 0) nextImage();
+                    else prevImage();
+                }
+            }, { passive: true });
+        }
+
+        async function saveCurrentSelection() {
+            const current = getCurrentImage();
+            if (!current) return;
+
+            current.note = elements.noteInput.value.trim();
+            const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fileName: current.fullName,
+                    isLiked: !!current.selected,
+                    note: current.note
+                })
+            });
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'Không thể lưu dữ liệu');
+            return data;
+        }
+
+        async function loadAlbum() {
+            if (!folderId) {
+                setMessage('❌ ID Album không hợp lệ.', 'error');
+                return;
+            }
+
             try {
                 const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`);
                 const data = await response.json();
-                
-                if (data.success) {
-                    if (data.isFinalized) document.getElementById('finalizedBanner').style.display = 'block';
-                    
-                    gallery.innerHTML = '';
-                    data.files.forEach(file => {
-                        // FIX: Kiểm tra nếu link thumbnail là link avatar mặc định của google, ép lấy originalUrl
-                        const isGoogleAvatar = file.thumbnail && file.thumbnail.includes('googleusercontent.com/profile');
-                        const imgUrl = isGoogleAvatar ? file.originalUrl : file.thumbnail;
-                        
-                        gallery.innerHTML += `
-                            <div class="photo-card">
-                                <div class="image-container">
-                                    <img src="${imgUrl}" alt="${file.shortName}" loading="lazy">
-                                </div>
-                                <div style="padding:12px; text-align: center; font-size: 14px;">${file.shortName}</div>
-                            </div>
-                        `;
-                    });
-                } else {
-                    gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Lỗi: ${data.error || "Không thể lấy dữ liệu"}</div>`;
+
+                if (!data.success) {
+                    setMessage(`❌ ${data.error || 'Không thể tải album.'}`, 'error');
+                    return;
                 }
-            } catch (e) {
-                gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Không thể kết nối tới Server.</div>`;
+
+                if (data.isFinalized) elements.finalizedBanner.style.display = 'block';
+                else elements.finalizedBanner.style.display = 'none';
+
+                state.images = (data.files || []).map(file => ({
+                    ...file,
+                    fullName: file.fullName || file.shortName || '',
+                    shortName: file.shortName || file.fullName || '',
+                    selected: false,
+                    note: ''
+                }));
+
+                const likedList = data.liked_list || {};
+                state.images.forEach(item => {
+                    const savedData = likedList[item.fullName];
+                    if (savedData && typeof savedData === 'object') {
+                        item.selected = !!savedData.isLiked;
+                        item.note = savedData.note || '';
+                    }
+                });
+
+                state.currentIndex = 0;
+                render();
+                setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+            } catch (error) {
+                setMessage('❌ Không thể kết nối tới Server.', 'error');
             }
         }
 
-        if (folderId) {
-            loadGallery();
-        } else {
-            document.getElementById('gallery').innerHTML = `<div class="message-box">❌ ID Album không hợp lệ.</div>`;
-        }
+        elements.selectBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            current.selected = !current.selected;
+            try {
+                await saveCurrentSelection();
+                render();
+                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
+            } catch (error) {
+                current.selected = !current.selected;
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.saveNoteBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            try {
+                current.note = elements.noteInput.value.trim();
+                await saveCurrentSelection();
+                render();
+                setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+            } catch (error) {
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.confirmBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            current.selected = true;
+            try {
+                await saveCurrentSelection();
+                render();
+                setMessage('✔️ Đã xác nhận ảnh này.', 'success');
+            } catch (error) {
+                current.selected = false;
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.confirmAllBtn.addEventListener('click', async () => {
+            const selectedImages = state.images.filter(item => item.selected);
+            if (!selectedImages.length) {
+                setMessage('⚠️ Chưa có ảnh nào được chọn để xác nhận.', 'error');
+                return;
+            }
+
+            try {
+                for (const item of selectedImages) {
+                    item.note = item.note || '';
+                    await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fileName: item.fullName, isLiked: true, note: item.note })
+                    });
+                }
+                setMessage(`✔️ Đã xác nhận ${selectedImages.length} ảnh đã chọn.`, 'success');
+            } catch (error) {
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.prevBtn.addEventListener('click', prevImage);
+        elements.nextBtn.addEventListener('click', nextImage);
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowRight') nextImage();
+            if (event.key === 'ArrowLeft') prevImage();
+        });
+
+        attachSwipe();
+        loadAlbum();
     </script>
 </body>
 </html>
