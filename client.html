@@ -31,6 +31,9 @@
         .subtext { color: var(--text-muted); margin-top: 6px; font-size: 13px; }
         .stats { display: flex; flex-wrap: wrap; gap: 10px; justify-self: end; }
         .stat-chip { background: var(--bg-soft); padding: 10px 12px; border-radius: 999px; min-width: 110px; text-align: center; border: 1px solid var(--border); }
+        button.stat-chip { color: var(--text-main); cursor: pointer; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+        button.stat-chip:hover { transform: translateY(-2px); border-color: #5b9cf4; background: #273449; }
+        button.stat-chip:focus-visible { outline: 3px solid rgba(59,130,246,.38); outline-offset: 2px; }
         .stat-chip strong { display: block; font-size: 14px; }
         .stat-chip span { font-size: 11px; color: var(--text-muted); }
 
@@ -136,19 +139,19 @@
                 <div class="subtext">👆 Vuốt xem ảnh &nbsp;•&nbsp; ✅ Chọn ảnh &nbsp;•&nbsp; 📝 Ghi chú &nbsp;•&nbsp; 🔒 Chốt lựa chọn</div>
             </div>
             <div class="stats">
-                <div class="stat-chip">
+                <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại">
                     <strong id="photoIndexLabel">0/0</strong>
                     <span>Ảnh hiện tại</span>
-                </div>
-                <div class="stat-chip">
+                </button>
+                <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn">
                     <strong id="selectedCountLabel">0</strong>
                     <span>Đã chọn</span>
-                </div>
+                </button>
             </div>
         </div>
 
         <div class="content-grid">
-            <div class="panel viewer-panel">
+            <div class="panel viewer-panel" id="currentImageSection" tabindex="-1">
                 <div class="viewer-shell" id="viewerShell">
                     <img id="mainImage" src="" alt="Ảnh đang tải">
                     <div class="viewer-overlay">
@@ -165,7 +168,7 @@
                     <div class="photo-badge" id="photoStatusBadge">Đang chờ</div>
                 </div>
 
-                <div class="action-row">
+                <div class="action-row" id="imageActionRow">
                     <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
                     <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
                 </div>
@@ -177,7 +180,7 @@
                 <div id="statusMessage" class="status-message">Đang tải dữ liệu album...</div>
             </div>
 
-            <div class="panel sidebar-panel">
+            <div class="panel sidebar-panel" id="selectedImagesSection" tabindex="-1">
                 <div class="sidebar-title">Ảnh đã chọn</div>
                 <div id="selectionList" class="selection-list"></div>
                 <button id="confirmAllBtn" class="btn btn-primary">✔️ Xác nhận tất cả ảnh đã chọn</button>
@@ -221,11 +224,16 @@
 
         const elements = {
             mainImage: document.getElementById('mainImage'),
+            currentImageSection: document.getElementById('currentImageSection'),
+            selectedImagesSection: document.getElementById('selectedImagesSection'),
+            jumpToCurrent: document.getElementById('jumpToCurrent'),
+            jumpToSelected: document.getElementById('jumpToSelected'),
             photoName: document.getElementById('photoName'),
             photoIndexLabel: document.getElementById('photoIndexLabel'),
             selectedCountLabel: document.getElementById('selectedCountLabel'),
             photoStatusBadge: document.getElementById('photoStatusBadge'),
             noteInput: document.getElementById('noteInput'),
+            imageActionRow: document.getElementById('imageActionRow'),
             statusMessage: document.getElementById('statusMessage'),
             selectionList: document.getElementById('selectionList'),
             thumbStrip: document.getElementById('thumbStrip'),
@@ -315,9 +323,13 @@
             [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
                 .forEach(element => { element.disabled = state.isFinalized; });
             elements.noteSection.style.display = state.isFinalized ? 'none' : 'block';
+            elements.imageActionRow.style.display = state.isFinalized ? 'none' : '';
             elements.saveNoteBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.confirmAllBtn.style.display = state.isFinalized ? 'none' : '';
             elements.lightboxSelectBtn.disabled = state.isFinalized;
             elements.lightboxNoteBtn.disabled = state.isFinalized;
+            elements.lightboxSelectBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.lightboxNoteBtn.style.display = state.isFinalized ? 'none' : '';
 
             elements.thumbStrip.innerHTML = '';
             state.images.map((img, index) => ({ img, index }))
@@ -669,6 +681,12 @@
 
         elements.prevBtn.addEventListener('click', prevImage);
         elements.nextBtn.addEventListener('click', nextImage);
+        function jumpToSection(section) {
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            window.setTimeout(() => section.focus({ preventScroll: true }), 350);
+        }
+        elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
+        elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();
