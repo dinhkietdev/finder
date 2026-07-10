@@ -742,6 +742,10 @@
             if (result.skipped) document.getElementById('culling-summary-text').textContent += ` · Bỏ qua ${result.skipped} tệp không đọc được`;
         }
 
+        ipcRenderer.on('culling-progress', (event, data) => {
+            document.getElementById('culling-summary-text').textContent = `Đang phân tích ${data.completed}/${data.total} ảnh trên máy…`;
+        });
+
         document.getElementById('btn-cull').addEventListener('click', runCullingAnalysis);
 
         document.getElementById('btn-keep-all').addEventListener('click', () => {

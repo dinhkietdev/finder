@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const http = require('http');
 const https = require('https'); 
 const { google } = require('googleapis');
@@ -49,6 +50,8 @@ let updateCheckStarted = false;
 const ONLINE_DOMAIN = 'finder-swart-pi.vercel.app'; 
 const ONLINE_SERVER = `https://${ONLINE_DOMAIN}`;
 const MAX_CONCURRENT_UPLOADS = 4;
+const AI_ANALYSIS_CONCURRENCY = Math.max(2, Math.min(6, (os.cpus().length || 4) - 1));
+const qualityCache = new Map();
 
 const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
@@ -352,9 +355,14 @@ function getPercentile(values, percentile) {
 
 async function inspectImageQuality(folderPath, file) {
     const input = path.join(folderPath, file);
+    const fileStat = await fs.promises.stat(input);
+    const cacheKey = `${input}:${fileStat.size}:${fileStat.mtimeMs}`;
+    const cached = qualityCache.get(cacheKey);
+    if (cached) return { ...cached, file };
     const { data, info } = await sharp(input)
         .rotate()
-        .resize({ width: 320, height: 320, fit: 'inside', withoutEnlargement: true })
+        // 192px vẫn đủ tin cậy cho sáng/tối và out nét, giảm đáng kể CPU/RAM.
+        .resize({ width: 192, height: 192, fit: 'inside', withoutEnlargement: true, fastShrinkOnLoad: true })
         .grayscale()
         .raw()
         .toBuffer({ resolveWithObject: true });
@@ -380,13 +388,16 @@ async function inspectImageQuality(folderPath, file) {
         }
     }
 
-    return {
+    const result = {
         file,
         brightness: Math.round(sum / data.length),
         darkRatio: darkPixels / data.length,
         brightRatio: brightPixels / data.length,
         sharpness: Number((laplacianTotal / Math.max(samples, 1)).toFixed(1))
     };
+    qualityCache.set(cacheKey, result);
+    if (qualityCache.size > 5000) qualityCache.delete(qualityCache.keys().next().value);
+    return result;
 }
 
 ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }) => {
@@ -394,14 +405,19 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }
     const metrics = [];
     const errors = [];
     const queue = [...imageFiles];
+    let completed = 0;
     const worker = async () => {
         while (queue.length) {
             const file = queue.shift();
-            try { metrics.push(await inspectImageQuality(folderPath, file)); }
-            catch (error) { errors.push(file); }
+            try {
+                metrics.push(await inspectImageQuality(folderPath, file));
+                completed++;
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('culling-progress', { completed, total: imageFiles.length });
+            }
+            catch (error) { errors.push(file); completed++; }
         }
     };
-    await Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(AI_ANALYSIS_CONCURRENCY, queue.length) }, worker));
     const softImageThreshold = getPercentile(metrics.map(item => item.sharpness), 0.15);
 
     const results = metrics.map(item => {
