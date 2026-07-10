@@ -43,6 +43,18 @@ function saveDB() {
 }
 
 function getOAuth2Client() {
+    // 1. Ưu tiên đọc từ biến môi trường trên Vercel (Bảo mật cao nhất)
+    if (process.env.GOOGLE_OAUTH_CREDENTIALS) {
+        try {
+            const credentials = JSON.parse(process.env.GOOGLE_OAUTH_CREDENTIALS);
+            const { client_id, client_secret } = credentials.installed || credentials.web;
+            return new google.auth.OAuth2(client_id, client_secret);
+        } catch (e) {
+            console.error("Lỗi định dạng GOOGLE_OAUTH_CREDENTIALS");
+        }
+    }
+    
+    // 2. Fallback đọc file local nếu chạy trên máy tính của bạn
     const credentialsPath = path.join(__dirname, 'oauth-credentials.json');
     if (!fs.existsSync(credentialsPath)) return null;
     const content = fs.readFileSync(credentialsPath, 'utf8');
