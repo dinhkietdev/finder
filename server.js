@@ -5,6 +5,7 @@ const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
 const { getDatabase } = require('firebase-admin/database');
 
 const app = express();
@@ -30,6 +31,7 @@ let albumSettingsDatabase = {};
 let bannedAlbums = [];
 let finalizedDatabase = {}; 
 let firebaseDb = null;
+let firebaseAuth = null;
 
 // Vercel không giữ được file giữa các lần chạy. Khi cấu hình Firebase, toàn bộ
 // trạng thái album sẽ được lưu bền vững; máy local vẫn có thể dùng database.json.
@@ -43,6 +45,7 @@ try {
             ? getApps()[0]
             : initializeApp({ credential: cert(serviceAccount), databaseURL });
         firebaseDb = getDatabase(firebaseApp);
+        firebaseAuth = getAuth(firebaseApp);
     }
 } catch (error) {
     console.error('Không thể khởi tạo Firebase:', error.message);
@@ -147,14 +150,83 @@ function getStoredTokens() {
     return null;
 }
 
-app.post('/api/auth/save-token', (req, res) => {
+async function getStoredTokensForStudio(studioId) {
+    if (studioId && firebaseDb) {
+        const tokens = (await firebaseDb.ref(`finderStudios/${studioId}/googleDriveTokens`).once('value')).val();
+        if (tokens) return tokens;
+    }
+    // Chỉ giữ fallback này cho album cũ được tạo trước khi có Studio_ID.
+    return getStoredTokens();
+}
+
+const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
+
+async function getStudioProfile(uid) {
+    if (!firebaseDb) return null;
+    const snapshot = await firebaseDb.ref(`finderStudios/${uid}`).once('value');
+    return snapshot.val();
+}
+
+async function requireStudioUser(req, res, next) {
+    try {
+        if (!firebaseAuth || !firebaseDb) return res.status(503).json({ error: 'Máy chủ chưa cấu hình Firebase Authentication.' });
+        const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+        if (!token) return res.status(401).json({ error: 'Vui lòng đăng nhập.' });
+        const user = await firebaseAuth.verifyIdToken(token);
+        const ref = firebaseDb.ref(`finderStudios/${user.uid}`);
+        let studio = (await ref.once('value')).val();
+        if (!studio) {
+            const isAdmin = adminEmails.has((user.email || '').toLowerCase());
+            studio = { id: user.uid, email: user.email || '', name: '', status: isAdmin ? 'active' : 'pending', role: isAdmin ? 'admin' : 'studio', createdAt: new Date().toISOString() };
+            await ref.set(studio);
+        }
+        req.user = user; req.studio = studio; next();
+    } catch (error) { res.status(401).json({ error: 'Phiên đăng nhập không hợp lệ.' }); }
+}
+
+function requireApprovedStudio(req, res, next) {
+    if (req.studio?.status !== 'active') return res.status(403).json({ error: 'Tài khoản studio đang chờ xét duyệt.', status: req.studio?.status || 'pending' });
+    next();
+}
+
+function requireAdmin(req, res, next) {
+    if (req.studio?.role !== 'admin') return res.status(403).json({ error: 'Chỉ quản trị viên có quyền thực hiện thao tác này.' });
+    next();
+}
+
+app.post('/api/auth/session', requireStudioUser, async (req, res) => {
+    const studioName = String(req.body?.studioName || '').trim();
+    if (studioName && !req.studio.name) {
+        req.studio.name = studioName;
+        await firebaseDb.ref(`finderStudios/${req.user.uid}/name`).set(studioName);
+    }
+    res.json({ success: true, studio: req.studio });
+});
+
+app.get('/api/admin/studios', requireStudioUser, requireApprovedStudio, requireAdmin, async (req, res) => {
+    const studios = (await firebaseDb.ref('finderStudios').once('value')).val() || {};
+    res.json({ success: true, studios: Object.values(studios).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))) });
+});
+
+app.post('/api/admin/studios/:studioId/approval', requireStudioUser, requireApprovedStudio, requireAdmin, async (req, res) => {
+    const status = req.body?.status === 'rejected' ? 'rejected' : 'active';
+    await firebaseDb.ref(`finderStudios/${req.params.studioId}`).update({ status, approvedAt: new Date().toISOString(), approvedBy: req.user.uid });
+    res.json({ success: true, status });
+});
+
+app.post('/api/auth/save-token', requireStudioUser, requireApprovedStudio, async (req, res) => {
     const { tokens } = req.body;
     if (!tokens) return res.status(400).json({ error: "Thiếu Token" });
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
+    await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).set(tokens);
     res.json({ success: true });
 });
 
-app.post('/api/album/:folderId/settings', async (req, res) => {
+app.get('/api/auth/drive-token', requireStudioUser, requireApprovedStudio, async (req, res) => {
+    const tokens = (await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).once('value')).val();
+    res.json({ success: true, tokens: tokens || null });
+});
+
+app.post('/api/album/:folderId/settings', requireStudioUser, requireApprovedStudio, async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
     const { isEnabled, text, maxSelections } = req.body;
@@ -171,13 +243,19 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = parseInt(maxSelections) || 0;
     }
     await persistState();
+    await firebaseDb.ref(`finderAlbumOwners/${folderId}`).set(req.user.uid);
     res.json({ success: true });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    finalizedDatabase[folderId] = true;
+    const previous = finalizedDatabase[folderId];
+    finalizedDatabase[folderId] = {
+        finalizedAt: typeof previous === 'object' && previous.finalizedAt
+            ? previous.finalizedAt
+            : new Date().toISOString()
+    };
     await persistState();
     res.json({ success: true });
 });
@@ -214,7 +292,8 @@ app.get('/api/album/:folderId', async (req, res) => {
             return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
         }
 
-        const tokens = getStoredTokens();
+        const ownerId = firebaseDb ? (await firebaseDb.ref(`finderAlbumOwners/${folderId}`).once('value')).val() : null;
+        const tokens = await getStoredTokensForStudio(ownerId);
         // CÂU BÁO LỖI ĐÃ ĐƯỢC THAY ĐỔI
         if (!tokens) return res.status(401).json({ error: "Server chưa nhận được Token từ Vercel." });
         
@@ -284,7 +363,8 @@ app.get('/api/album/:folderId/liked/all', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
     const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-    const isFinalized = !!finalizedDatabase[folderId];
+    const finalizedRecord = finalizedDatabase[folderId];
+    const isFinalized = !!finalizedRecord;
     const likedFilesMap = {};
     
     Object.keys(currentAlbumLikes).forEach(key => {
@@ -293,7 +373,13 @@ app.get('/api/album/:folderId/liked/all', async (req, res) => {
         if (isLiked) likedFilesMap[key] = typeof item === 'object' ? item.note : "";
     });
     
-    res.json({ success: true, folderId, liked_files: likedFilesMap, isFinalized });
+    res.json({
+        success: true,
+        folderId,
+        liked_files: likedFilesMap,
+        isFinalized,
+        finalizedAt: typeof finalizedRecord === 'object' ? finalizedRecord.finalizedAt || null : null
+    });
 });
 
 // Express sẽ chuyển mọi lỗi bất ngờ từ các route bất đồng bộ về đây. Trả JSON
