@@ -159,7 +159,9 @@ async function getStoredTokensForStudio(studioId) {
     return getStoredTokens();
 }
 
-const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',').map(email => email.trim().toLowerCase()).filter(Boolean));
+const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',')
+    .map(email => email.trim().replace(/^['"]|['"]$/g, '').toLowerCase())
+    .filter(Boolean));
 
 async function getStudioProfile(uid) {
     if (!firebaseDb) return null;
