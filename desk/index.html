@@ -142,6 +142,20 @@
         .update-card p { color:var(--muted); font-size:13px; line-height:1.5; }
         .update-card button { width:100%; justify-content:center; margin-top:18px; }
         @media (max-width: 960px) { .dashboard-stats { grid-template-columns:repeat(2, 1fr); } .dashboard-grid { grid-template-columns:1fr; } }
+        .upload-success-modal { display:none; position:fixed; inset:0; z-index:2000; align-items:center; justify-content:center; padding:20px; background:rgba(15,23,42,.48); backdrop-filter:blur(8px); }
+        .upload-success-modal.open { display:flex; }
+        .upload-success-card { width:min(520px,100%); background:#fff; border:1px solid #dbe3f0; border-radius:22px; padding:28px; box-shadow:0 24px 70px rgba(15,23,42,.28); }
+        .upload-success-icon { width:52px; height:52px; display:grid; place-items:center; border-radius:16px; background:#dcfce7; color:#15803d; font-size:28px; margin-bottom:16px; }
+        .upload-success-card h2 { margin:0; color:#0f172a; font-size:22px; }
+        .upload-success-card p { color:#64748b; line-height:1.55; margin:8px 0 16px; }
+        .upload-link-row { display:flex; gap:8px; align-items:center; padding:8px; border:1px solid #dbe3f0; background:#f8fafc; border-radius:12px; }
+        .upload-link-row input { min-width:0; flex:1; border:0; outline:0; background:transparent; color:#334155; font-size:12px; }
+        .upload-success-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
+        .upload-success-actions button { border:0; border-radius:10px; padding:11px 15px; cursor:pointer; font-weight:700; }
+        #copy-upload-link-btn { background:#2563eb; color:#fff; }
+        #open-upload-link-btn { background:#e2e8f0; color:#1e293b; }
+        #close-upload-success-btn { background:transparent; color:#64748b; }
+        @media (max-width:560px) { .upload-success-card { padding:22px; border-radius:18px; } .upload-success-actions { flex-wrap:wrap; } .upload-success-actions button { flex:1; min-width:120px; } }
     </style>
 </head>
 <body>
@@ -746,6 +760,29 @@
         restoreLastDriveFolder();
         loadDashboard();
 
+        let lastUploadedLink = '';
+        function showUploadSuccess(link) {
+            lastUploadedLink = link || '';
+            document.getElementById('upload-success-link').value = lastUploadedLink;
+            document.getElementById('upload-success-modal').classList.add('open');
+            document.getElementById('copy-upload-link-btn').focus();
+        }
+        document.getElementById('close-upload-success-btn').addEventListener('click', () => document.getElementById('upload-success-modal').classList.remove('open'));
+        document.getElementById('upload-success-modal').addEventListener('click', event => { if (event.target.id === 'upload-success-modal') event.currentTarget.classList.remove('open'); });
+        document.getElementById('open-upload-link-btn').addEventListener('click', () => { if (lastUploadedLink) ipcRenderer.invoke('open-external-link', lastUploadedLink); });
+        document.getElementById('copy-upload-link-btn').addEventListener('click', async event => {
+            if (!lastUploadedLink) return;
+            try {
+                await navigator.clipboard.writeText(lastUploadedLink);
+                event.currentTarget.textContent = 'Đã sao chép ✓';
+                setTimeout(() => event.currentTarget.textContent = 'Sao chép', 1800);
+            } catch (error) {
+                const input = document.getElementById('upload-success-link'); input.select(); document.execCommand('copy');
+                event.currentTarget.textContent = 'Đã sao chép ✓';
+                setTimeout(() => event.currentTarget.textContent = 'Sao chép', 1800);
+            }
+        });
+
         document.getElementById('btn-upload').addEventListener('click', async () => {
             const customFolderName = document.getElementById('folder-name-input').value.trim();
             const watermarkToggle = document.getElementById('watermark-toggle-input').checked;
@@ -770,7 +807,8 @@
             if (result.success) { 
                 pendingResumeData = null;
                 document.getElementById('resume-upload-box').style.display = 'none';
-                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b><br><br>🔗 Link gửi khách hàng: <a href="javascript:void(0)" onclick="ipcRenderer.invoke('open-external-link', '${result.folderLink}')">${result.folderLink}</a>`; 
+                document.getElementById('upload-status').innerHTML = '🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b>';
+                showUploadSuccess(result.folderLink);
             } else { 
                 document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`; 
                 document.getElementById('btn-upload').disabled = false; 
@@ -790,7 +828,8 @@
             if (result.success) {
                 pendingResumeData = null;
                 document.getElementById('resume-upload-box').style.display = 'none';
-                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hoàn tất!</b><br><br>🔗 Link gửi khách hàng: <a href="javascript:void(0)" onclick="ipcRenderer.invoke('open-external-link', '${result.folderLink}')">${result.folderLink}</a>`;
+                document.getElementById('upload-status').innerHTML = '🎉 <b style="color:#10b981;">Tải lên hoàn tất!</b>';
+                showUploadSuccess(result.folderLink);
             } else {
                 pendingResumeData = result.resumeData || pendingResumeData;
                 document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`;
@@ -1069,5 +1108,14 @@
             } catch (error) { document.getElementById('sync-status-msg').style.color = '#ef4444'; document.getElementById('sync-status-msg').innerText = "Lỗi kết nối!"; }
         });
     </script>
+    <div id="upload-success-modal" class="upload-success-modal" role="dialog" aria-modal="true" aria-labelledby="upload-success-title">
+        <div class="upload-success-card">
+            <div class="upload-success-icon">✓</div>
+            <h2 id="upload-success-title">Album đã tải lên thành công</h2>
+            <p>Album đã sẵn sàng. Bạn có thể sao chép liên kết hoặc mở trang khách hàng ngay bây giờ.</p>
+            <div class="upload-link-row"><input id="upload-success-link" readonly aria-label="Link gửi khách hàng"><button id="copy-upload-link-btn" type="button">Sao chép</button></div>
+            <div class="upload-success-actions"><button id="close-upload-success-btn" type="button">Để sau</button><button id="open-upload-link-btn" type="button">Mở trang khách</button></div>
+        </div>
+    </div>
 </body>
 </html>
