@@ -179,6 +179,9 @@ async function requireStudioUser(req, res, next) {
             const isAdmin = adminEmails.has((user.email || '').toLowerCase());
             studio = { id: user.uid, email: user.email || '', name: '', status: isAdmin ? 'active' : 'pending', role: isAdmin ? 'admin' : 'studio', createdAt: new Date().toISOString() };
             await ref.set(studio);
+        } else if (adminEmails.has((user.email || '').toLowerCase()) && (studio.role !== 'admin' || studio.status !== 'active')) {
+            studio = { ...studio, role: 'admin', status: 'active', email: user.email || studio.email || '' };
+            await ref.update({ role: 'admin', status: 'active', email: studio.email });
         }
         req.user = user; req.studio = studio; next();
     } catch (error) { res.status(401).json({ error: 'Phiên đăng nhập không hợp lệ.' }); }
