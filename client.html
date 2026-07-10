@@ -82,24 +82,19 @@
         .image-lightbox.open { display:flex; }
         .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
         .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
-        .lightbox-toolbar button { width:42px; height:42px; border:1px solid rgba(255,255,255,.35); border-radius:50%; background:rgba(15,23,42,.75); color:#fff; font-size:20px; cursor:pointer; }
+        .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
         .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
+        .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
+        .quick-note-modal.open { display:flex; }
+        .quick-note-card { width:min(440px,100%); background:#111827; border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:0 18px 40px rgba(0,0,0,.42); }
+        .quick-note-card h3 { font-size:17px; margin-bottom:10px; }
+        .quick-note-card textarea { width:100%; min-height:130px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:#fff; padding:11px; resize:vertical; }
+        .quick-note-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
         .help-robot { position:fixed; right:20px; bottom:20px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
         .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
         .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
         .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
         .robot-button img { width:100%; height:100%; object-fit:contain; border-radius:50%; image-rendering:auto; display:block; }
-        /* Cánh tay này được cắt trực tiếp từ ảnh robot, không dùng emoji/icon bên ngoài. */
-        .robot-wave-arm { position:absolute; width:27px; height:28px; right:-7px; top:43px; background-image:url('help-robot.png'); background-size:76px 76px; background-position:-52px -48px; background-repeat:no-repeat; transform-origin:5px 22px; animation:robot-arm-greeting 12s ease-in-out infinite; pointer-events:none; }
-        @keyframes robot-arm-greeting {
-            0%, 2% { transform:rotate(0deg); }
-            4% { transform:rotate(-42deg) translateY(-4px); }
-            6% { transform:rotate(-18deg) translateY(-7px); }
-            8% { transform:rotate(-45deg) translateY(-5px); }
-            10% { transform:rotate(-20deg) translateY(-7px); }
-            13% { transform:rotate(0deg); }
-            100% { transform:rotate(0deg); }
-        }
 
         @media (max-width: 900px) {
             .content-grid { grid-template-columns: 1fr; }
@@ -173,8 +168,10 @@
                     <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
                 </div>
 
-                <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
-                <textarea id="noteInput" class="note-box" placeholder="Nhập ghi chú cho khách, ví dụ cần chỉnh sửa hoặc ưu tiên..."></textarea>
+                <div id="noteSection">
+                    <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
+                    <textarea id="noteInput" class="note-box" placeholder="Ví dụ cần chỉnh sửa hoặc ưu tiên..."></textarea>
+                </div>
                 <div id="statusMessage" class="status-message">Đang tải dữ liệu album...</div>
             </div>
 
@@ -192,12 +189,19 @@
 
     <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
         <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
-        <div class="lightbox-toolbar"><button id="zoomOutBtn" aria-label="Thu nhỏ">−</button><button id="zoomInBtn" aria-label="Phóng to">+</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
-        <div class="zoom-tip">Chạm hai lần hoặc dùng hai ngón tay để phóng to</div>
+        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
+        <div class="zoom-tip">Chụm hai ngón tay hoặc cuộn ngay vị trí muốn phóng to</div>
+    </div>
+    <div id="quickNoteModal" class="quick-note-modal" aria-hidden="true">
+        <div class="quick-note-card">
+            <h3>📝 Ghi chú cho ảnh này</h3>
+            <textarea id="quickNoteInput" placeholder="Nhập yêu cầu chỉnh sửa hoặc ưu tiên..."></textarea>
+            <div class="quick-note-actions"><button id="quickNoteCancelBtn" class="btn btn-outline">Hủy</button><button id="quickNoteSaveBtn" class="btn btn-success">Lưu ghi chú</button></div>
+        </div>
     </div>
     <div id="helpRobot" class="help-robot visible">
         <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
-        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ"><img src="help-robot.png" alt="Robot trợ lý đang vẫy chào"><span class="robot-wave-arm" aria-hidden="true"></span></button>
+        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ"><img src="help-robot.png" alt="Robot trợ lý"></button>
     </div>
 
     <script>
@@ -232,13 +236,21 @@
             finalizedBanner: document.getElementById('finalizedBanner'),
             imageLightbox: document.getElementById('imageLightbox'),
             lightboxImage: document.getElementById('lightboxImage'),
-            zoomInBtn: document.getElementById('zoomInBtn'),
-            zoomOutBtn: document.getElementById('zoomOutBtn'),
             closeLightboxBtn: document.getElementById('closeLightboxBtn'),
+            lightboxSelectBtn: document.getElementById('lightboxSelectBtn'),
+            lightboxNoteBtn: document.getElementById('lightboxNoteBtn'),
+            quickNoteModal: document.getElementById('quickNoteModal'),
+            quickNoteInput: document.getElementById('quickNoteInput'),
+            quickNoteSaveBtn: document.getElementById('quickNoteSaveBtn'),
+            quickNoteCancelBtn: document.getElementById('quickNoteCancelBtn'),
             helpRobot: document.getElementById('helpRobot'),
-            robotButton: document.getElementById('robotButton')
+            robotButton: document.getElementById('robotButton'),
+            robotMessage: document.querySelector('#helpRobot .robot-message'),
+            noteSection: document.getElementById('noteSection')
         };
         let zoomScale = 1;
+        let robotMessageTimeout = null;
+        let robotMessageInterval = null;
         let pinchStartDistance = 0;
         let pinchStartScale = 1;
         const activePointers = new Map();
@@ -293,12 +305,19 @@
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
+            elements.lightboxSelectBtn.textContent = current.selected ? '✓ Đã chọn' : '✓ Chọn';
             elements.noteInput.value = current.note || '';
             [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
                 .forEach(element => { element.disabled = state.isFinalized; });
+            elements.noteSection.style.display = state.isFinalized ? 'none' : 'block';
+            elements.saveNoteBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.lightboxSelectBtn.disabled = state.isFinalized;
+            elements.lightboxNoteBtn.disabled = state.isFinalized;
 
             elements.thumbStrip.innerHTML = '';
-            state.images.forEach((img, index) => {
+            state.images.map((img, index) => ({ img, index }))
+                .sort((a, b) => Number(b.img.selected) - Number(a.img.selected))
+                .forEach(({ img, index }) => {
                 const thumbBtn = document.createElement('button');
                 thumbBtn.className = 'thumb-btn';
                 if (index === state.currentIndex) thumbBtn.classList.add('active');
@@ -351,6 +370,14 @@
             elements.lightboxImage.style.transform = `scale(${zoomScale})`;
         }
 
+        function setZoomOrigin(clientX, clientY) {
+            const bounds = elements.lightboxImage.getBoundingClientRect();
+            if (!bounds.width || !bounds.height) return;
+            const x = ((clientX - bounds.left) / bounds.width) * 100;
+            const y = ((clientY - bounds.top) / bounds.height) * 100;
+            elements.lightboxImage.style.transformOrigin = `${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`;
+        }
+
         function openLightbox() {
             const current = getCurrentImage();
             if (!current) return;
@@ -362,6 +389,7 @@
             elements.lightboxImage.dataset.fallback = current.thumbnail || elements.mainImage.src;
             elements.lightboxImage.src = highResolutionUrl;
             zoomScale = 1;
+            elements.lightboxImage.style.transformOrigin = 'center';
             applyZoom();
             elements.imageLightbox.classList.add('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'false');
@@ -371,6 +399,18 @@
             elements.imageLightbox.classList.remove('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'true');
             activePointers.clear();
+        }
+
+        function showRobotStatus(message, repeat = false) {
+            window.clearTimeout(robotMessageTimeout);
+            window.clearInterval(robotMessageInterval);
+            elements.robotMessage.textContent = message;
+            const flash = () => {
+                elements.helpRobot.classList.add('visible');
+                robotMessageTimeout = window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 5000);
+            };
+            flash();
+            if (repeat) robotMessageInterval = window.setInterval(flash, 10000);
         }
 
         function attachSwipe() {
@@ -394,12 +434,11 @@
             if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
         });
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
-        elements.zoomInBtn.addEventListener('click', () => { zoomScale += 0.5; applyZoom(); });
-        elements.zoomOutBtn.addEventListener('click', () => { zoomScale -= 0.5; applyZoom(); });
         elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox) closeLightbox(); });
-        elements.imageLightbox.addEventListener('dblclick', () => { zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
+        elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
         elements.imageLightbox.addEventListener('wheel', event => {
             event.preventDefault();
+            setZoomOrigin(event.clientX, event.clientY);
             zoomScale += event.deltaY < 0 ? 0.25 : -0.25;
             applyZoom();
         }, { passive: false });
@@ -409,6 +448,7 @@
                 const [a, b] = [...activePointers.values()];
                 pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
                 pinchStartScale = zoomScale;
+                setZoomOrigin((a.x + b.x) / 2, (a.y + b.y) / 2);
             }
         });
         elements.imageLightbox.addEventListener('pointermove', event => {
@@ -424,6 +464,40 @@
             activePointers.delete(event.pointerId);
             if (activePointers.size < 2) pinchStartDistance = 0;
         }));
+        elements.lightboxSelectBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current || (!current.selected && !canSelect(current))) return;
+            current.selected = !current.selected;
+            try {
+                await saveCurrentSelection();
+                render();
+                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
+            } catch (error) {
+                current.selected = !current.selected;
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+        elements.lightboxNoteBtn.addEventListener('click', () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            elements.quickNoteInput.value = current.note || '';
+            elements.quickNoteModal.classList.add('open');
+            elements.quickNoteModal.setAttribute('aria-hidden', 'false');
+            elements.quickNoteInput.focus();
+        });
+        elements.quickNoteCancelBtn.addEventListener('click', () => elements.quickNoteModal.classList.remove('open'));
+        elements.quickNoteSaveBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            current.note = elements.quickNoteInput.value.trim();
+            try {
+                await saveCurrentSelection();
+                elements.quickNoteModal.classList.remove('open');
+                render();
+                setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+            } catch (error) { setMessage(`❌ ${error.message}`, 'error'); }
+        });
+        elements.quickNoteModal.addEventListener('click', event => { if (event.target === elements.quickNoteModal) elements.quickNoteModal.classList.remove('open'); });
         elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
         window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 6000);
 
@@ -472,6 +546,7 @@
                 state.isFinalized = !!data.isFinalized;
                 if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
                 else elements.finalizedBanner.style.display = 'none';
+                if (state.isFinalized) showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
 
                 state.images = (data.files || []).map(file => ({
@@ -556,6 +631,7 @@
                 state.isFinalized = true;
                 elements.finalizedBanner.style.display = 'block';
                 render();
+                showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');
             } catch (error) {
                 setMessage(`❌ ${error.message}`, 'error');
