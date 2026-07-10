@@ -81,6 +81,8 @@
         .image-lightbox { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.94); align-items:center; justify-content:center; touch-action:none; }
         .image-lightbox.open { display:flex; }
         .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
+        .lightbox-image.zoomed { cursor:grab; }
+        .lightbox-image.panning { cursor:grabbing; transition:none; }
         .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
         .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
         .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
@@ -190,7 +192,7 @@
     <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
         <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
         <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
-        <div class="zoom-tip">Chụm hai ngón tay hoặc cuộn ngay vị trí muốn phóng to</div>
+        <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
     </div>
     <div id="quickNoteModal" class="quick-note-modal" aria-hidden="true">
         <div class="quick-note-card">
@@ -253,6 +255,9 @@
         let robotMessageInterval = null;
         let pinchStartDistance = 0;
         let pinchStartScale = 1;
+        let panX = 0;
+        let panY = 0;
+        let panPointer = null;
         const activePointers = new Map();
 
         function setMessage(message, type = 'info') {
@@ -290,9 +295,9 @@
             }
 
             const current = getCurrentImage();
-            const isGoogleAvatar = current.thumbnail && current.thumbnail.includes('googleusercontent.com/profile');
-            const imgUrl = isGoogleAvatar ? current.originalUrl : (current.thumbnail || current.originalUrl);
+            const imgUrl = current.preview || current.thumbnail || current.originalUrl;
             elements.mainImage.src = imgUrl || '';
+            elements.mainImage.decoding = 'async';
             elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
             elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
             elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
@@ -322,7 +327,7 @@
                 thumbBtn.className = 'thumb-btn';
                 if (index === state.currentIndex) thumbBtn.classList.add('active');
                 if (img.selected) thumbBtn.classList.add('selected');
-                thumbBtn.innerHTML = `<img src="${img.thumbnail || img.originalUrl || ''}" alt="${img.shortName || img.fullName || 'Ảnh'}">`;
+                thumbBtn.innerHTML = `<img loading="lazy" decoding="async" src="${img.thumbnail || img.originalUrl || ''}" alt="${img.shortName || img.fullName || 'Ảnh'}">`;
                 thumbBtn.onclick = () => {
                     state.currentIndex = index;
                     render();
@@ -367,28 +372,38 @@
 
         function applyZoom() {
             zoomScale = Math.max(1, Math.min(4, zoomScale));
-            elements.lightboxImage.style.transform = `scale(${zoomScale})`;
+            if (zoomScale === 1) { panX = 0; panY = 0; }
+            clampPan();
+            elements.lightboxImage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+            elements.lightboxImage.classList.toggle('zoomed', zoomScale > 1);
+        }
+
+        function clampPan() {
+            if (zoomScale <= 1) return;
+            const rect = elements.lightboxImage.getBoundingClientRect();
+            // getBoundingClientRect đã bao gồm zoom, nên chia ngược để lấy kích thước gốc.
+            const baseWidth = rect.width / zoomScale;
+            const baseHeight = rect.height / zoomScale;
+            const maxX = Math.max(0, (baseWidth * zoomScale - window.innerWidth) / 2);
+            const maxY = Math.max(0, (baseHeight * zoomScale - window.innerHeight) / 2);
+            panX = Math.max(-maxX, Math.min(maxX, panX));
+            panY = Math.max(-maxY, Math.min(maxY, panY));
         }
 
         function setZoomOrigin(clientX, clientY) {
-            const bounds = elements.lightboxImage.getBoundingClientRect();
-            if (!bounds.width || !bounds.height) return;
-            const x = ((clientX - bounds.left) / bounds.width) * 100;
-            const y = ((clientY - bounds.top) / bounds.height) * 100;
-            elements.lightboxImage.style.transformOrigin = `${Math.max(0, Math.min(100, x))}% ${Math.max(0, Math.min(100, y))}%`;
+            // Pan dùng hệ tọa độ tâm ảnh để giới hạn phần ảnh kéo ra ngoài khung nhìn.
+            elements.lightboxImage.style.transformOrigin = 'center';
         }
 
         function openLightbox() {
             const current = getCurrentImage();
             if (!current) return;
-            // Link webContentLink của Drive thường ép tải file xuống, không phù hợp
-            // cho thẻ <img>. Dùng thumbnail Drive độ phân giải cao để xem ổn định.
-            const highResolutionUrl = current.thumbnail
-                ? current.thumbnail.replace(/=s\d+(?:-.*)?$/, '=s2000')
-                : `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2000`;
-            elements.lightboxImage.dataset.fallback = current.thumbnail || elements.mainImage.src;
+            // Chỉ khi khách mở ảnh lớn mới tải bản 2200px; màn hình chính dùng bản 1440px.
+            const highResolutionUrl = current.lightbox || `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2200`;
+            elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
             elements.lightboxImage.src = highResolutionUrl;
             zoomScale = 1;
+            panX = 0; panY = 0; panPointer = null;
             elements.lightboxImage.style.transformOrigin = 'center';
             applyZoom();
             elements.imageLightbox.classList.add('open');
@@ -399,6 +414,7 @@
             elements.imageLightbox.classList.remove('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'true');
             activePointers.clear();
+            panPointer = null;
         }
 
         function showRobotStatus(message, repeat = false) {
@@ -443,26 +459,39 @@
             applyZoom();
         }, { passive: false });
         elements.imageLightbox.addEventListener('pointerdown', event => {
+            if (event.target.closest('button')) return;
+            elements.imageLightbox.setPointerCapture?.(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
             if (activePointers.size === 2) {
+                panPointer = null;
                 const [a, b] = [...activePointers.values()];
                 pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
                 pinchStartScale = zoomScale;
                 setZoomOrigin((a.x + b.x) / 2, (a.y + b.y) / 2);
+            } else if (zoomScale > 1) {
+                panPointer = event.pointerId;
+                elements.lightboxImage.classList.add('panning');
             }
         });
         elements.imageLightbox.addEventListener('pointermove', event => {
             if (!activePointers.has(event.pointerId)) return;
+            const previous = activePointers.get(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
             if (activePointers.size === 2 && pinchStartDistance) {
                 const [a, b] = [...activePointers.values()];
                 zoomScale = pinchStartScale * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStartDistance);
+                applyZoom();
+            } else if (panPointer === event.pointerId && zoomScale > 1) {
+                panX += event.clientX - previous.x;
+                panY += event.clientY - previous.y;
                 applyZoom();
             }
         });
         ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
             activePointers.delete(event.pointerId);
             if (activePointers.size < 2) pinchStartDistance = 0;
+            if (panPointer === event.pointerId) panPointer = null;
+            if (!panPointer) elements.lightboxImage.classList.remove('panning');
         }));
         elements.lightboxSelectBtn.addEventListener('click', async () => {
             const current = getCurrentImage();

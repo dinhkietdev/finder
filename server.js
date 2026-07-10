@@ -231,12 +231,20 @@ app.get('/api/album/:folderId', async (req, res) => {
             pageSize: 500
         });
 
+        // Drive tạo thumbnail theo kích thước được yêu cầu, nên trang khách chỉ tải
+        // đúng số pixel cần hiển thị thay vì tải ảnh gốc dung lượng lớn.
+        const driveThumbnail = (fileId, width) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w${width}`;
         const files = (response.data.files || []).map(file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
-            let thumb = file.thumbnailLink || file.webContentLink || '';
-            if (thumb.includes('=s220')) thumb = thumb.replace('=s220', '=s800');
-            else if (file.thumbnailLink) thumb += '=s800';
-            return { id: file.id, fullName: file.name, shortName: nameWithoutExt, thumbnail: thumb, originalUrl: file.webContentLink };
+            return {
+                id: file.id,
+                fullName: file.name,
+                shortName: nameWithoutExt,
+                thumbnail: driveThumbnail(file.id, 320),
+                preview: driveThumbnail(file.id, 1440),
+                lightbox: driveThumbnail(file.id, 2200),
+                originalUrl: file.webContentLink
+            };
         });
 
         albumCacheDatabase[folderId] = files;
