@@ -426,7 +426,11 @@ ipcMain.handle('get-culling-preview', async (event, { folderPath, file }) => {
     }
 });
 
-function authenticateCasi(requireFullDriveScope = false) {
+function isGoogleTokenError(error) {
+    return /invalid_(request|grant|client)|unauthorized_client/i.test(String(error?.message || error));
+}
+
+function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
     return new Promise((resolve, reject) => {
         const PORT = 3000;
         const redirectUri = `http://localhost:${PORT}/oauth2callback`;
@@ -452,7 +456,7 @@ function authenticateCasi(requireFullDriveScope = false) {
             }).listen(PORT);
         };
         getServerJson('/api/auth/drive-token', serverAuthHeaders()).then(session => {
-            if (session.tokens && session.clientId) {
+            if (!forceReauth && session.tokens && session.clientId) {
                 const grantedScopes = (session.tokens.scope || '').split(' ');
                 if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
                     oauth2Client = createClient(session.clientId);
@@ -469,17 +473,22 @@ function authenticateCasi(requireFullDriveScope = false) {
 ipcMain.handle('list-drive-folders', async (event, parentId) => {
     try {
         // Quyền drive đầy đủ chỉ được yêu cầu khi người dùng mở trình chọn thư mục.
-        const auth = await authenticateCasi(true);
-        const drive = google.drive({ version: 'v3', auth });
         const parent = parentId || 'root';
-        const response = await drive.files.list({
-            q: `mimeType = 'application/vnd.google-apps.folder' and '${parent}' in parents and trashed = false`,
-            fields: 'files(id, name)',
-            orderBy: 'name_natural',
-            pageSize: 1000,
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true
-        });
+        const loadFolders = async forceReauth => {
+            const auth = await authenticateCasi(true, forceReauth);
+            const drive = google.drive({ version: 'v3', auth });
+            return drive.files.list({
+                q: `mimeType = 'application/vnd.google-apps.folder' and '${parent}' in parents and trashed = false`,
+                fields: 'files(id, name)', orderBy: 'name_natural', pageSize: 1000,
+                supportsAllDrives: true, includeItemsFromAllDrives: true
+            });
+        };
+        let response;
+        try { response = await loadFolders(false); }
+        catch (error) {
+            if (!isGoogleTokenError(error)) throw error;
+            response = await loadFolders(true);
+        }
         return { success: true, folders: response.data.files || [] };
     } catch (error) {
         return { success: false, error: error.message };
