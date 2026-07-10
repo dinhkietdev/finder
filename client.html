@@ -16,7 +16,7 @@
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 24px; }
         
         .photo-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; position: relative; }
-        .image-container { position: relative; width: 100%; height: 250px; background: #000; }
+        .image-container { position: relative; width: 100%; height: 250px; background: #000; overflow: hidden; }
         .image-container img { width: 100%; height: 100%; object-fit: cover; }
         
         .finalized-banner { display: none; width: 100%; background: linear-gradient(90deg, #8b5cf6, #6d28d9); color: white; text-align: center; padding: 12px; font-weight: bold; }
@@ -48,32 +48,36 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    // Hiển thị banner nếu đã chốt
                     if (data.isFinalized) document.getElementById('finalizedBanner').style.display = 'block';
                     
                     gallery.innerHTML = '';
                     data.files.forEach(file => {
-                        // Logic lấy link ảnh: ưu tiên thumbnail, nếu lỗi link avatar thì lấy link gốc
-                        const imgUrl = (file.thumbnail.includes('profile')) ? file.originalUrl : file.thumbnail;
+                        // FIX: Kiểm tra nếu link thumbnail là link avatar mặc định của google, ép lấy originalUrl
+                        const isGoogleAvatar = file.thumbnail && file.thumbnail.includes('googleusercontent.com/profile');
+                        const imgUrl = isGoogleAvatar ? file.originalUrl : file.thumbnail;
                         
                         gallery.innerHTML += `
                             <div class="photo-card">
                                 <div class="image-container">
-                                    <img src="${imgUrl}" alt="${file.shortName}">
+                                    <img src="${imgUrl}" alt="${file.shortName}" loading="lazy">
                                 </div>
-                                <div style="padding:12px; text-align: center;">${file.shortName}</div>
+                                <div style="padding:12px; text-align: center; font-size: 14px;">${file.shortName}</div>
                             </div>
                         `;
                     });
                 } else {
-                    gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Lỗi: ${data.error}</div>`;
+                    gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Lỗi: ${data.error || "Không thể lấy dữ liệu"}</div>`;
                 }
             } catch (e) {
-                gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Lỗi kết nối Server.</div>`;
+                gallery.innerHTML = `<div class="message-box" style="color: #ef4444;">❌ Không thể kết nối tới Server.</div>`;
             }
         }
 
-        if (folderId) loadGallery();
+        if (folderId) {
+            loadGallery();
+        } else {
+            document.getElementById('gallery').innerHTML = `<div class="message-box">❌ ID Album không hợp lệ.</div>`;
+        }
     </script>
 </body>
 </html>
