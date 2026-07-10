@@ -143,6 +143,10 @@ autoUpdater.on('error', error => sendUpdateStatus('error', { message: error.mess
 
 ipcMain.handle('check-for-updates', async () => {
     if (!app.isPackaged) return { success: true, skipped: true };
+    // Bản macOS hiện được phát hành unsigned/notarized chưa đầy đủ. Việc để
+    // electron-updater tự thay thế app sẽ bị Gatekeeper từ chối do chữ ký.
+    // Cho Mac cập nhật thủ công bằng DMG; Windows vẫn auto-update bình thường.
+    if (process.platform === 'darwin') return { success: true, skipped: true, manual: true };
     if (updateCheckStarted) return { success: true, checking: true };
     updateCheckStarted = true;
     try { await autoUpdater.checkForUpdates(); return { success: true }; }
