@@ -257,6 +257,16 @@ app.get('/api/album/:folderId/liked/all', async (req, res) => {
     res.json({ success: true, folderId, liked_files: likedFilesMap, isFinalized });
 });
 
+// Express sẽ chuyển mọi lỗi bất ngờ từ các route bất đồng bộ về đây. Trả JSON
+// giúp trang khách hiển thị được lý do thay vì thông báo chung chung.
+app.use((error, req, res, next) => {
+    console.error('API error:', error);
+    res.status(error.status || 500).json({
+        success: false,
+        error: error.message || 'Máy chủ không thể lưu dữ liệu.'
+    });
+});
+
 const PORT = process.env.PORT || 5000;
 
 if (process.env.NODE_ENV !== 'production') {

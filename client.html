@@ -310,11 +310,15 @@
                     note: current.note
                 })
             });
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Không thể lưu dữ liệu');
+            let data;
+            try {
+                data = await response.json();
+            } catch (error) {
+                throw new Error(`Máy chủ trả về lỗi ${response.status}. Vui lòng thử lại hoặc kiểm tra Vercel Logs.`);
             }
-            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `Máy chủ trả về lỗi ${response.status}.`);
+            }
             if (!data.success) throw new Error(data.error || 'Không thể lưu dữ liệu');
             return data;
         }
