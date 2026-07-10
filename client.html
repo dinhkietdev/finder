@@ -57,7 +57,6 @@
         .btn-warning { background: linear-gradient(135deg, var(--warning), #d97706); }
         .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--border); }
         .btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25); }
-        .compare-trigger { margin-top: 10px; }
 
         .hint { margin-top: 10px; color: var(--text-muted); font-size: 13px; }
         .note-box { width: 100%; min-height: 112px; margin-top: 8px; border-radius: 12px; border: 1px solid var(--border); padding: 12px; background: #0f172a; color: var(--text-main); resize: vertical; }
@@ -91,24 +90,6 @@
         .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
         .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
         .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
-        .compare-modal { display:none; position:fixed; inset:0; z-index:1200; background:#060816; color:#f8fafc; padding:18px; flex-direction:column; gap:14px; }
-        .compare-modal.open { display:flex; }
-        .compare-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-        .compare-header h2 { font-size:17px; }
-        .compare-actions { display:flex; gap:8px; }
-        .compare-stage { position:relative; flex:1; min-height:0; overflow:hidden; border:1px solid #2f3b52; border-radius:16px; background:#000; touch-action:none; }
-        .compare-desktop { display:grid; grid-template-columns:1fr 1fr; height:100%; }
-        .compare-pane { position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; border-right:1px solid #2f3b52; }
-        .compare-pane:last-child { border-right:0; }
-        .compare-pane img, .compare-mobile-image { max-width:100%; max-height:100%; object-fit:contain; will-change:transform; transform-origin:center; }
-        .compare-pane-label { position:absolute; top:12px; left:12px; z-index:2; padding:5px 9px; border-radius:999px; background:rgba(6,8,22,.78); font-size:12px; font-weight:750; }
-        .compare-mobile { display:none; position:relative; height:100%; overflow:hidden; }
-        .compare-mobile-image { position:absolute; inset:0; width:100%; height:100%; }
-        .compare-mobile-image.top { clip-path:inset(0 0 0 50%); }
-        .compare-split { position:absolute; top:0; bottom:0; left:50%; width:2px; background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.35); pointer-events:none; }
-        .compare-slider { position:absolute; z-index:3; left:50%; bottom:16px; transform:translateX(-50%); width:min(300px, 72vw); accent-color:#3b82f6; }
-        .compare-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; color:#94a3b8; font-size:12px; }
-        .compare-zoom-label { color:#e2e8f0; font-weight:700; }
         .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
         .quick-note-modal.open { display:flex; }
         .quick-note-card { width:min(440px,100%); background:#111827; border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:0 18px 40px rgba(0,0,0,.42); }
@@ -145,11 +126,6 @@
             .thumb-btn, .thumb-btn img { width:74px; height:74px; }
             .help-robot { right:14px; bottom:14px; }
             .robot-button { width:54px; height:54px; font-size:28px; }
-            .compare-modal { padding:10px; }
-            .compare-desktop { display:none; }
-            .compare-mobile { display:block; }
-            .compare-header h2 { font-size:15px; }
-            .compare-actions .btn { padding:8px 10px; font-size:12px; }
         }
     </style>
 </head>
@@ -197,7 +173,6 @@
                     <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
                     <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
                 </div>
-                <button id="compareBtn" class="btn btn-outline compare-trigger">⇄ Chọn ảnh để so sánh (0/2)</button>
 
                 <div id="noteSection">
                     <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
@@ -229,29 +204,6 @@
             <textarea id="quickNoteInput" placeholder="Nhập yêu cầu chỉnh sửa hoặc ưu tiên..."></textarea>
             <div class="quick-note-actions"><button id="quickNoteCancelBtn" class="btn btn-outline">Hủy</button><button id="quickNoteSaveBtn" class="btn btn-success">Lưu ghi chú</button></div>
         </div>
-    </div>
-    <div id="compareModal" class="compare-modal" aria-hidden="true">
-        <div class="compare-header">
-            <h2 id="compareTitle">So sánh ảnh</h2>
-            <div class="compare-actions">
-                <button id="compareSwapBtn" type="button" class="btn btn-outline">↔ Đổi bên</button>
-                <button id="compareResetBtn" type="button" class="btn btn-outline">Đặt lại</button>
-                <button id="compareCloseBtn" type="button" class="btn btn-outline">Đóng</button>
-            </div>
-        </div>
-        <div id="compareStage" class="compare-stage">
-            <div class="compare-desktop">
-                <div class="compare-pane"><span class="compare-pane-label" id="compareLabelA">Ảnh A</span><img id="compareImageA" alt="Ảnh A để so sánh"></div>
-                <div class="compare-pane"><span class="compare-pane-label" id="compareLabelB">Ảnh B</span><img id="compareImageB" alt="Ảnh B để so sánh"></div>
-            </div>
-            <div class="compare-mobile">
-                <img id="compareMobileB" class="compare-mobile-image" alt="Ảnh B để so sánh">
-                <img id="compareMobileA" class="compare-mobile-image top" alt="Ảnh A để so sánh">
-                <div id="compareSplit" class="compare-split"></div>
-                <input id="compareSlider" class="compare-slider" type="range" min="0" max="100" value="50" aria-label="Kéo để so sánh hai ảnh">
-            </div>
-        </div>
-        <div class="compare-footer"><span id="compareHint">Cuộn/chụm để zoom · Kéo để xem chi tiết</span><span id="compareZoomLabel" class="compare-zoom-label">100%</span></div>
     </div>
     <div id="helpRobot" class="help-robot visible">
         <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
