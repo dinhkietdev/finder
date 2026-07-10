@@ -2,11 +2,13 @@
   "version": 2,
   "builds": [
     { "src": "server.js", "use": "@vercel/node" },
-    { "src": "client.html", "use": "@vercel/static" }
+    { "src": "client.html", "use": "@vercel/static" },
+    { "src": "help-robot.png", "use": "@vercel/static" }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/server.js" },
     { "src": "/client.html", "dest": "/client.html" },
+    { "src": "/help-robot.png", "dest": "/help-robot.png" },
     { "src": "/(.*)", "dest": "/server.js" }
   ]
 }
