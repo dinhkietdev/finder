@@ -25,7 +25,8 @@ jobs:
           cache-dependency-path: desk/package-lock.json
       - run: npm ci
       - name: Configure Firebase Authentication
-        run: node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
+        run: |
+          node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Set release version
@@ -50,7 +51,8 @@ jobs:
           cache-dependency-path: desk/package-lock.json
       - run: npm ci
       - name: Configure Firebase Authentication
-        run: node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
+        run: |
+          node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Set release version
