@@ -31,6 +31,15 @@ jobs:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
+      - name: Create release tag
+        run: |
+          TAG="v1.0.${{ github.run_number }}"
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Finder $TAG"
+            git push origin "$TAG"
+          fi
       - name: Build and publish macOS
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
