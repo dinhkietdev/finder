@@ -17,24 +17,25 @@ if (process.platform === 'win32') app.setAppUserModelId('com.finder.desktop');
 const { initializeApp, cert } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
 
+// Service Account chỉ dành cho server.  Bản cài cho khách không được (và cũng
+// không nên) chứa khóa quản trị Firebase. Nếu có file này khi phát triển cục
+// bộ thì vẫn hỗ trợ đồng bộ phụ trợ; khi đóng gói app sẽ tiếp tục hoạt động
+// bình thường thông qua API server đã xác thực.
+let db = null;
 const serviceAccountPath = path.join(__dirname, 'firabase.json');
-
-if (!fs.existsSync(serviceAccountPath)) {
-    console.error("❌ LỖI: Không tìm thấy file chìa khóa tại:", serviceAccountPath);
-    process.exit(1); 
+if (fs.existsSync(serviceAccountPath)) {
+    try {
+        const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+        const firebaseApp = initializeApp({
+            credential: cert(serviceAccount),
+            databaseURL: "https://finder-76adb-default-rtdb.asia-southeast1.firebasedatabase.app"
+        });
+        db = getDatabase(firebaseApp);
+        console.log("✅ Firebase Admin đã khởi tạo cho môi trường phát triển.");
+    } catch (error) {
+        console.warn("Firebase Admin cục bộ không khả dụng:", error.message);
+    }
 }
-
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-
-// Khởi tạo ứng dụng Firebase
-const firebaseApp = initializeApp({
-    credential: cert(serviceAccount),
-    databaseURL: "https://finder-76adb-default-rtdb.asia-southeast1.firebasedatabase.app"
-});
-
-// Nạp Database (Sẽ tự động cung cấp biến db chuẩn cho các hàm phía dưới)
-const db = getDatabase(firebaseApp);
-console.log("✅ Firebase đã khởi tạo thành công trên Desktop!");
 
 // ---------------------------------------------------------
 // 2. CẤU HÌNH BIẾN MÔI TRƯỜNG & ĐƯỜNG DẪN
