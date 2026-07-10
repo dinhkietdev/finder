@@ -87,8 +87,11 @@
         .help-robot { position:fixed; right:20px; bottom:20px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
         .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
         .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
-        .robot-button { width:58px; height:58px; border:0; border-radius:50%; background:linear-gradient(145deg,#60a5fa,#2563eb); box-shadow:0 10px 24px rgba(37,99,235,.5); color:#fff; font-size:31px; cursor:pointer; animation:robot-wave 2.5s ease-in-out infinite; }
-        @keyframes robot-wave { 0%,100% { transform:rotate(0deg) translateY(0); } 15% { transform:rotate(-10deg); } 30% { transform:rotate(10deg); } 45% { transform:rotate(-8deg) translateY(-3px); } }
+        .robot-button { position:relative; width:70px; height:70px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; animation:robot-wave 2.5s ease-in-out infinite; }
+        .robot-button img { width:100%; height:100%; object-fit:cover; border-radius:50%; image-rendering:auto; display:block; }
+        .robot-button::after { content:'👋'; position:absolute; right:-13px; top:-10px; font-size:23px; transform-origin:bottom left; animation:hand-wave 1.3s ease-in-out infinite; }
+        @keyframes robot-wave { 0%,100% { transform:rotate(0deg) translateY(0); } 15% { transform:rotate(-7deg); } 30% { transform:rotate(7deg); } 45% { transform:rotate(-5deg) translateY(-4px); } }
+        @keyframes hand-wave { 0%,100% { transform:rotate(0deg); } 35% { transform:rotate(25deg); } 70% { transform:rotate(-18deg); } }
 
         @media (max-width: 900px) {
             .content-grid { grid-template-columns: 1fr; }
@@ -184,9 +187,9 @@
         <div class="lightbox-toolbar"><button id="zoomOutBtn" aria-label="Thu nhỏ">−</button><button id="zoomInBtn" aria-label="Phóng to">+</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
         <div class="zoom-tip">Chạm hai lần hoặc dùng hai ngón tay để phóng to</div>
     </div>
-    <div id="helpRobot" class="help-robot">
+    <div id="helpRobot" class="help-robot visible">
         <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
-        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ">🤖</button>
+        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ"><img src="help-robot.png" alt="Robot trợ lý đang vẫy chào"></button>
     </div>
 
     <script>
@@ -343,7 +346,13 @@
         function openLightbox() {
             const current = getCurrentImage();
             if (!current) return;
-            elements.lightboxImage.src = current.originalUrl || current.thumbnail || elements.mainImage.src;
+            // Link webContentLink của Drive thường ép tải file xuống, không phù hợp
+            // cho thẻ <img>. Dùng thumbnail Drive độ phân giải cao để xem ổn định.
+            const highResolutionUrl = current.thumbnail
+                ? current.thumbnail.replace(/=s\d+(?:-.*)?$/, '=s2000')
+                : `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2000`;
+            elements.lightboxImage.dataset.fallback = current.thumbnail || elements.mainImage.src;
+            elements.lightboxImage.src = highResolutionUrl;
             zoomScale = 1;
             applyZoom();
             elements.imageLightbox.classList.add('open');
@@ -372,6 +381,10 @@
         }
 
         elements.mainImage.addEventListener('click', openLightbox);
+        elements.lightboxImage.addEventListener('error', () => {
+            const fallback = elements.lightboxImage.dataset.fallback;
+            if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
+        });
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
         elements.zoomInBtn.addEventListener('click', () => { zoomScale += 0.5; applyZoom(); });
         elements.zoomOutBtn.addEventListener('click', () => { zoomScale -= 0.5; applyZoom(); });
@@ -404,6 +417,7 @@
             if (activePointers.size < 2) pinchStartDistance = 0;
         }));
         elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
+        window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 6000);
 
         async function saveCurrentSelection() {
             const current = getCurrentImage();
