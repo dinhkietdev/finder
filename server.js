@@ -15,7 +15,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// THÊM ĐOẠN NÀY ĐỂ XỬ LÝ ĐƯỜNG DẪN GỐC
 app.get('/', (req, res) => {
     res.send('🚀 Hệ thống Server Cloud của FinderPicture Studio đang hoạt động ổn định!');
 });
@@ -52,8 +51,18 @@ function getOAuth2Client() {
     return new google.auth.OAuth2(client_id, client_secret);
 }
 
+// ĐOẠN QUAN TRỌNG NHẤT ĐỂ CHẠY TRÊN VERCEL
 function getStoredTokens() {
-    if (fs.existsSync(TOKEN_PATH)) return JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+    if (process.env.GOOGLE_SESSION_TOKEN) {
+        try {
+            return JSON.parse(process.env.GOOGLE_SESSION_TOKEN);
+        } catch (e) {
+            console.error("Lỗi định dạng GOOGLE_SESSION_TOKEN");
+        }
+    }
+    if (fs.existsSync(TOKEN_PATH)) {
+        return JSON.parse(fs.readFileSync(TOKEN_PATH, 'utf8'));
+    }
     return null;
 }
 
@@ -121,8 +130,12 @@ app.get('/api/album/:folderId', async (req, res) => {
         }
 
         const tokens = getStoredTokens();
-        if (!tokens) return res.status(401).json({ error: "Chưa có Token xác thực." });
+        // CÂU BÁO LỖI ĐÃ ĐƯỢC THAY ĐỔI
+        if (!tokens) return res.status(401).json({ error: "Server chưa nhận được Token từ Vercel." });
+        
         const oauth2Client = getOAuth2Client();
+        if (!oauth2Client) return res.status(500).json({ error: "Thiếu file oauth-credentials.json trên Server." });
+
         oauth2Client.setCredentials(tokens);
         const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
@@ -173,10 +186,8 @@ app.get('/api/album/:folderId/liked/all', (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-// Tránh lỗi chiếm dụng cổng khi chạy trên Vercel
 if (process.env.NODE_ENV !== 'production') {
     app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server FinderPicture chạy tại cổng ${PORT}`));
 }
 
-// Bắt buộc phải có dòng này để Vercel đọc được API
 module.exports = app;
