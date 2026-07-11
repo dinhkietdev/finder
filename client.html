@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FinderPicture - Bàn giao & Chọn Ảnh</title>
+    <style>
+        :root {
+            --bg-dark: #060816;
+            --bg-card: #111827;
+            --bg-soft: #1f2937;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #3b82f6;
+            --accent-2: #22c55e;
+            --warning: #f59e0b;
+            --border: #2f3b52;
+            --danger: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { background: linear-gradient(135deg, var(--bg-dark), #111827); color: var(--text-main); padding: 20px 16px 100px; user-select: none; }
+        button, textarea { font: inherit; }
+
+        .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+        .panel { background: rgba(17, 24, 39, 0.95); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); }
+
+        .header-panel { padding: 18px 22px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; }
+        .intro { text-align: center; }
+        .brand-title { font-size: 28px; font-weight: 850; letter-spacing: 3px; color: #fff; }
+        .subtext { color: var(--text-muted); margin-top: 6px; font-size: 13px; }
+        .stats { display: flex; flex-wrap: wrap; gap: 10px; justify-self: end; }
+        .stat-chip { background: var(--bg-soft); padding: 10px 12px; border-radius: 999px; min-width: 110px; text-align: center; border: 1px solid var(--border); }
+        button.stat-chip { color: var(--text-main); cursor: pointer; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+        button.stat-chip:hover { transform: translateY(-2px); border-color: #5b9cf4; background: #273449; }
+        button.stat-chip:focus-visible { outline: 3px solid rgba(59,130,246,.38); outline-offset: 2px; }
+        .stat-chip strong { display: block; font-size: 14px; }
+        .stat-chip span { font-size: 11px; color: var(--text-muted); }
+
+        .content-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 18px; }
+        .viewer-panel { padding: 16px; }
+        .viewer-shell { position: relative; border-radius: 16px; overflow: hidden; background: #000; min-height: 460px; display: flex; align-items: center; justify-content: center; }
+        .viewer-shell img { width: 100%; height: 100%; max-height: 70vh; object-fit: contain; display: block; cursor: zoom-in; }
+        .viewer-overlay { position: absolute; inset: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px; pointer-events: none; }
+        .viewer-overlay button { pointer-events: auto; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,0.65); color: #fff; font-size: 20px; cursor: pointer; }
+
+        .photo-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0 8px; }
+        .photo-name { font-size: 16px; font-weight: 700; }
+        .photo-badge { padding: 6px 10px; border-radius: 999px; font-size: 12px; background: rgba(59,130,246,0.18); color: #bfdbfe; }
+
+        .action-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+        .btn { border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; font-weight: 700; color: #fff; transition: transform 0.2s ease, opacity 0.2s ease; }
+        .btn:hover { transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .btn-primary { background: linear-gradient(135deg, var(--accent), #2563eb); }
+        .btn-success { background: linear-gradient(135deg, var(--accent-2), #16a34a); }
+        .btn-warning { background: linear-gradient(135deg, var(--warning), #d97706); }
+        .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--border); }
+        .btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25); }
+
+        .hint { margin-top: 10px; color: var(--text-muted); font-size: 13px; }
+        .note-box { width: 100%; min-height: 112px; margin-top: 8px; border-radius: 12px; border: 1px solid var(--border); padding: 12px; background: #0f172a; color: var(--text-main); resize: vertical; }
+        .note-box:focus { outline: 2px solid rgba(59,130,246,0.35); border-color: var(--accent); }
+        .status-message { margin-top: 10px; min-height: 24px; font-size: 13px; color: #bfdbfe; }
+        .status-message.error { color: #fecaca; }
+        .status-message.success { color: #bbf7d0; }
+
+        .sidebar-panel { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+        .sidebar-title { font-size: 16px; font-weight: 700; }
+        .selection-list { display: flex; flex-direction: column; gap: 8px; max-height: 430px; overflow: auto; padding-right: 4px; }
+        .selection-item { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+        .selection-item strong { display: block; font-size: 13px; margin-bottom: 4px; }
+        .selection-item span { color: var(--text-muted); font-size: 12px; display: block; }
+        .empty-state { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
+
+        .thumb-strip { display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px 2px; }
+        .thumb-btn { position:relative; flex: 0 0 92px; border: 2px solid transparent; border-radius: 12px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
+        .thumb-btn img { width: 92px; height: 92px; object-fit: cover; display: block; }
+        .thumb-btn.active { border-color: var(--accent); }
+        .thumb-btn.selected::after { content: '✓'; position: absolute; color: #fff; background: rgba(34,197,94,0.95); padding: 4px 6px; border-radius: 999px; font-size: 10px; margin: 6px; }
+
+        .finalized-banner { display: none; padding: 12px 16px; border-radius: 12px; background: linear-gradient(90deg, #7c3aed, #6d28d9); color: white; text-align: center; font-weight: 700; }
+
+        .image-lightbox { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.94); align-items:center; justify-content:center; touch-action:none; }
+        .image-lightbox.open { display:flex; }
+        .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
+        .lightbox-image.zoomed { cursor:grab; }
+        .lightbox-image.panning { cursor:grabbing; transition:none; }
+        .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
+        .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
+        .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
+        .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
+        .quick-note-modal.open { display:flex; }
+        .quick-note-card { width:min(440px,100%); background:#111827; border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:0 18px 40px rgba(0,0,0,.42); }
+        .quick-note-card h3 { font-size:17px; margin-bottom:10px; }
+        .quick-note-card textarea { width:100%; min-height:130px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:#fff; padding:11px; resize:vertical; }
+        .quick-note-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+        .help-robot { position:fixed; right:20px; bottom:20px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
+        .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
+        .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
+        .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
+        .robot-button img { width:100%; height:100%; object-fit:contain; border-radius:50%; image-rendering:auto; display:block; }
+
+        /* Finder client visual system — quiet, editorial, touch-first */
+        :root { --bg-dark:#070b14; --bg-card:rgba(16,22,35,.88); --bg-soft:#182235; --text-main:#f7f9fc; --text-muted:#9aa9c0; --accent:#7c8cff; --accent-2:#3bd9a0; --border:rgba(181,198,224,.14); --surface:rgba(255,255,255,.055); }
+        body { min-height:100vh; background:radial-gradient(circle at 12% -10%,rgba(124,140,255,.23),transparent 34%),radial-gradient(circle at 88% 0%,rgba(59,217,160,.12),transparent 28%),var(--bg-dark); letter-spacing:.01em; }
+        .panel { background:var(--bg-card); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); box-shadow:0 18px 55px rgba(0,0,0,.24); }
+        .header-panel { border-radius:24px; }
+        .brand-title { font-size:30px; letter-spacing:.18em; background:linear-gradient(120deg,#fff 20%,#bec7ff 75%); -webkit-background-clip:text; background-clip:text; color:transparent; }
+        .subtext { font-size:12px; }
+        .stat-chip { min-width:116px; background:var(--surface); border-color:var(--border); }
+        .stat-chip strong { font-variant-numeric:tabular-nums; }
+        .viewer-panel { padding:18px; }
+        .viewer-shell { min-height:clamp(340px,62vh,670px); background:linear-gradient(135deg,#080c13,#111a2a); isolation:isolate; }
+        .viewer-shell.loading::after { content:''; position:absolute; inset:0; z-index:1; background:linear-gradient(100deg,transparent 25%,rgba(255,255,255,.09) 48%,transparent 70%); animation:shimmer 1.15s infinite; pointer-events:none; }
+        .viewer-shell.loading::before { content:'Đang tối ưu ảnh xem trước…'; position:absolute; z-index:2; bottom:18px; left:50%; transform:translateX(-50%); padding:8px 12px; border-radius:999px; background:rgba(7,11,20,.72); color:#dbe5ff; font-size:12px; }
+        @keyframes shimmer { from { transform:translateX(-100%); } to { transform:translateX(100%); } }
+        .viewer-shell img { transition:opacity .18s ease; }
+        .viewer-shell.loading img { opacity:.28; }
+        .viewer-overlay button { width:48px; height:48px; border:1px solid rgba(255,255,255,.18); background:rgba(8,12,20,.56); backdrop-filter:blur(8px); }
+        .photo-meta { padding:16px 2px 8px; }
+        .photo-name { font-size:17px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:50vw; }
+        .photo-badge { border:1px solid rgba(255,255,255,.12); font-weight:700; }
+        .btn { min-height:44px; border-radius:13px; letter-spacing:.01em; }
+        .btn-primary { background:linear-gradient(135deg,#8a98ff,#6272f5); box-shadow:0 8px 22px rgba(98,114,245,.24); }
+        .btn-success { background:linear-gradient(135deg,#44dda7,#1fbb83); box-shadow:0 8px 22px rgba(31,187,131,.2); }
+        .btn-warning { background:var(--surface); color:#f8d89b; border:1px solid rgba(245,158,11,.25); }
+        .sidebar-panel { background:rgba(14,20,32,.72); }
+        .selection-item { background:rgba(255,255,255,.045); border-color:var(--border); }
+        .selection-item::before { content:'✓'; display:inline-grid; place-items:center; float:left; width:20px; height:20px; margin:0 8px 4px 0; border-radius:50%; background:rgba(59,217,160,.2); color:#80f1c7; font-size:12px; }
+        .gallery-panel { padding:15px 16px 18px; }
+        .ai-picks-panel { padding:15px 16px 18px; border-color:rgba(124,140,255,.28); background:linear-gradient(135deg,rgba(124,140,255,.12),rgba(59,217,160,.06)); }
+        .ai-picks-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+        .ai-picks-heading strong { font-size:15px; }
+        .ai-picks-heading span { color:var(--text-muted); font-size:12px; }
+        .ai-picks-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px; }
+        .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; }
+        .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; }
+        .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .ai-pick-card::after { content:'AI đề xuất'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
+        .ai-pick-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(50,60,130,.25); }
+        .gallery-heading { display:flex; justify-content:space-between; align-items:center; margin:0 2px 12px; font-size:13px; color:var(--text-muted); }
+        .gallery-heading strong { color:var(--text-main); font-size:15px; }
+        .thumb-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; overflow:visible; padding:0; }
+        .thumb-btn { width:100%; aspect-ratio:1; border-radius:14px; border:1px solid var(--border); background:#0d1320; transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease; }
+        .thumb-btn:hover { transform:translateY(-2px); border-color:rgba(135,150,255,.9); }
+        .thumb-btn img { width:100%; height:100%; }
+        .thumb-btn.active { border-color:#9da8ff; box-shadow:0 0 0 3px rgba(124,140,255,.22); }
+        .thumb-btn.selected::after { top:6px; right:6px; margin:0; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+        .image-lightbox { background:rgba(3,6,12,.97); }
+        .lightbox-toolbar { top:max(14px,env(safe-area-inset-top)); right:14px; }
+        .lightbox-toolbar button { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); border-color:rgba(255,255,255,.18); }
+        .zoom-tip { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); }
+
+        @media (max-width: 900px) {
+            .content-grid { grid-template-columns: 1fr; }
+            .header-panel { grid-template-columns:1fr; justify-items:center; text-align:center; }
+            .stats { justify-self:center; }
+            .viewer-shell { min-height: min(65vh, 520px); }
+        }
+        @media (max-width: 560px) {
+            body { padding: 10px 10px 92px; }
+            .container { gap:12px; }
+            .panel { border-radius:14px; }
+            .header-panel { padding:16px 12px; }
+            .brand-title { font-size:25px; }
+            .subtext { line-height:1.7; max-width:300px; }
+            .stat-chip { min-width:100px; padding:8px 10px; }
+            .viewer-panel, .sidebar-panel { padding:12px; }
+            .viewer-shell { min-height:52vh; border-radius:12px; }
+            .viewer-overlay { padding:8px; }
+            .viewer-overlay button { width:40px; height:40px; }
+            .action-row .btn { flex:1; min-width:calc(50% - 5px); }
+            .note-box { min-height:92px; }
+            .selection-list { max-height:220px; }
+            .thumb-btn, .thumb-btn img { width:74px; height:74px; }
+            .help-robot { right:14px; bottom:14px; }
+            .robot-button { width:54px; height:54px; font-size:28px; }
+            .header-panel { border-radius:18px; }
+            .intro { order:-1; }
+            .stats { width:100%; display:grid; grid-template-columns:1fr 1fr; }
+            .stat-chip { min-width:0; }
+            .viewer-panel { padding:10px; }
+            .viewer-shell { min-height:56vh; border-radius:16px; }
+            .viewer-overlay button { width:44px; height:44px; }
+            .photo-meta { padding:13px 4px 5px; }
+            .photo-name { max-width:58vw; }
+            .hint { font-size:12px; }
+            .action-row { position:sticky; bottom:8px; z-index:8; padding:9px; margin:8px -2px 0; border:1px solid var(--border); border-radius:16px; background:rgba(10,15,26,.88); backdrop-filter:blur(15px); }
+            .action-row .btn { min-width:0; }
+            .note-box { min-height:82px; }
+            .gallery-panel { padding:13px 10px 16px; }
+            .thumb-strip { grid-template-columns:repeat(3,1fr); gap:7px; }
+            .thumb-btn { border-radius:11px; }
+            .image-lightbox { align-items:center; }
+            .lightbox-image { max-width:100vw; }
+            .zoom-tip { bottom:max(14px,env(safe-area-inset-bottom)); max-width:calc(100vw - 28px); overflow:hidden; text-overflow:ellipsis; }
+        }
+
+        /* Final client polish: touch-first gallery and clear loading feedback. */
+        html { scroll-behavior:smooth; }
+        body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        button, textarea { -webkit-tap-highlight-color:transparent; }
+        button:focus-visible, textarea:focus-visible { outline:3px solid rgba(124,140,255,.42); outline-offset:3px; }
+        .gallery-panel { overflow:hidden; }
+        .gallery-heading { position:sticky; top:0; z-index:3; padding:5px 2px 12px; background:linear-gradient(var(--bg-card) 72%,transparent); }
+        .gallery-heading span { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
+        .thumb-btn { content-visibility:auto; contain-intrinsic-size:92px; }
+        .thumb-btn img { opacity:0; transition:opacity .22s ease, transform .3s ease; }
+        .thumb-btn img.is-ready { opacity:1; }
+        .thumb-btn::before { content:''; position:absolute; inset:0; background:linear-gradient(110deg,#111a2a 25%,#243149 45%,#111a2a 65%); background-size:220% 100%; animation:thumbShimmer 1.25s linear infinite; }
+        .thumb-btn.is-ready::before { display:none; }
+        .thumb-btn:hover img.is-ready { transform:scale(1.04); }
+        @keyframes thumbShimmer { to { background-position:-220% 0; } }
+        .viewer-shell { touch-action:pan-y; }
+        .viewer-shell img { user-select:none; -webkit-user-drag:none; }
+        .lightbox-loading { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); padding:10px 14px; border-radius:999px; color:#dbe5ff; background:rgba(18,27,43,.86); border:1px solid rgba(255,255,255,.16); font-size:13px; backdrop-filter:blur(12px); }
+        .lightbox-loading.hidden { display:none; }
+        .image-lightbox { overscroll-behavior:contain; }
+        .lightbox-image { user-select:none; -webkit-user-drag:none; }
+        @media (max-width:560px) {
+            body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
+            .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
+            .thumb-btn { min-height:0; contain-intrinsic-size:74px; }
+            .selection-list { scroll-snap-type:y proximity; }
+            .selection-item { scroll-snap-align:start; }
+            .lightbox-toolbar { left:12px; right:12px; justify-content:flex-end; }
+            .lightbox-toolbar button { min-width:44px; min-height:44px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="finalizedBanner" class="finalized-banner">ALBUM ĐÃ ĐƯỢC CHỐT - KHÔNG THỂ THAY ĐỔI</div>
+
+        <div class="panel header-panel">
+            <div></div>
+            <div class="intro">
+                <div class="brand-title">FINDER</div>
+                <div class="subtext">👆 Vuốt xem ảnh &nbsp;•&nbsp; ✅ Chọn ảnh &nbsp;•&nbsp; 📝 Ghi chú &nbsp;•&nbsp; 🔒 Chốt lựa chọn</div>
+            </div>
+            <div class="stats">
+                <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại">
+                    <strong id="photoIndexLabel">0/0</strong>
+                    <span>Ảnh hiện tại</span>
+                </button>
+                <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn">
+                    <strong id="selectedCountLabel">0</strong>
+                    <span>Đã chọn</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <div class="panel viewer-panel" id="currentImageSection" tabindex="-1">
+                <div class="viewer-shell" id="viewerShell">
+                    <img id="mainImage" src="" alt="Ảnh đang tải">
+                    <div class="viewer-overlay">
+                        <button id="prevBtn" aria-label="Ảnh trước">←</button>
+                        <button id="nextBtn" aria-label="Ảnh tiếp theo">→</button>
+                    </div>
+                </div>
+
+                <div class="photo-meta">
+                    <div>
+                        <div class="photo-name" id="photoName">Đang tải ảnh...</div>
+                        <div class="hint">Vuốt trái/phải trên ảnh để chuyển nhanh</div>
+                    </div>
+                    <div class="photo-badge" id="photoStatusBadge">Đang chờ</div>
+                </div>
+
+                <div class="action-row" id="imageActionRow">
+                    <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
+                    <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
+                </div>
+
+                <div id="noteSection">
+                    <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
+                    <textarea id="noteInput" class="note-box" placeholder="Ví dụ cần chỉnh sửa hoặc ưu tiên..."></textarea>
+                </div>
+                <div id="statusMessage" class="status-message">Đang tải dữ liệu album...</div>
+            </div>
+
+            <div class="panel sidebar-panel" id="selectedImagesSection" tabindex="-1">
+                <div class="sidebar-title">Ảnh đã chọn</div>
+                <div id="selectionList" class="selection-list"></div>
+                <button id="confirmAllBtn" class="btn btn-primary">✔️ Xác nhận tất cả ảnh đã chọn</button>
+            </div>
+        </div>
+
+        <div id="aiPicksPanel" class="panel ai-picks-panel" style="display:none;">
+            <div class="ai-picks-heading"><div><strong>✦ Ảnh AI đề xuất</strong><span id="aiPicksDescription"> Ảnh nổi bật trong từng cụm burst</span></div><span id="aiPicksCount"></span></div>
+            <div id="aiPicksGrid" class="ai-picks-grid"></div>
+        </div>
+
+        <div class="panel gallery-panel">
+            <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
+            <div class="thumb-strip" id="thumbStrip"></div>
+        </div>
+    </div>
+
+    <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
+        <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
+        <div id="lightboxLoading" class="lightbox-loading">Đang tải ảnh chất lượng cao…</div>
+        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
+        <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
+    </div>
+    <div id="quickNoteModal" class="quick-note-modal" aria-hidden="true">
+        <div class="quick-note-card">
+            <h3>📝 Ghi chú cho ảnh này</h3>
+            <textarea id="quickNoteInput" placeholder="Nhập yêu cầu chỉnh sửa hoặc ưu tiên..."></textarea>
+            <div class="quick-note-actions"><button id="quickNoteCancelBtn" class="btn btn-outline">Hủy</button><button id="quickNoteSaveBtn" class="btn btn-success">Lưu ghi chú</button></div>
+        </div>
+    </div>
+    <div id="helpRobot" class="help-robot visible">
+        <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
+        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ"><img src="help-robot.png" alt="Robot trợ lý"></button>
+    </div>
+
+    <script>
+        const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
+        const urlParams = new URLSearchParams(window.location.search);
+        const folderId = urlParams.get('id');
+
+        const state = {
+            images: [],
+            currentIndex: 0,
+            isLoading: false,
+            maxSelections: 0,
+            isFinalized: false,
+            aiGroups: []
+        };
+
+        const elements = {
+            mainImage: document.getElementById('mainImage'),
+            currentImageSection: document.getElementById('currentImageSection'),
+            selectedImagesSection: document.getElementById('selectedImagesSection'),
+            jumpToCurrent: document.getElementById('jumpToCurrent'),
+            jumpToSelected: document.getElementById('jumpToSelected'),
+            photoName: document.getElementById('photoName'),
+            photoIndexLabel: document.getElementById('photoIndexLabel'),
+            selectedCountLabel: document.getElementById('selectedCountLabel'),
+            photoStatusBadge: document.getElementById('photoStatusBadge'),
+            noteInput: document.getElementById('noteInput'),
+            imageActionRow: document.getElementById('imageActionRow'),
+            statusMessage: document.getElementById('statusMessage'),
+            selectionList: document.getElementById('selectionList'),
+            thumbStrip: document.getElementById('thumbStrip'),
+            selectBtn: document.getElementById('selectBtn'),
+            saveNoteBtn: document.getElementById('saveNoteBtn'),
+            confirmAllBtn: document.getElementById('confirmAllBtn'),
+            prevBtn: document.getElementById('prevBtn'),
+            nextBtn: document.getElementById('nextBtn'),
+            viewerShell: document.getElementById('viewerShell'),
+            finalizedBanner: document.getElementById('finalizedBanner'),
+            imageLightbox: document.getElementById('imageLightbox'),
+            lightboxImage: document.getElementById('lightboxImage'),
+            lightboxLoading: document.getElementById('lightboxLoading'),
+            closeLightboxBtn: document.getElementById('closeLightboxBtn'),
+            lightboxSelectBtn: document.getElementById('lightboxSelectBtn'),
+            lightboxNoteBtn: document.getElementById('lightboxNoteBtn'),
+            quickNoteModal: document.getElementById('quickNoteModal'),
+            quickNoteInput: document.getElementById('quickNoteInput'),
+            quickNoteSaveBtn: document.getElementById('quickNoteSaveBtn'),
+            quickNoteCancelBtn: document.getElementById('quickNoteCancelBtn'),
+            helpRobot: document.getElementById('helpRobot'),
+            robotButton: document.getElementById('robotButton'),
+            robotMessage: document.querySelector('#helpRobot .robot-message'),
+            noteSection: document.getElementById('noteSection'),
+            galleryCount: document.getElementById('galleryCount')
+            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription')
+        };
+        let zoomScale = 1;
+        let robotMessageTimeout = null;
+        let robotMessageInterval = null;
+        let pinchStartDistance = 0;
+        let pinchStartScale = 1;
+        let panX = 0;
+        let panY = 0;
+        let panPointer = null;
+        const activePointers = new Map();
+        let faceLandmarkerPromise = null;
+        const aiScores = new WeakMap();
+
+        async function getFaceLandmarker() {
+            if (!faceLandmarkerPromise) faceLandmarkerPromise = (async () => {
+                const { FaceLandmarker, FilesetResolver } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm');
+                const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm');
+                return FaceLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' }, runningMode: 'IMAGE', numFaces: 3, outputFaceBlendshapes: true });
+            })();
+            return faceLandmarkerPromise;
+        }
+
+        async function scoreFaceImage(image) {
+            const source = image.thumbnail || image.preview || image.originalUrl;
+            if (!source) return 0;
+            const bitmap = await new Promise((resolve, reject) => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => resolve(img); img.onerror = reject; img.src = source; });
+            const canvas = document.createElement('canvas'); canvas.width = Math.min(640, bitmap.naturalWidth || 640); canvas.height = Math.round(canvas.width * (bitmap.naturalHeight / bitmap.naturalWidth));
+            const context = canvas.getContext('2d', { willReadFrequently:true }); context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            const result = (await getFaceLandmarker()).detect(canvas);
+            const faces = result.faceBlendshapes || [];
+            if (!faces.length) return 0;
+            const categories = Object.fromEntries(faces[0].categories.map(item => [item.categoryName, item.score]));
+            const eyeOpen = 1 - ((categories.eyeBlinkLeft || 0) + (categories.eyeBlinkRight || 0)) / 2;
+            const smile = ((categories.mouthSmileLeft || 0) + (categories.mouthSmileRight || 0)) / 2;
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            let edgeTotal = 0; let edgeSamples = 0;
+            for (let y = 1; y < canvas.height - 1; y += 3) for (let x = 1; x < canvas.width - 1; x += 3) {
+                const p = (y * canvas.width + x) * 4; const right = p + 4; const down = p + canvas.width * 4;
+                const center = pixels[p] * .299 + pixels[p + 1] * .587 + pixels[p + 2] * .114;
+                const horizontal = Math.abs(center - (pixels[right] * .299 + pixels[right + 1] * .587 + pixels[right + 2] * .114));
+                const vertical = Math.abs(center - (pixels[down] * .299 + pixels[down + 1] * .587 + pixels[down + 2] * .114));
+                edgeTotal += horizontal + vertical; edgeSamples++;
+            }
+            const sharpness = Math.min(1, (edgeTotal / Math.max(1, edgeSamples)) / 42);
+            return Math.round(45 + eyeOpen * 25 + smile * 15 + sharpness * 15);
+        }
+        const thumbObserver = 'IntersectionObserver' in window
+            ? new IntersectionObserver(entries => entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                const image = entry.target;
+                const button = image.closest('.thumb-btn');
+                image.src = image.dataset.src || '';
+                image.addEventListener('load', () => { image.classList.add('is-ready'); button?.classList.add('is-ready'); }, { once:true });
+                thumbObserver.unobserve(image);
+            }), { rootMargin:'360px 0px' })
+            : null;
+
+        function setMessage(message, type = 'info') {
+            elements.statusMessage.textContent = message;
+            elements.statusMessage.className = 'status-message';
+            if (type === 'error') elements.statusMessage.classList.add('error');
+            if (type === 'success') elements.statusMessage.classList.add('success');
+        }
+
+        function getCurrentImage() {
+            return state.images[state.currentIndex] || null;
+        }
+
+        function selectedCount() {
+            return state.images.filter(item => item.selected).length;
+        }
+
+        // MVP thử nghiệm: gom các tên file có cùng tiền tố và số thứ tự liên
+        // tiếp (IMG_1201, IMG_1202...). Không ẩn ảnh nào khỏi gallery đầy đủ.
+        function buildAiGroups() {
+            const indexed = state.images.map((image, index) => {
+                const stem = String(image.shortName || image.fullName || '').replace(/\.[^.]+$/, '');
+                const match = stem.match(/^(.*?)(\d{3,})$/);
+                return { image, index, prefix: match?.[1] || '', number: match ? Number(match[2]) : null };
+            }).filter(item => item.number !== null);
+            const byPrefix = new Map();
+            indexed.forEach(item => { if (!byPrefix.has(item.prefix)) byPrefix.set(item.prefix, []); byPrefix.get(item.prefix).push(item); });
+            state.aiGroups = [];
+            byPrefix.forEach(items => {
+                items.sort((a, b) => a.number - b.number);
+                let group = [];
+                items.forEach(item => {
+                    if (group.length && item.number - group[group.length - 1].number > 3) {
+                        if (group.length >= 2) state.aiGroups.push(group);
+                        group = [];
+                    }
+                    group.push(item);
+                });
+                if (group.length >= 2) state.aiGroups.push(group);
+            });
+            state.aiGroups = state.aiGroups.slice(0, 80);
+        }
+
+        function renderAiPicks() {
+            if (!state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
+            elements.aiPicksPanel.style.display = '';
+            elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
+            elements.aiPicksGrid.innerHTML = '';
+            state.aiGroups.forEach(group => {
+                const pick = group.slice().sort((a, b) => (aiScores.get(b.image) || 0) - (aiScores.get(a.image) || 0))[0];
+                const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
+                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = pick.image.thumbnail || pick.image.originalUrl || ''; image.alt = `AI đề xuất: ${pick.image.shortName}`;
+                const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = `${pick.image.shortName} · ${group.length} ảnh tương tự`;
+                card.append(image, label); card.addEventListener('click', () => { state.currentIndex = pick.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
+                elements.aiPicksGrid.appendChild(card);
+            });
+        }
+
+        async function runAiFaceScoring() {
+            if (!state.aiGroups.length) return;
+            elements.aiPicksDescription.textContent = ' AI đang chấm mắt mở, nụ cười và khuôn mặt…';
+            try {
+                await getFaceLandmarker();
+                const candidates = state.aiGroups.flatMap(group => group).slice(0, 240);
+                for (const candidate of candidates) {
+                    try { aiScores.set(candidate.image, await scoreFaceImage(candidate.image)); } catch (error) { aiScores.set(candidate.image, 0); }
+                    if (candidates.indexOf(candidate) % 8 === 0) renderAiPicks();
+                }
+                elements.aiPicksDescription.textContent = ' AI đã chấm khuôn mặt, mắt và biểu cảm trên ảnh xem trước';
+                renderAiPicks();
+            } catch (error) {
+                elements.aiPicksDescription.textContent = ' Đề xuất thử nghiệm theo cụm ảnh (AI khuôn mặt chưa tải được)';
+            }
+        }
+
+        function canSelect(image) {
+            if (!image || image.selected || state.maxSelections <= 0) return true;
+            if (selectedCount() < state.maxSelections) return true;
+            setMessage(`⚠️ Album này chỉ cho phép chọn tối đa ${state.maxSelections} ảnh.`, 'error');
+            return false;
+        }
+
+        function render() {
+            if (!state.images.length) {
+                elements.mainImage.src = '';
+                elements.photoName.textContent = 'Không có ảnh nào';
+                elements.photoIndexLabel.textContent = '0/0';
+                elements.selectedCountLabel.textContent = '0';
+                elements.photoStatusBadge.textContent = 'Trống';
+                elements.selectionList.innerHTML = '<div class="empty-state">Không có ảnh nào để hiển thị.</div>';
+                elements.thumbStrip.innerHTML = '';
+                return;
+            }
+
+            const current = getCurrentImage();
+            const imgUrl = current.preview || current.thumbnail || current.originalUrl;
+            if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
+                elements.viewerShell.classList.add('loading');
+                elements.mainImage.dataset.imageId = String(current.id || current.fullName);
+                elements.mainImage.src = imgUrl || '';
+            }
+            elements.mainImage.decoding = 'async';
+            elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
+            elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
+            elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
+            const currentSelectedCount = selectedCount();
+            elements.selectedCountLabel.textContent = state.maxSelections > 0
+                ? `${currentSelectedCount}/${state.maxSelections}`
+                : currentSelectedCount;
+            elements.photoStatusBadge.textContent = current.selected ? 'Đã chọn' : 'Chưa chọn';
+            elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
+            elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
+            elements.galleryCount.textContent = `${state.images.length} ảnh`;
+            elements.selectBtn.classList.toggle('active', !!current.selected);
+            elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
+            elements.lightboxSelectBtn.textContent = current.selected ? '✓ Đã chọn' : '✓ Chọn';
+            elements.noteInput.value = current.note || '';
+            [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
+                .forEach(element => { element.disabled = state.isFinalized; });
+            elements.noteSection.style.display = state.isFinalized ? 'none' : 'block';
+            elements.imageActionRow.style.display = state.isFinalized ? 'none' : '';
+            elements.saveNoteBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.confirmAllBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.lightboxSelectBtn.disabled = state.isFinalized;
+            elements.lightboxNoteBtn.disabled = state.isFinalized;
+            elements.lightboxSelectBtn.style.display = state.isFinalized ? 'none' : '';
+            elements.lightboxNoteBtn.style.display = state.isFinalized ? 'none' : '';
+
+            elements.thumbStrip.innerHTML = '';
+            state.images.map((img, index) => ({ img, index }))
+                .sort((a, b) => Number(b.img.selected) - Number(a.img.selected))
+                .forEach(({ img, index }) => {
+                const thumbBtn = document.createElement('button');
+                thumbBtn.className = 'thumb-btn';
+                if (index === state.currentIndex) thumbBtn.classList.add('active');
+                if (img.selected) thumbBtn.classList.add('selected');
+                const thumbImg = document.createElement('img');
+                thumbImg.loading = 'lazy';
+                thumbImg.decoding = 'async';
+                thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
+                thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
+                thumbBtn.appendChild(thumbImg);
+                thumbBtn.onclick = () => {
+                    state.currentIndex = index;
+                    render();
+                };
+                elements.thumbStrip.appendChild(thumbBtn);
+                if (thumbObserver) thumbObserver.observe(thumbImg);
+                else { thumbImg.src = thumbImg.dataset.src; thumbImg.addEventListener('load', () => thumbImg.classList.add('is-ready'), { once:true }); }
+            });
+
+            renderSelectionList();
+            preloadNearbyImages();
+            renderAiPicks();
+        }
+
+        function preloadNearbyImages() {
+            [-1, 1, 2].forEach(offset => {
+                const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
+                if (!image?.preview) return;
+                const preload = new Image();
+                preload.src = image.preview;
+            });
+        }
+
+        function renderSelectionList() {
+            const selectedImages = state.images.filter(item => item.selected);
+            elements.selectionList.innerHTML = '';
+
+            if (!selectedImages.length) {
+                elements.selectionList.innerHTML = '<div class="empty-state">Chưa có ảnh nào được chọn. Nhấn “Chọn ảnh” để lưu lựa chọn.</div>';
+                return;
+            }
+
+            selectedImages.forEach(item => {
+                const card = document.createElement('div');
+                card.className = 'selection-item';
+                card.innerHTML = `
+                    <strong>${item.shortName || item.fullName || 'Ảnh'}</strong>
+                    <span>${item.note ? item.note : 'Không có ghi chú'}</span>
+                `;
+                elements.selectionList.appendChild(card);
+            });
+        }
+
+        function nextImage() {
+            if (!state.images.length) return;
+            state.currentIndex = (state.currentIndex + 1) % state.images.length;
+            render();
+        }
+
+        function prevImage() {
+            if (!state.images.length) return;
+            state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
+            render();
+        }
+
+        function applyZoom() {
+            zoomScale = Math.max(1, Math.min(4, zoomScale));
+            if (zoomScale === 1) { panX = 0; panY = 0; }
+            clampPan();
+            elements.lightboxImage.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomScale})`;
+            elements.lightboxImage.classList.toggle('zoomed', zoomScale > 1);
+        }
+
+        function clampPan() {
+            if (zoomScale <= 1) return;
+            const rect = elements.lightboxImage.getBoundingClientRect();
+            // getBoundingClientRect đã bao gồm zoom, nên chia ngược để lấy kích thước gốc.
+            const baseWidth = rect.width / zoomScale;
+            const baseHeight = rect.height / zoomScale;
+            const maxX = Math.max(0, (baseWidth * zoomScale - window.innerWidth) / 2);
+            const maxY = Math.max(0, (baseHeight * zoomScale - window.innerHeight) / 2);
+            panX = Math.max(-maxX, Math.min(maxX, panX));
+            panY = Math.max(-maxY, Math.min(maxY, panY));
+        }
+
+        function setZoomOrigin(clientX, clientY) {
+            // Pan dùng hệ tọa độ tâm ảnh để giới hạn phần ảnh kéo ra ngoài khung nhìn.
+            elements.lightboxImage.style.transformOrigin = 'center';
+        }
+
+        function openLightbox() {
+            const current = getCurrentImage();
+            if (!current) return;
+            // Chỉ khi khách mở ảnh lớn mới tải bản 2200px; màn hình chính dùng bản 1440px.
+            const highResolutionUrl = current.lightbox || `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2200`;
+            elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
+            elements.lightboxImage.src = highResolutionUrl;
+            elements.lightboxLoading.classList.remove('hidden');
+            zoomScale = 1;
+            panX = 0; panY = 0; panPointer = null;
+            elements.lightboxImage.style.transformOrigin = 'center';
+            applyZoom();
+            elements.imageLightbox.classList.add('open');
+            elements.imageLightbox.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeLightbox() {
+            elements.imageLightbox.classList.remove('open');
+            elements.imageLightbox.setAttribute('aria-hidden', 'true');
+            activePointers.clear();
+            panPointer = null;
+        }
+
+        function showRobotStatus(message, repeat = false) {
+            window.clearTimeout(robotMessageTimeout);
+            window.clearInterval(robotMessageInterval);
+            elements.robotMessage.textContent = message;
+            const flash = () => {
+                elements.helpRobot.classList.add('visible');
+                robotMessageTimeout = window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 5000);
+            };
+            flash();
+            if (repeat) robotMessageInterval = window.setInterval(flash, 10000);
+        }
+
+        function attachSwipe() {
+            let startX = 0;
+            elements.viewerShell.addEventListener('touchstart', (event) => {
+                startX = event.touches[0].clientX;
+            }, { passive: true });
+
+            elements.viewerShell.addEventListener('touchend', (event) => {
+                const delta = event.changedTouches[0].clientX - startX;
+                if (Math.abs(delta) > 60) {
+                    if (delta < 0) nextImage();
+                    else prevImage();
+                }
+            }, { passive: true });
+        }
+
+        elements.mainImage.addEventListener('click', openLightbox);
+        elements.mainImage.addEventListener('load', () => elements.viewerShell.classList.remove('loading'));
+        elements.mainImage.addEventListener('error', () => { elements.viewerShell.classList.remove('loading'); setMessage('Không thể tải ảnh xem trước. Hãy thử ảnh khác.', 'error'); });
+        elements.lightboxImage.addEventListener('error', () => {
+            elements.lightboxLoading.classList.add('hidden');
+            const fallback = elements.lightboxImage.dataset.fallback;
+            if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
+        });
+        elements.lightboxImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
+        elements.closeLightboxBtn.addEventListener('click', closeLightbox);
+        elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox) closeLightbox(); });
+        elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
+        elements.imageLightbox.addEventListener('wheel', event => {
+            event.preventDefault();
+            setZoomOrigin(event.clientX, event.clientY);
+            zoomScale += event.deltaY < 0 ? 0.25 : -0.25;
+            applyZoom();
+        }, { passive: false });
+        elements.imageLightbox.addEventListener('pointerdown', event => {
+            if (event.target.closest('button')) return;
+            elements.imageLightbox.setPointerCapture?.(event.pointerId);
+            activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 2) {
+                panPointer = null;
+                const [a, b] = [...activePointers.values()];
+                pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
+                pinchStartScale = zoomScale;
+                setZoomOrigin((a.x + b.x) / 2, (a.y + b.y) / 2);
+            } else if (zoomScale > 1) {
+                panPointer = event.pointerId;
+                elements.lightboxImage.classList.add('panning');
+            }
+        });
+        elements.imageLightbox.addEventListener('pointermove', event => {
+            if (!activePointers.has(event.pointerId)) return;
+            const previous = activePointers.get(event.pointerId);
+            activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 2 && pinchStartDistance) {
+                const [a, b] = [...activePointers.values()];
+                zoomScale = pinchStartScale * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStartDistance);
+                applyZoom();
+            } else if (panPointer === event.pointerId && zoomScale > 1) {
+                panX += event.clientX - previous.x;
+                panY += event.clientY - previous.y;
+                applyZoom();
+            }
+        });
+        ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            activePointers.delete(event.pointerId);
+            if (activePointers.size < 2) pinchStartDistance = 0;
+            if (panPointer === event.pointerId) panPointer = null;
+            if (!panPointer) elements.lightboxImage.classList.remove('panning');
+        }));
+        elements.lightboxSelectBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current || (!current.selected && !canSelect(current))) return;
+            current.selected = !current.selected;
+            try {
+                await saveCurrentSelection();
+                render();
+                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
+            } catch (error) {
+                current.selected = !current.selected;
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+        elements.lightboxNoteBtn.addEventListener('click', () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            elements.quickNoteInput.value = current.note || '';
+            elements.quickNoteModal.classList.add('open');
+            elements.quickNoteModal.setAttribute('aria-hidden', 'false');
+            elements.quickNoteInput.focus();
+        });
+        elements.quickNoteCancelBtn.addEventListener('click', () => elements.quickNoteModal.classList.remove('open'));
+        elements.quickNoteSaveBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            current.note = elements.quickNoteInput.value.trim();
+            try {
+                await saveCurrentSelection();
+                elements.quickNoteModal.classList.remove('open');
+                render();
+                setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+            } catch (error) { setMessage(`❌ ${error.message}`, 'error'); }
+        });
+        elements.quickNoteModal.addEventListener('click', event => { if (event.target === elements.quickNoteModal) elements.quickNoteModal.classList.remove('open'); });
+        elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
+        window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 6000);
+
+        async function saveCurrentSelection() {
+            const current = getCurrentImage();
+            if (!current) return;
+
+            current.note = elements.noteInput.value.trim();
+            const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fileName: current.fullName,
+                    isLiked: !!current.selected,
+                    note: current.note
+                })
+            });
+            let data;
+            try {
+                data = await response.json();
+            } catch (error) {
+                throw new Error(`Máy chủ trả về lỗi ${response.status}. Vui lòng thử lại hoặc kiểm tra Vercel Logs.`);
+            }
+            if (!response.ok) {
+                throw new Error(data.error || `Máy chủ trả về lỗi ${response.status}.`);
+            }
+            if (!data.success) throw new Error(data.error || 'Không thể lưu dữ liệu');
+            return data;
+        }
+
+        async function loadAlbum() {
+            if (!folderId) {
+                setMessage('❌ ID Album không hợp lệ.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    setMessage(`❌ ${data.error || 'Không thể tải album.'}`, 'error');
+                    return;
+                }
+
+                state.isFinalized = !!data.isFinalized;
+                if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
+                else elements.finalizedBanner.style.display = 'none';
+                if (state.isFinalized) showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
+                state.maxSelections = Number(data.settings?.maxSelections) || 0;
+
+                state.images = (data.files || []).map(file => ({
+                    ...file,
+                    fullName: file.fullName || file.shortName || '',
+                    shortName: file.shortName || file.fullName || '',
+                    selected: false,
+                    note: ''
+                }));
+
+                const likedList = data.liked_list || {};
+                state.images.forEach(item => {
+                    const savedData = likedList[item.fullName];
+                    if (savedData && typeof savedData === 'object') {
+                        item.selected = !!savedData.isLiked;
+                        item.note = savedData.note || '';
+                    }
+                });
+
+                state.currentIndex = 0;
+                buildAiGroups();
+                render();
+                runAiFaceScoring();
+                setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+            } catch (error) {
+                setMessage('❌ Không thể kết nối tới Server.', 'error');
+            }
+        }
+
+        elements.selectBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            if (!current.selected && !canSelect(current)) return;
+            current.selected = !current.selected;
+            try {
+                await saveCurrentSelection();
+                render();
+                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
+            } catch (error) {
+                current.selected = !current.selected;
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.saveNoteBtn.addEventListener('click', async () => {
+            const current = getCurrentImage();
+            if (!current) return;
+            try {
+                current.note = elements.noteInput.value.trim();
+                await saveCurrentSelection();
+                render();
+                setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+            } catch (error) {
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.confirmAllBtn.addEventListener('click', async () => {
+            const selectedImages = state.images.filter(item => item.selected);
+            if (!selectedImages.length) {
+                setMessage('⚠️ Chưa có ảnh nào được chọn để xác nhận.', 'error');
+                return;
+            }
+            if (!window.confirm(`Xác nhận chốt ${selectedImages.length} ảnh đã chọn? Sau khi chốt, album sẽ không thể thay đổi.`)) return;
+
+            try {
+                for (const item of selectedImages) {
+                    item.note = item.note || '';
+                    const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fileName: item.fullName, isLiked: true, note: item.note })
+                    });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        throw new Error(errorData.error || 'Không thể xác nhận ảnh');
+                    }
+                }
+                const finalizeResponse = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/finalize`, { method: 'POST' });
+                if (!finalizeResponse.ok) {
+                    const errorData = await finalizeResponse.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Không thể chốt album');
+                }
+                state.isFinalized = true;
+                elements.finalizedBanner.style.display = 'block';
+                render();
+                showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
+                setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');
+            } catch (error) {
+                setMessage(`❌ ${error.message}`, 'error');
+            }
+        });
+
+        elements.prevBtn.addEventListener('click', prevImage);
+        elements.nextBtn.addEventListener('click', nextImage);
+        function jumpToSection(section) {
+            section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            window.setTimeout(() => section.focus({ preventScroll: true }), 350);
+        }
+        elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
+        elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
+            if (event.key === 'ArrowRight') nextImage();
+            if (event.key === 'ArrowLeft') prevImage();
+        });
+
+        attachSwipe();
+        loadAlbum();
+    </script>
+</body>
+</html>
