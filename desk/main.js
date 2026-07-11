@@ -118,6 +118,10 @@ ipcMain.handle('auth-sync-drive-token', async () => {
         return { success: true, found: !!driveSession.tokens };
     } catch (error) { return { success: false }; }
 });
+ipcMain.handle('auth-drive-token-status', async () => {
+    try { const session = await getServerJson('/api/auth/drive-token', serverAuthHeaders()); return { success: true, found: !!session.tokens }; }
+    catch (error) { return { success: false, found: false, error: error.message }; }
+});
 ipcMain.handle('auth-ensure-drive-access', async () => {
     const check = async forceReauth => {
         const auth = await authenticateCasi(true, forceReauth);

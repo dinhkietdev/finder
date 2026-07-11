@@ -141,6 +141,12 @@
         .update-card h3 { margin-bottom:9px; color:var(--ink); font-size:19px; }
         .update-card p { color:var(--muted); font-size:13px; line-height:1.5; }
         .update-card button { width:100%; justify-content:center; margin-top:18px; }
+        .drive-auth-modal { display:none; position:fixed; inset:0; z-index:20500; place-items:center; padding:24px; background:rgba(11,16,32,.55); backdrop-filter:blur(8px); }
+        .drive-auth-modal.open { display:grid; }
+        .drive-auth-card { width:min(430px,100%); padding:28px; border-radius:20px; background:#fff; box-shadow:0 25px 60px rgba(0,0,0,.28); text-align:center; }
+        .drive-auth-card h3 { margin:0 0 10px; color:var(--ink); font-size:20px; }
+        .drive-auth-card p { color:var(--muted); font-size:13px; line-height:1.55; }
+        .drive-auth-card button { width:100%; justify-content:center; margin-top:18px; }
         #mac-signature-fix { display:none; background:#f1f5f9; color:#334155; }
         @media (max-width: 960px) { .dashboard-stats { grid-template-columns:repeat(2, 1fr); } .dashboard-grid { grid-template-columns:1fr; } }
         .upload-success-modal { display:none; position:fixed; inset:0; z-index:2000; align-items:center; justify-content:center; padding:20px; background:rgba(15,23,42,.48); backdrop-filter:blur(8px); }
@@ -178,6 +184,13 @@
             <p id="update-message">Đang kiểm tra phiên bản mới nhất...</p>
             <button id="update-action" type="button" class="btn-success">Tải bản cập nhật</button>
             <button id="mac-signature-fix" type="button">Mở Terminal để sửa lỗi Mac</button>
+        </div>
+    </div>
+    <div id="drive-auth-modal" class="drive-auth-modal" role="dialog" aria-modal="true">
+        <div class="drive-auth-card">
+            <h3>🔗 Kết nối Google Drive</h3>
+            <p id="drive-auth-message">Để tạo album và chọn thư mục lưu ảnh, Finder cần quyền truy cập Google Drive của studio.</p>
+            <button id="drive-auth-connect" type="button" class="btn-success">Đăng nhập Google Drive</button>
         </div>
     </div>
     <div class="sidebar">
@@ -380,14 +393,32 @@
             if (data.studio.status !== 'active') throw new Error(data.studio.status === 'rejected' ? 'Yêu cầu đăng ký đã bị từ chối. Vui lòng liên hệ quản trị viên.' : 'Tài khoản đã đăng ký và đang chờ quản trị viên xét duyệt.');
             authSession = session;
             authStudio = data.studio;
-            document.getElementById('auth-message').style.color = '#667085';
-            document.getElementById('auth-message').textContent = 'Đang kiểm tra quyền Google Drive… Nếu cần, trình duyệt sẽ mở để cấp quyền.';
-            const driveAccess = await ipcRenderer.invoke('auth-ensure-drive-access');
-            if (!driveAccess.success) throw new Error(`Chưa kết nối được Google Drive: ${driveAccess.error}`);
             document.getElementById('auth-overlay').style.display = 'none';
             loadDashboard();
+            checkDriveAccessAfterLogin();
             ipcRenderer.invoke('check-for-updates');
         }
+
+        async function checkDriveAccessAfterLogin() {
+            const status = await ipcRenderer.invoke('auth-drive-token-status');
+            if (!status.success || !status.found) document.getElementById('drive-auth-modal').classList.add('open');
+        }
+
+        document.getElementById('drive-auth-connect').addEventListener('click', async event => {
+            const button = event.currentTarget;
+            const message = document.getElementById('drive-auth-message');
+            button.disabled = true; button.textContent = 'Đang mở Google…';
+            message.textContent = 'Trình duyệt sẽ mở để bạn cấp quyền Google Drive. Sau khi hoàn tất, quay lại Finder.';
+            const result = await ipcRenderer.invoke('auth-ensure-drive-access');
+            if (result.success) {
+                document.getElementById('drive-auth-modal').classList.remove('open');
+                message.textContent = 'Để tạo album và chọn thư mục lưu ảnh, Finder cần quyền truy cập Google Drive của studio.';
+                button.disabled = false; button.textContent = 'Đăng nhập Google Drive';
+            } else {
+                message.textContent = `Chưa kết nối được Google Drive: ${result.error}`;
+                button.disabled = false; button.textContent = 'Thử kết nối lại';
+            }
+        });
 
         function showUpdateOverlay(message, actionText, disabled = false, showMacFix = false) {
             document.getElementById('update-message').textContent = message;
