@@ -129,6 +129,16 @@
         .selection-item { background:rgba(255,255,255,.045); border-color:var(--border); }
         .selection-item::before { content:'✓'; display:inline-grid; place-items:center; float:left; width:20px; height:20px; margin:0 8px 4px 0; border-radius:50%; background:rgba(59,217,160,.2); color:#80f1c7; font-size:12px; }
         .gallery-panel { padding:15px 16px 18px; }
+        .ai-picks-panel { padding:15px 16px 18px; border-color:rgba(124,140,255,.28); background:linear-gradient(135deg,rgba(124,140,255,.12),rgba(59,217,160,.06)); }
+        .ai-picks-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+        .ai-picks-heading strong { font-size:15px; }
+        .ai-picks-heading span { color:var(--text-muted); font-size:12px; }
+        .ai-picks-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px; }
+        .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; }
+        .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; }
+        .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .ai-pick-card::after { content:'AI đề xuất'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
+        .ai-pick-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(50,60,130,.25); }
         .gallery-heading { display:flex; justify-content:space-between; align-items:center; margin:0 2px 12px; font-size:13px; color:var(--text-muted); }
         .gallery-heading strong { color:var(--text-main); font-size:15px; }
         .thumb-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; overflow:visible; padding:0; }
@@ -278,6 +288,11 @@
             </div>
         </div>
 
+        <div id="aiPicksPanel" class="panel ai-picks-panel" style="display:none;">
+            <div class="ai-picks-heading"><div><strong>✦ Ảnh AI đề xuất</strong><span id="aiPicksDescription"> Ảnh nổi bật trong từng cụm burst</span></div><span id="aiPicksCount"></span></div>
+            <div id="aiPicksGrid" class="ai-picks-grid"></div>
+        </div>
+
         <div class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
             <div class="thumb-strip" id="thumbStrip"></div>
@@ -312,7 +327,8 @@
             currentIndex: 0,
             isLoading: false,
             maxSelections: 0,
-            isFinalized: false
+            isFinalized: false,
+            aiGroups: []
         };
 
         const elements = {
@@ -352,6 +368,7 @@
             robotMessage: document.querySelector('#helpRobot .robot-message'),
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
+            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount')
         };
         let zoomScale = 1;
         let robotMessageTimeout = null;
@@ -386,6 +403,47 @@
 
         function selectedCount() {
             return state.images.filter(item => item.selected).length;
+        }
+
+        // MVP thử nghiệm: gom các tên file có cùng tiền tố và số thứ tự liên
+        // tiếp (IMG_1201, IMG_1202...). Không ẩn ảnh nào khỏi gallery đầy đủ.
+        function buildAiGroups() {
+            const indexed = state.images.map((image, index) => {
+                const stem = String(image.shortName || image.fullName || '').replace(/\.[^.]+$/, '');
+                const match = stem.match(/^(.*?)(\d{3,})$/);
+                return { image, index, prefix: match?.[1] || '', number: match ? Number(match[2]) : null };
+            }).filter(item => item.number !== null);
+            const byPrefix = new Map();
+            indexed.forEach(item => { if (!byPrefix.has(item.prefix)) byPrefix.set(item.prefix, []); byPrefix.get(item.prefix).push(item); });
+            state.aiGroups = [];
+            byPrefix.forEach(items => {
+                items.sort((a, b) => a.number - b.number);
+                let group = [];
+                items.forEach(item => {
+                    if (group.length && item.number - group[group.length - 1].number > 3) {
+                        if (group.length >= 2) state.aiGroups.push(group);
+                        group = [];
+                    }
+                    group.push(item);
+                });
+                if (group.length >= 2) state.aiGroups.push(group);
+            });
+            state.aiGroups = state.aiGroups.slice(0, 80);
+        }
+
+        function renderAiPicks() {
+            if (!state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
+            elements.aiPicksPanel.style.display = '';
+            elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
+            elements.aiPicksGrid.innerHTML = '';
+            state.aiGroups.forEach(group => {
+                const pick = group[Math.floor(group.length / 2)];
+                const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
+                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = pick.image.thumbnail || pick.image.originalUrl || ''; image.alt = `AI đề xuất: ${pick.image.shortName}`;
+                const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = `${pick.image.shortName} · ${group.length} ảnh tương tự`;
+                card.append(image, label); card.addEventListener('click', () => { state.currentIndex = pick.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
+                elements.aiPicksGrid.appendChild(card);
+            });
         }
 
         function canSelect(image) {
@@ -466,6 +524,7 @@
 
             renderSelectionList();
             preloadNearbyImages();
+            renderAiPicks();
         }
 
         function preloadNearbyImages() {
@@ -740,6 +799,7 @@
                 });
 
                 state.currentIndex = 0;
+                buildAiGroups();
                 render();
                 setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
