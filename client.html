@@ -226,7 +226,7 @@
             .thumb-btn { min-height:0; contain-intrinsic-size:74px; }
             .selection-list { scroll-snap-type:y proximity; }
             .selection-item { scroll-snap-align:start; }
-            .lightbox-toolbar { left:12px; right:12px; justify-content:flex-end; }
+            .lightbox-toolbar { left:50%; right:auto; bottom:max(18px,env(safe-area-inset-bottom)); transform:translateX(-50%); justify-content:center; width:max-content; }
             .lightbox-toolbar button { min-width:44px; min-height:44px; }
         }
     </style>
