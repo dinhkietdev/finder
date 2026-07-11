@@ -55,6 +55,7 @@ const AI_ANALYSIS_CONCURRENCY = Math.max(2, Math.min(6, (os.cpus().length || 4) 
 const qualityCache = new Map();
 // Release marker: packaged OAuth endpoint integration and redirect fix.
 // Release sync marker: build from the current local Finder baseline.
+// Packaged clients reuse LOCAL_TOKEN_PATH before starting a new OAuth flow.
 const signatureCache = new Map();
 
 const userDataPath = app.getPath('userData');
