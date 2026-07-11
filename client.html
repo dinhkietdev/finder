@@ -368,7 +368,7 @@
             robotMessage: document.querySelector('#helpRobot .robot-message'),
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
-            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount')
+            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription')
         };
         let zoomScale = 1;
         let robotMessageTimeout = null;
@@ -379,6 +379,42 @@
         let panY = 0;
         let panPointer = null;
         const activePointers = new Map();
+        let faceLandmarkerPromise = null;
+        const aiScores = new WeakMap();
+
+        async function getFaceLandmarker() {
+            if (!faceLandmarkerPromise) faceLandmarkerPromise = (async () => {
+                const { FaceLandmarker, FilesetResolver } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm');
+                const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm');
+                return FaceLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' }, runningMode: 'IMAGE', numFaces: 3, outputFaceBlendshapes: true });
+            })();
+            return faceLandmarkerPromise;
+        }
+
+        async function scoreFaceImage(image) {
+            const source = image.thumbnail || image.preview || image.originalUrl;
+            if (!source) return 0;
+            const bitmap = await new Promise((resolve, reject) => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => resolve(img); img.onerror = reject; img.src = source; });
+            const canvas = document.createElement('canvas'); canvas.width = Math.min(640, bitmap.naturalWidth || 640); canvas.height = Math.round(canvas.width * (bitmap.naturalHeight / bitmap.naturalWidth));
+            const context = canvas.getContext('2d', { willReadFrequently:true }); context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+            const result = (await getFaceLandmarker()).detect(canvas);
+            const faces = result.faceBlendshapes || [];
+            if (!faces.length) return 0;
+            const categories = Object.fromEntries(faces[0].categories.map(item => [item.categoryName, item.score]));
+            const eyeOpen = 1 - ((categories.eyeBlinkLeft || 0) + (categories.eyeBlinkRight || 0)) / 2;
+            const smile = ((categories.mouthSmileLeft || 0) + (categories.mouthSmileRight || 0)) / 2;
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            let edgeTotal = 0; let edgeSamples = 0;
+            for (let y = 1; y < canvas.height - 1; y += 3) for (let x = 1; x < canvas.width - 1; x += 3) {
+                const p = (y * canvas.width + x) * 4; const right = p + 4; const down = p + canvas.width * 4;
+                const center = pixels[p] * .299 + pixels[p + 1] * .587 + pixels[p + 2] * .114;
+                const horizontal = Math.abs(center - (pixels[right] * .299 + pixels[right + 1] * .587 + pixels[right + 2] * .114));
+                const vertical = Math.abs(center - (pixels[down] * .299 + pixels[down + 1] * .587 + pixels[down + 2] * .114));
+                edgeTotal += horizontal + vertical; edgeSamples++;
+            }
+            const sharpness = Math.min(1, (edgeTotal / Math.max(1, edgeSamples)) / 42);
+            return Math.round(45 + eyeOpen * 25 + smile * 15 + sharpness * 15);
+        }
         const thumbObserver = 'IntersectionObserver' in window
             ? new IntersectionObserver(entries => entries.forEach(entry => {
                 if (!entry.isIntersecting) return;
@@ -437,13 +473,30 @@
             elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
             elements.aiPicksGrid.innerHTML = '';
             state.aiGroups.forEach(group => {
-                const pick = group[Math.floor(group.length / 2)];
+                const pick = group.slice().sort((a, b) => (aiScores.get(b.image) || 0) - (aiScores.get(a.image) || 0))[0];
                 const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
                 const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = pick.image.thumbnail || pick.image.originalUrl || ''; image.alt = `AI đề xuất: ${pick.image.shortName}`;
                 const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = `${pick.image.shortName} · ${group.length} ảnh tương tự`;
                 card.append(image, label); card.addEventListener('click', () => { state.currentIndex = pick.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
                 elements.aiPicksGrid.appendChild(card);
             });
+        }
+
+        async function runAiFaceScoring() {
+            if (!state.aiGroups.length) return;
+            elements.aiPicksDescription.textContent = ' AI đang chấm mắt mở, nụ cười và khuôn mặt…';
+            try {
+                await getFaceLandmarker();
+                const candidates = state.aiGroups.flatMap(group => group).slice(0, 240);
+                for (const candidate of candidates) {
+                    try { aiScores.set(candidate.image, await scoreFaceImage(candidate.image)); } catch (error) { aiScores.set(candidate.image, 0); }
+                    if (candidates.indexOf(candidate) % 8 === 0) renderAiPicks();
+                }
+                elements.aiPicksDescription.textContent = ' AI đã chấm khuôn mặt, mắt và biểu cảm trên ảnh xem trước';
+                renderAiPicks();
+            } catch (error) {
+                elements.aiPicksDescription.textContent = ' Đề xuất thử nghiệm theo cụm ảnh (AI khuôn mặt chưa tải được)';
+            }
         }
 
         function canSelect(image) {
@@ -801,6 +854,7 @@
                 state.currentIndex = 0;
                 buildAiGroups();
                 render();
+                runAiFaceScoring();
                 setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
                 setMessage('❌ Không thể kết nối tới Server.', 'error');
