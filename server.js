@@ -113,12 +113,13 @@ async function persistState() {
 }
 
 function getOAuth2Client() {
+    const redirectUri = 'http://localhost:3000/oauth2callback';
     // 1. Ưu tiên đọc từ biến môi trường trên Vercel (Bảo mật cao nhất)
     if (process.env.GOOGLE_OAUTH_CREDENTIALS) {
         try {
             const credentials = JSON.parse(process.env.GOOGLE_OAUTH_CREDENTIALS);
             const { client_id, client_secret } = credentials.installed || credentials.web;
-            return new google.auth.OAuth2(client_id, client_secret);
+            return new google.auth.OAuth2(client_id, client_secret, redirectUri);
         } catch (e) {
             console.error("Lỗi định dạng GOOGLE_OAUTH_CREDENTIALS");
         }
@@ -130,7 +131,7 @@ function getOAuth2Client() {
     const content = fs.readFileSync(credentialsPath, 'utf8');
     const credentials = JSON.parse(content);
     const { client_id, client_secret } = credentials.installed || credentials.web;
-    return new google.auth.OAuth2(client_id, client_secret);
+    return new google.auth.OAuth2(client_id, client_secret, redirectUri);
 }
 
 app.post('/api/auth/drive-authorize', (req, res) => {
