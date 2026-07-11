@@ -125,8 +125,17 @@ ipcMain.handle('auth-sync-drive-token', async () => {
     } catch (error) { return { success: false }; }
 });
 ipcMain.handle('auth-drive-token-status', async () => {
-    try { const session = await getServerJson('/api/auth/drive-token', serverAuthHeaders()); return { success: true, found: !!session.tokens }; }
-    catch (error) { return { success: false, found: false, error: error.message }; }
+    // Drive sessions belong to the current desktop machine. Do not report a
+    // missing session merely because Vercel has no shared GOOGLE_SESSION_TOKEN.
+    try {
+        if (fs.existsSync(LOCAL_TOKEN_PATH)) {
+            const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+            const usable = Boolean(tokens.refresh_token || (tokens.access_token && (!tokens.expiry_date || tokens.expiry_date > Date.now())));
+            if (usable) return { success: true, found: true, source: 'local' };
+        }
+        const session = await getServerJson('/api/auth/drive-token', serverAuthHeaders());
+        return { success: true, found: !!session.tokens, source: 'server' };
+    } catch (error) { return { success: true, found: false, error: error.message }; }
 });
 ipcMain.handle('auth-ensure-drive-access', async () => {
     const check = async forceReauth => {
