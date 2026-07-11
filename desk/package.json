@@ -8,6 +8,7 @@
     "start": "electron ."
   },
   "dependencies": {
+    "electron-updater": "^6.6.2",
     "firebase-admin": "^14.1.0",
     "googleapis": "^144.0.0",
     "sharp": "^0.35.3"
@@ -26,7 +27,18 @@
       "owner": "dinhkietdev",
       "repo": "finder"
     },
-    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.photography" },
-    "win": { "target": ["nsis"], "artifactName": "Finder-Setup-${version}.${ext}" }
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.photography"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Finder-Setup-${version}.${ext}"
+    }
   }
 }
