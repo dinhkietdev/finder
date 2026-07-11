@@ -148,6 +148,20 @@ app.get('/api/auth/drive-client', (req, res) => {
     catch (error) { res.status(500).json({ error:error.message }); }
 });
 
+// Refresh access tokens on the server, where the OAuth client secret is
+// available. Desktop builds intentionally do not contain that secret.
+app.post('/api/auth/drive-refresh', async (req, res) => {
+    try {
+        const refreshToken = req.body?.refreshToken;
+        const client = getOAuth2Client();
+        if (!client || !refreshToken) return res.status(400).json({ error: 'Thiếu cấu hình OAuth hoặc refresh token.' });
+        client.setCredentials({ refresh_token: refreshToken });
+        const result = await client.getAccessToken();
+        if (!result?.token) return res.status(401).json({ error: 'Không thể làm mới phiên Google Drive.' });
+        res.json({ success: true, access_token: result.token, expiry_date: Date.now() + 3600000 });
+    } catch (error) { res.status(401).json({ error: error.message }); }
+});
+
 // Desktop clients call this endpoint before opening Google's consent page.  It
 // was previously missing, so every 404 was treated as an expired session and
 // opened a new Google sign-in window on every folder-picker click.
@@ -158,6 +172,10 @@ app.get('/api/auth/drive-token', (req, res) => {
         const tokens = getStoredTokens();
         res.json({ success: true, clientId: client._clientId, tokens: tokens || null });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.get('/client.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'client.html'));
 });
 
 app.post('/api/auth/drive-exchange', async (req, res) => {
