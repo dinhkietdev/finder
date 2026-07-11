@@ -53,6 +53,7 @@ const ONLINE_SERVER = `https://${ONLINE_DOMAIN}`;
 const MAX_CONCURRENT_UPLOADS = 4;
 const AI_ANALYSIS_CONCURRENCY = Math.max(2, Math.min(6, (os.cpus().length || 4) - 1));
 const qualityCache = new Map();
+// Release sync marker: build from the current local Finder baseline.
 const signatureCache = new Map();
 
 const userDataPath = app.getPath('userData');
