@@ -86,7 +86,7 @@
         .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
         .lightbox-image.zoomed { cursor:grab; }
         .lightbox-image.panning { cursor:grabbing; transition:none; }
-        .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
+        .lightbox-toolbar { position:absolute; left:50%; bottom:max(18px,env(safe-area-inset-bottom)); transform:translateX(-50%); display:flex; gap:8px; z-index:2; }
         .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
         .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
         .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
@@ -148,7 +148,7 @@
         .thumb-btn.active { border-color:#9da8ff; box-shadow:0 0 0 3px rgba(124,140,255,.22); }
         .thumb-btn.selected::after { top:6px; right:6px; margin:0; box-shadow:0 2px 8px rgba(0,0,0,.3); }
         .image-lightbox { background:rgba(3,6,12,.97); }
-        .lightbox-toolbar { top:max(14px,env(safe-area-inset-top)); right:14px; }
+        .lightbox-toolbar { bottom:max(18px,env(safe-area-inset-bottom)); left:50%; right:auto; }
         .lightbox-toolbar button { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); border-color:rgba(255,255,255,.18); }
         .zoom-tip { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); }
 
@@ -377,6 +377,7 @@
         let panX = 0;
         let panY = 0;
         let panPointer = null;
+        let lightboxSwipeStart = null;
         const activePointers = new Map();
         let faceLandmarkerPromise = null;
         const aiScores = new WeakMap();
@@ -717,6 +718,7 @@
             if (event.target.closest('button')) return;
             elements.imageLightbox.setPointerCapture?.(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 1 && zoomScale <= 1) lightboxSwipeStart = { x: event.clientX, y: event.clientY };
             if (activePointers.size === 2) {
                 panPointer = null;
                 const [a, b] = [...activePointers.values()];
@@ -743,6 +745,12 @@
             }
         });
         ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            if (type === 'pointerup' && lightboxSwipeStart && zoomScale <= 1 && activePointers.size === 1) {
+                const dx = event.clientX - lightboxSwipeStart.x;
+                const dy = event.clientY - lightboxSwipeStart.y;
+                if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.2) { dx < 0 ? nextImage() : prevImage(); }
+            }
+            lightboxSwipeStart = null;
             activePointers.delete(event.pointerId);
             if (activePointers.size < 2) pinchStartDistance = 0;
             if (panPointer === event.pointerId) panPointer = null;
