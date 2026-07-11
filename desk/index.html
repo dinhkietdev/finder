@@ -537,28 +537,27 @@
         async function loadDriveFolders() {
             const current = driveNavigation[driveNavigation.length - 1];
             const list = document.getElementById('drive-folder-list');
+            const chooseButton = document.getElementById('btn-choose-drive-folder');
             document.getElementById('drive-folder-breadcrumb').textContent = current.path;
             document.getElementById('btn-drive-back').disabled = driveNavigation.length === 1;
             list.innerHTML = '<div style="padding:16px; color:#64748b;">Đang tải thư mục...</div>';
-            const result = await ipcRenderer.invoke('list-drive-folders', current.id);
-            if (!result.success) {
-                list.innerHTML = `<div style="padding:16px; color:#ef4444;">Không thể tải thư mục: ${escapeHtml(result.error)}</div>`;
-                return;
-            }
-            list.innerHTML = '';
-            if (!result.folders.length) list.innerHTML = '<div style="padding:16px; color:#64748b;">Thư mục này chưa có thư mục con.</div>';
-            result.folders.forEach(folder => {
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'btn-outline';
-                button.style.cssText = 'width:100%; margin:0; padding:12px; border:0; border-bottom:1px solid #e2e8f0; border-radius:0; justify-content:flex-start;';
-                button.textContent = `📁 ${folder.name}`;
-                button.onclick = () => {
-                    driveNavigation.push({ id: folder.id, path: `${current.path} / ${folder.name}` });
-                    loadDriveFolders();
-                };
-                list.appendChild(button);
-            });
+            chooseButton.disabled = true;
+            try {
+                const result = await ipcRenderer.invoke('list-drive-folders', current.id);
+                if (!result.success) throw new Error(result.error || 'Không thể tải thư mục.');
+                list.innerHTML = '';
+                if (!result.folders.length) list.innerHTML = '<div style="padding:16px; color:#64748b;">Thư mục này chưa có thư mục con.</div>';
+                result.folders.forEach(folder => {
+                    const button = document.createElement('button');
+                    button.type = 'button'; button.className = 'btn-outline';
+                    button.style.cssText = 'width:100%; margin:0; padding:12px; border:0; border-bottom:1px solid #e2e8f0; border-radius:0; justify-content:flex-start;';
+                    button.textContent = `📁 ${folder.name}`;
+                    button.onclick = () => { driveNavigation.push({ id: folder.id, path: `${current.path} / ${folder.name}` }); loadDriveFolders(); };
+                    list.appendChild(button);
+                });
+            } catch (error) {
+                list.innerHTML = `<div style="padding:16px; color:#ef4444; line-height:1.5;">Không thể tải thư mục: ${escapeHtml(error.message)}<br><small>Hãy kiểm tra cửa sổ Google vừa mở để cấp quyền Drive, sau đó thử lại.</small></div>`;
+            } finally { chooseButton.disabled = false; }
         }
 
         function switchView(viewId, btnElement) {

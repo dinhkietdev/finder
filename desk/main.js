@@ -500,7 +500,9 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                     fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(result.tokens), 'utf8');
                     resolve(oauth2Client);
                 } catch (error) { server.close(); reject(error); }
-            }).listen(PORT);
+            });
+            server.on('error', error => reject(new Error(`Không thể mở cổng xác thực Google (cổng ${PORT}): ${error.message}`)));
+            server.listen(PORT);
         };
         getServerJson('/api/auth/drive-token', serverAuthHeaders()).then(session => {
             if (!forceReauth && session.tokens && session.clientId) {
