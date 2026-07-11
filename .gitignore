@@ -16,3 +16,5 @@ sever/database.json
 
 # OS files
 .DS_Store
+.vercel
+.env*
