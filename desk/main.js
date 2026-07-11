@@ -61,10 +61,12 @@ const signatureCache = new Map();
 const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
+const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
 const AUTH_SESSION_PATH = path.join(userDataPath, 'finder-auth-session.json');
 let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
 let currentAuthSession = null;
+let driveAuthPromise = null;
 
 function postJson(url, payload, headers = {}) {
     return new Promise((resolve, reject) => {
@@ -584,7 +586,10 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
     if (!app.isPackaged && fs.existsSync(path.join(__dirname, 'oauth-credentials.json'))) {
         return authenticateLegacyLocalDrive(requireFullDriveScope, forceReauth);
     }
-    return new Promise((resolve, reject) => {
+    // Several UI events can arrive while the folder picker is opening. Reuse
+    // one in-flight OAuth request instead of opening multiple Google tabs.
+    if (driveAuthPromise && !forceReauth) return driveAuthPromise;
+    driveAuthPromise = new Promise((resolve, reject) => {
         const PORT = 3000;
         const redirectUri = `http://localhost:${PORT}/oauth2callback`;
         const createClient = clientId => new google.auth.OAuth2(clientId, undefined, redirectUri);
@@ -592,9 +597,13 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
             if (forceReauth || !fs.existsSync(LOCAL_TOKEN_PATH)) return false;
             const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
             if (!tokens.refresh_token && (!tokens.access_token || !tokens.expiry_date || tokens.expiry_date < Date.now())) return false;
-            const clientInfo = await getServerJson('/api/auth/drive-client');
-            if (!clientInfo.clientId) return false;
-            oauth2Client = createClient(clientInfo.clientId); oauth2Client.setCredentials(tokens); return true;
+            let clientId = null;
+            try { clientId = (await getServerJson('/api/auth/drive-client')).clientId; } catch (_) {}
+            if (!clientId && fs.existsSync(LOCAL_DRIVE_CLIENT_PATH)) {
+                try { clientId = JSON.parse(fs.readFileSync(LOCAL_DRIVE_CLIENT_PATH, 'utf8')).clientId; } catch (_) {}
+            }
+            if (!clientId) return false;
+            oauth2Client = createClient(clientId); oauth2Client.setCredentials(tokens); return true;
         };
         const connect = async () => {
             const authorization = await postServerJson('/api/auth/drive-authorize', { requireFullDriveScope }, serverAuthHeaders());
@@ -612,6 +621,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                     server.close();
                     oauth2Client.setCredentials(result.tokens);
                     fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(result.tokens), 'utf8');
+                    if (result.clientId) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: result.clientId }), 'utf8');
                     resolve(oauth2Client);
                 } catch (error) { server.close(); reject(error); }
             });
@@ -625,12 +635,14 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                     oauth2Client = createClient(session.clientId);
                     oauth2Client.setCredentials(session.tokens);
                     fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(session.tokens), 'utf8');
+                    if (session.clientId) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: session.clientId }), 'utf8');
                     return resolve(oauth2Client);
                 }
             }
             connect().catch(reject);
         }).catch(() => connect().catch(reject));
-    });
+    }).finally(() => { driveAuthPromise = null; });
+    return driveAuthPromise;
 }
 
 ipcMain.handle('list-drive-folders', async (event, parentId) => {
