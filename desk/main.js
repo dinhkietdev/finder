@@ -118,6 +118,18 @@ ipcMain.handle('auth-sync-drive-token', async () => {
         return { success: true, found: !!driveSession.tokens };
     } catch (error) { return { success: false }; }
 });
+ipcMain.handle('auth-ensure-drive-access', async () => {
+    const check = async forceReauth => {
+        const auth = await authenticateCasi(true, forceReauth);
+        const drive = google.drive({ version: 'v3', auth });
+        await drive.files.list({ q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false", fields: 'files(id)', pageSize: 1 });
+    };
+    try {
+        try { await check(false); }
+        catch (error) { if (!isGoogleTokenError(error)) throw error; await check(true); }
+        return { success: true };
+    } catch (error) { return { success: false, error: error.message }; }
+});
 ipcMain.handle('auth-sign-in', async (event, { email, password, isRegister }) => {
     try {
         if (!FIREBASE_AUTH_API_KEY) throw new Error('Finder chưa được cấu hình Firebase Authentication.');

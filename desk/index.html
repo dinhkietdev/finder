@@ -380,7 +380,10 @@
             if (data.studio.status !== 'active') throw new Error(data.studio.status === 'rejected' ? 'Yêu cầu đăng ký đã bị từ chối. Vui lòng liên hệ quản trị viên.' : 'Tài khoản đã đăng ký và đang chờ quản trị viên xét duyệt.');
             authSession = session;
             authStudio = data.studio;
-            await ipcRenderer.invoke('auth-sync-drive-token');
+            document.getElementById('auth-message').style.color = '#667085';
+            document.getElementById('auth-message').textContent = 'Đang kiểm tra quyền Google Drive… Nếu cần, trình duyệt sẽ mở để cấp quyền.';
+            const driveAccess = await ipcRenderer.invoke('auth-ensure-drive-access');
+            if (!driveAccess.success) throw new Error(`Chưa kết nối được Google Drive: ${driveAccess.error}`);
             document.getElementById('auth-overlay').style.display = 'none';
             loadDashboard();
             ipcRenderer.invoke('check-for-updates');
