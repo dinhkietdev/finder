@@ -143,6 +143,10 @@ app.post('/api/auth/drive-authorize', (req, res) => {
         res.json({ success: true, clientId: client._clientId, authUrl: client.generateAuthUrl({ access_type:'offline', prompt:'consent', state, scope:['https://www.googleapis.com/auth/drive'] }) });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
+app.get('/api/auth/drive-client', (req, res) => {
+    try { const client = getOAuth2Client(); if (!client) return res.status(503).json({ error:'Server chưa cấu hình OAuth.' }); res.json({ success:true, clientId:client._clientId }); }
+    catch (error) { res.status(500).json({ error:error.message }); }
+});
 
 app.post('/api/auth/drive-exchange', async (req, res) => {
     const { code, state } = req.body || {};

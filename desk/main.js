@@ -584,6 +584,14 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
         const PORT = 3000;
         const redirectUri = `http://localhost:${PORT}/oauth2callback`;
         const createClient = clientId => new google.auth.OAuth2(clientId, undefined, redirectUri);
+        const useStoredToken = async () => {
+            if (forceReauth || !fs.existsSync(LOCAL_TOKEN_PATH)) return false;
+            const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+            if (!tokens.refresh_token && (!tokens.access_token || !tokens.expiry_date || tokens.expiry_date < Date.now())) return false;
+            const clientInfo = await getServerJson('/api/auth/drive-client');
+            if (!clientInfo.clientId) return false;
+            oauth2Client = createClient(clientInfo.clientId); oauth2Client.setCredentials(tokens); return true;
+        };
         const connect = async () => {
             const authorization = await postServerJson('/api/auth/drive-authorize', { requireFullDriveScope }, serverAuthHeaders());
             if (!authorization.clientId) throw new Error('Máy chủ chưa cấu hình Google Drive OAuth.');
@@ -606,7 +614,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
             server.on('error', error => reject(new Error(`Không thể mở cổng xác thực Google (cổng ${PORT}): ${error.message}`)));
             server.listen(PORT);
         };
-        getServerJson('/api/auth/drive-token', serverAuthHeaders()).then(session => {
+        useStoredToken().then(reused => { if (reused) return resolve(oauth2Client); return getServerJson('/api/auth/drive-token', serverAuthHeaders()); }).then(session => {
             if (!forceReauth && session.tokens && session.clientId) {
                 const grantedScopes = (session.tokens.scope || '').split(' ');
                 if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
