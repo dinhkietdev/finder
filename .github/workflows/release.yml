@@ -94,14 +94,8 @@ jobs:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
-      # Build Windows locally, then upload to the release created by macOS.
-      # electron-builder cannot publish to an existing non-draft release.
+      # Publish Windows into the non-draft release created by macOS.
       - name: Build and publish Windows installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish never
-      - name: Upload Windows release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v1.0.${{ github.run_number }}
-        run: gh release upload "$TAG" dist/*.exe dist/*.blockmap dist/latest.yml --clobber
+        run: npx electron-builder --win --publish always --config.publish.releaseType=release
