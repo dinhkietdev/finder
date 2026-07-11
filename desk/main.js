@@ -603,6 +603,16 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                 try { clientId = JSON.parse(fs.readFileSync(LOCAL_DRIVE_CLIENT_PATH, 'utf8')).clientId; } catch (_) {}
             }
             if (!clientId) return false;
+            if (tokens.refresh_token && (!tokens.expiry_date || tokens.expiry_date < Date.now() + 60000)) {
+                try {
+                    const refreshed = await postServerJson('/api/auth/drive-refresh', { refreshToken: tokens.refresh_token }, serverAuthHeaders());
+                    if (refreshed.access_token) {
+                        tokens.access_token = refreshed.access_token;
+                        tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
+                        fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                    }
+                } catch (_) { return false; }
+            }
             oauth2Client = createClient(clientId); oauth2Client.setCredentials(tokens); return true;
         };
         const connect = async () => {
