@@ -170,6 +170,16 @@ async function getStoredTokensForStudio(studioId) {
     return getStoredTokens();
 }
 
+async function refreshDriveTokens(tokens) {
+    if (!tokens?.refresh_token) return tokens;
+    const oauth2Client = getOAuth2Client('http://localhost:3000/oauth2callback');
+    if (!oauth2Client) return tokens;
+    oauth2Client.setCredentials(tokens);
+    const refreshed = await oauth2Client.getAccessToken();
+    if (refreshed?.token) return { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600 * 1000 };
+    return tokens;
+}
+
 const adminEmails = new Set((process.env.ADMIN_EMAILS || '').split(',')
     .map(email => email.trim().replace(/^['"]|['"]$/g, '').toLowerCase())
     .filter(Boolean));
@@ -238,7 +248,13 @@ app.post('/api/auth/save-token', requireStudioUser, requireApprovedStudio, async
 });
 
 app.get('/api/auth/drive-token', requireStudioUser, requireApprovedStudio, async (req, res) => {
-    const tokens = (await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).once('value')).val();
+    let tokens = (await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).once('value')).val();
+    if (tokens?.refresh_token) {
+        try {
+            tokens = await refreshDriveTokens(tokens);
+            await firebaseDb.ref(`finderStudios/${req.user.uid}/googleDriveTokens`).set(tokens);
+        } catch (error) { console.warn('Không thể refresh Google Drive token:', error.message); }
+    }
     res.json({ success: true, tokens: tokens || null, clientId: getGoogleClientId() });
 });
 

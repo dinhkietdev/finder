@@ -490,7 +490,7 @@ ipcMain.handle('get-culling-preview', async (event, { folderPath, file }) => {
 });
 
 function isGoogleTokenError(error) {
-    return /invalid_(request|grant|client)|unauthorized_client/i.test(String(error?.message || error));
+    return /invalid_(request|grant|client)|unauthorized_client|invalid credentials|unauthenticated|401/i.test(String(error?.message || error));
 }
 
 function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
