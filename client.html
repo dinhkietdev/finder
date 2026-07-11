@@ -613,12 +613,14 @@
             if (!state.images.length) return;
             state.currentIndex = (state.currentIndex + 1) % state.images.length;
             render();
+            if (elements.imageLightbox.classList.contains('open')) openLightbox();
         }
 
         function prevImage() {
             if (!state.images.length) return;
             state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
             render();
+            if (elements.imageLightbox.classList.contains('open')) openLightbox();
         }
 
         function applyZoom() {
