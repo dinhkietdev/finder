@@ -137,9 +137,40 @@ function getServiceAccountAuth() {
     try {
         const account = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
         if (!account.client_email || !account.private_key) return null;
-        return new google.auth.JWT(account.client_email, null, account.private_key.replace(/\\n/g, '\n'), ['https://www.googleapis.com/auth/drive.readonly']);
+        return new google.auth.JWT({
+            email: account.client_email,
+            key: account.private_key.replace(/\\n/g, '\n'),
+            scopes: ['https://www.googleapis.com/auth/drive.readonly']
+        });
     } catch (error) { console.error('Lỗi GOOGLE_SERVICE_ACCOUNT:', error.message); return null; }
 }
+
+async function getAlbumDriveAuth(folderId) {
+    if (!firebaseDb) return null;
+    const snapshot = await firebaseDb.ref(`driveTokens/${folderId}`).once('value');
+    const tokens = snapshot.val();
+    if (!tokens?.refresh_token && !tokens?.access_token) return null;
+    const credentials = process.env.GOOGLE_OAUTH_CREDENTIALS;
+    if (!credentials) return null;
+    const cfg = JSON.parse(credentials); const c = cfg.web || cfg.installed;
+    const client = new google.auth.OAuth2(c.client_id, c.client_secret, 'http://localhost:3000/oauth2callback');
+    client.setCredentials(tokens);
+    if (tokens.refresh_token && (!tokens.expiry_date || tokens.expiry_date < Date.now() + 60000)) {
+        const refreshed = await client.getAccessToken();
+        if (refreshed?.token) { const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000 }; await firebaseDb.ref(`driveTokens/${folderId}`).set(next); client.setCredentials(next); }
+    }
+    return client;
+}
+
+// Endpoint không lộ bí mật, dùng sau khi deploy để phân biệt lỗi
+// cấu hình cloud với lỗi quyền truy cập từng folder Drive.
+app.get('/api/health', (req, res) => {
+    res.json({
+        ok: true,
+        firebaseConfigured: Boolean(firebaseDb),
+        googleDriveServiceAccountConfigured: Boolean(getServiceAccountAuth())
+    });
+});
 
 // ĐOẠN QUAN TRỌNG NHẤT ĐỂ CHẠY TRÊN VERCEL
 function getStoredTokens() {
@@ -223,9 +254,11 @@ app.get('/api/album/:folderId', async (req, res) => {
             return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
         }
 
-        const serviceAccountAuth = getServiceAccountAuth();
+        const albumOAuth = await getAlbumDriveAuth(folderId);
+        const serviceAccountAuth = albumOAuth ? null : getServiceAccountAuth();
         let drive;
-        if (serviceAccountAuth) drive = google.drive({ version: 'v3', auth: serviceAccountAuth });
+        if (albumOAuth) drive = google.drive({ version: 'v3', auth: albumOAuth });
+        else if (serviceAccountAuth) drive = google.drive({ version: 'v3', auth: serviceAccountAuth });
         else {
             const tokens = getStoredTokens();
             if (!tokens) return res.status(503).json({ error: 'Server chưa cấu hình GOOGLE_SERVICE_ACCOUNT.' });
@@ -261,6 +294,12 @@ app.get('/api/album/:folderId', async (req, res) => {
         albumCacheDatabase[folderId] = files;
         res.json({ success: true, folderId, files, liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
     } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+app.post('/api/album/:folderId/drive-token', async (req, res) => {
+    if (!firebaseDb || !req.body?.tokens) return res.status(503).json({ error: 'Firebase chưa cấu hình hoặc thiếu token.' });
+    await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set(req.body.tokens);
+    res.json({ success: true });
 });
 
 app.post('/api/album/:folderId/toggle-like', async (req, res) => {
