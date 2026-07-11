@@ -17,5 +17,16 @@
     "electron-builder": "^25.1.8"
   },
   "author": "Trần Đình Kiệt",
-  "license": "ISC"
+  "license": "ISC",
+  "build": {
+    "appId": "com.finder.desktop",
+    "productName": "Finder",
+    "publish": {
+      "provider": "github",
+      "owner": "dinhkietdev",
+      "repo": "finder"
+    },
+    "mac": { "target": ["dmg", "zip"], "category": "public.app-category.photography" },
+    "win": { "target": ["nsis"], "artifactName": "Finder-Setup-${version}.${ext}" }
+  }
 }
