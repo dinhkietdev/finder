@@ -141,6 +141,7 @@
         .update-card h3 { margin-bottom:9px; color:var(--ink); font-size:19px; }
         .update-card p { color:var(--muted); font-size:13px; line-height:1.5; }
         .update-card button { width:100%; justify-content:center; margin-top:18px; }
+        #mac-signature-fix { display:none; background:#f1f5f9; color:#334155; }
         @media (max-width: 960px) { .dashboard-stats { grid-template-columns:repeat(2, 1fr); } .dashboard-grid { grid-template-columns:1fr; } }
         .upload-success-modal { display:none; position:fixed; inset:0; z-index:2000; align-items:center; justify-content:center; padding:20px; background:rgba(15,23,42,.48); backdrop-filter:blur(8px); }
         .upload-success-modal.open { display:flex; }
@@ -176,6 +177,7 @@
             <h3>Cần cập nhật Finder</h3>
             <p id="update-message">Đang kiểm tra phiên bản mới nhất...</p>
             <button id="update-action" type="button" class="btn-success">Tải bản cập nhật</button>
+            <button id="mac-signature-fix" type="button">Mở Terminal để sửa lỗi Mac</button>
         </div>
     </div>
     <div class="sidebar">
@@ -384,12 +386,19 @@
             ipcRenderer.invoke('check-for-updates');
         }
 
-        function showUpdateOverlay(message, actionText, disabled = false) {
+        function showUpdateOverlay(message, actionText, disabled = false, showMacFix = false) {
             document.getElementById('update-message').textContent = message;
             const button = document.getElementById('update-action');
             button.textContent = actionText; button.disabled = disabled;
+            document.getElementById('mac-signature-fix').style.display = showMacFix ? 'block' : 'none';
             document.getElementById('update-overlay').style.display = 'grid';
         }
+
+        document.getElementById('mac-signature-fix').addEventListener('click', async event => {
+            event.currentTarget.disabled = true;
+            const result = await ipcRenderer.invoke('open-macos-signature-fix');
+            event.currentTarget.textContent = result.success ? 'Đã mở Terminal ✓' : 'Không thể mở Terminal';
+        });
 
         document.getElementById('update-action').addEventListener('click', async () => {
             const button = document.getElementById('update-action');
@@ -405,7 +414,7 @@
             if (data.status === 'downloading') showUpdateOverlay(`Đang tải bản cập nhật… ${data.percent || 0}%`, 'Đang tải...', true);
             if (data.status === 'downloaded') { updateReadyToInstall = true; showUpdateOverlay(`Finder ${data.version} đã tải xong. Ứng dụng sẽ khởi động lại để hoàn tất.`, 'Khởi động lại và cập nhật'); }
             if (data.status === 'manual-available') { manualUpdateUrl = data.url; showUpdateOverlay(`Đã có Finder ${data.version}. Tải bản DMG mới để cập nhật trên Mac.`, 'Mở trang tải bản cập nhật'); }
-            if (data.status === 'error') showUpdateOverlay(`Không thể kiểm tra/cập nhật: ${data.message}`, 'Thử lại');
+            if (data.status === 'error') showUpdateOverlay(`Không thể kiểm tra/cập nhật: ${data.message}`, 'Thử lại', false, /signature|chữ ký|code signature/i.test(data.message || ''));
         });
 
         document.getElementById('auth-form').addEventListener('submit', async event => {

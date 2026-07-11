@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const { execFile } = require('child_process');
 const https = require('https'); 
 const { google } = require('googleapis');
 const sharp = require('sharp');
@@ -173,6 +174,12 @@ ipcMain.handle('download-update', async () => {
     catch (error) { return { success: false, error: error.message }; }
 });
 ipcMain.handle('install-update', () => { autoUpdater.quitAndInstall(); });
+ipcMain.handle('open-macos-signature-fix', () => {
+    if (process.platform !== 'darwin') return { success: false, error: 'Chức năng này chỉ dành cho macOS.' };
+    return new Promise(resolve => {
+        execFile('osascript', ['-e', 'tell application "Terminal" to do script "xattr -cr /Applications/Finder.app"'], error => resolve(error ? { success:false, error:error.message } : { success:true }));
+    });
+});
 
 // ---------------------------------------------------------
 // 3. LOGIC LƯU TRỮ (KẾT HỢP LOCAL & FIREBASE)
