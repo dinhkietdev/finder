@@ -148,6 +148,18 @@ app.get('/api/auth/drive-client', (req, res) => {
     catch (error) { res.status(500).json({ error:error.message }); }
 });
 
+// Desktop clients call this endpoint before opening Google's consent page.  It
+// was previously missing, so every 404 was treated as an expired session and
+// opened a new Google sign-in window on every folder-picker click.
+app.get('/api/auth/drive-token', (req, res) => {
+    try {
+        const client = getOAuth2Client();
+        if (!client) return res.status(503).json({ error: 'Server chưa cấu hình OAuth.' });
+        const tokens = getStoredTokens();
+        res.json({ success: true, clientId: client._clientId, tokens: tokens || null });
+    } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
 app.post('/api/auth/drive-exchange', async (req, res) => {
     const { code, state } = req.body || {};
     if (!code || !driveOAuthStates.has(state) || driveOAuthStates.get(state) < Date.now()) return res.status(400).json({ error: 'Yêu cầu OAuth không hợp lệ hoặc đã hết hạn.' });
