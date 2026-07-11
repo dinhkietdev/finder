@@ -567,7 +567,10 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, driveParentId, driveParentPath } = resumeData);
         uploadInProgress = true;
         mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: "Đang kiểm tra bảo mật..." });
-        const auth = await authenticateCasi();
+        // Uploading into a user-selected folder requires the full Drive scope.
+        // Older sessions may only have drive.file, which can authenticate
+        // successfully but fail when creating files under an existing folder.
+        const auth = await authenticateCasi(true);
         const drive = google.drive({ version: 'v3', auth: auth });
 
         let folderNameOnDrive;
