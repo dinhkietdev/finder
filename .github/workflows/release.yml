@@ -94,15 +94,9 @@ jobs:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
-      # Upload Windows assets after packaging.  Publishing the installer and
-      # its blockmap in parallel can make GitHub keep only one of them.
-      - name: Build Windows installer
+      # Publish Windows after the macOS job has created the Release. This lets
+      # electron-builder generate and upload latest.yml with matching assets.
+      - name: Build and publish Windows installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish never
-      - name: Upload Windows release assets
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v1.0.${{ github.run_number }}
-        run: gh release upload $env:TAG dist/*.exe dist/*.blockmap dist/latest.yml --clobber
+        run: npx electron-builder --win --publish always
