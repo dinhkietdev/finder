@@ -987,7 +987,14 @@
         document.getElementById('btn-choose-drive-folder').addEventListener('click', async () => {
             driveNavigation = [{ id: null, path: 'Drive của tôi' }];
             document.getElementById('drive-folder-modal').style.display = 'flex';
-            await loadDriveFolders();
+            try {
+                await loadDriveFolders();
+            } catch (error) {
+                // Keep the modal open and show a useful message even when the
+                // IPC/network request fails before the folder list renders.
+                const list = document.getElementById('drive-folder-list');
+                list.innerHTML = `<div style="padding:16px;color:#ef4444;line-height:1.5;">Không thể mở thư mục Drive: ${escapeHtml(error.message)}<br><small>Hãy thử lại sau khi kết nối lại Google Drive.</small></div>`;
+            }
         });
 
         document.getElementById('btn-clear-drive-folder').addEventListener('click', () => {

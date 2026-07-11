@@ -75,6 +75,7 @@ function postJson(url, payload, headers = {}) {
                 } catch (error) { reject(new Error('Phản hồi máy chủ không hợp lệ.')); }
             });
         });
+        request.setTimeout(20000, () => request.destroy(new Error('Máy chủ xác thực phản hồi quá lâu.')));
         request.on('error', reject); request.write(data); request.end();
     });
 }
@@ -91,6 +92,7 @@ function getServerJson(pathname, headers = {}) {
                 } catch (error) { reject(new Error('Phản hồi máy chủ không hợp lệ.')); }
             });
         });
+        request.setTimeout(20000, () => request.destroy(new Error('Máy chủ xác thực phản hồi quá lâu.')));
         request.on('error', reject); request.end();
     });
 }
