@@ -1,0 +1,20 @@
+{
+  "name": "finder",
+  "productName": "Finder",
+  "version": "1.0.0",
+  "description": "Ứng dụng quản lý album Finder",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "firebase-admin": "^14.1.0",
+    "googleapis": "^144.0.0",
+    "sharp": "^0.35.3"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  },
+  "author": "Trần Đình Kiệt",
+  "license": "ISC"
+}
