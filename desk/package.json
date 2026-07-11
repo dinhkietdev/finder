@@ -34,7 +34,8 @@
       "title": "Finder"
     },
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "artifactName": "Finder-Setup-${version}.${ext}"
     },
     "publish": [
       {
