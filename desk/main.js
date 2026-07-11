@@ -543,7 +543,7 @@ function isGoogleTokenError(error) {
 // packaged builds, but lets us verify the folder picker without depending on
 // the Vercel token session. The credentials file is intentionally ignored by
 // git and must never be shipped.
-function authenticateLegacyLocalDrive(requireFullDriveScope = false) {
+function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth = false) {
     return new Promise((resolve, reject) => {
         const credentialsPath = path.join(__dirname, 'oauth-credentials.json');
         if (!fs.existsSync(credentialsPath)) return reject(new Error('Thiếu oauth-credentials.json cho chế độ thử nghiệm local.'));
@@ -553,7 +553,10 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false) {
             const port = 3000;
             const redirectUri = `http://localhost:${port}/oauth2callback`;
             oauth2Client = new google.auth.OAuth2(client_id, client_secret, redirectUri);
-            if (fs.existsSync(LOCAL_TOKEN_PATH)) {
+            if (forceReauth && fs.existsSync(LOCAL_TOKEN_PATH)) {
+                try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+            }
+            if (!forceReauth && fs.existsSync(LOCAL_TOKEN_PATH)) {
                 const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
                 const scopes = (tokens.scope || '').split(' ');
                 if (!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) {
@@ -578,7 +581,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false) {
 
 function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
     if (!app.isPackaged && fs.existsSync(path.join(__dirname, 'oauth-credentials.json'))) {
-        return authenticateLegacyLocalDrive(requireFullDriveScope);
+        return authenticateLegacyLocalDrive(requireFullDriveScope, forceReauth);
     }
     return new Promise((resolve, reject) => {
         const PORT = 3000;
