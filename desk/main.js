@@ -78,7 +78,7 @@ function postJson(url, payload, headers = {}) {
                     const result = JSON.parse(body || '{}');
                     if (response.statusCode >= 400) return reject(new Error(result.error?.message || result.error || 'Yêu cầu không thành công.'));
                     resolve(result);
-                } catch (error) { reject(new Error('Phản hồi máy chủ không hợp lệ.')); }
+                } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${url} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
         });
         request.on('error', reject); request.write(data); request.end();
@@ -94,7 +94,7 @@ function getServerJson(pathname, headers = {}) {
                     const result = JSON.parse(body || '{}');
                     if (response.statusCode >= 400) return reject(new Error(result.error || 'Không thể tải dữ liệu.'));
                     resolve(result);
-                } catch (error) { reject(new Error('Phản hồi máy chủ không hợp lệ.')); }
+                } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${pathname} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
         });
         request.on('error', reject); request.end();
@@ -556,6 +556,9 @@ function friendlyDriveError(error) {
     if (String(error?.message || error) === 'DRIVE_REAUTH_REQUIRED') {
         return 'Phiên Google Drive đã hết hạn. Hãy bấm “Đăng nhập lại Google Drive” rồi thử lại.';
     }
+    if (String(error?.message || error).startsWith('DRIVE_REFRESH_FAILED:')) {
+        return `Không thể làm mới phiên Google Drive. Chi tiết: ${String(error.message).slice(21)}`;
+    }
     return error?.message || String(error);
 }
 
@@ -582,9 +585,11 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     const scopes = (tokens.scope || '').split(' ');
                     if ((!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) && (tokens.refresh_token || tokens.access_token)) {
                         (async () => {
-                            if (tokens.refresh_token && tokens.expiry_date && tokens.expiry_date < Date.now() + 60000) {
-                                const refreshed = await postServerJson('/api/auth/drive-refresh', { refreshToken: tokens.refresh_token }, serverAuthHeaders());
-                                if (!refreshed.access_token) throw new Error('Không thể làm mới phiên Google Drive.');
+                            if (tokens.refresh_token && (!tokens.expiry_date || Number(tokens.expiry_date) < Date.now() + 60000)) {
+                                let refreshed;
+                                try { refreshed = await postServerJson('/api/auth/drive-refresh', { refreshToken: tokens.refresh_token }, serverAuthHeaders()); }
+                                catch (error) { throw new Error(`DRIVE_REFRESH_FAILED: ${error.message}`); }
+                                if (!refreshed.access_token) throw new Error('DRIVE_REFRESH_FAILED: Server không trả access token mới.');
                                 tokens.access_token = refreshed.access_token;
                                 tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
                                 fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
