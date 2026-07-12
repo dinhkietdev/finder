@@ -344,17 +344,18 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
     }
 
     try {
-        await new Promise((resolve) => {
+        const syncResult = await new Promise((resolve) => {
             const payload = JSON.stringify({ maxSelections: parseInt(maxSelections) || 0 });
             const req = https.request({ 
                 hostname: ONLINE_DOMAIN, port: 443, 
                 path: `/api/album/${folderId}/settings`, 
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } 
-            }, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
+            }, (res) => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => { if (res.statusCode >= 400) return resolve({ success: false }); try { resolve({ success: JSON.parse(body || '{}').success !== false }); } catch (_) { resolve({ success: false }); } }); });
             req.on('error', resolve); req.write(payload); req.end();
         });
-    } catch (e) {}
+        if (!syncResult?.success) return { success: false, error: 'Server không lưu được giới hạn mới.' };
+    } catch (e) { return { success: false, error: e.message }; }
     return { success: true };
 });
 
