@@ -139,6 +139,9 @@
         .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .ai-pick-card::after { content:'AI đề xuất'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
         .ai-pick-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(50,60,130,.25); }
+        .selection-item { display:flex; align-items:center; gap:10px; cursor:pointer; }
+        .selection-item img { width:58px; height:58px; border-radius:10px; object-fit:cover; flex:none; background:#0b1220; }
+        .selection-item:hover { background:rgba(124,140,255,.08); }
         .gallery-heading { display:flex; justify-content:space-between; align-items:center; margin:0 2px 12px; font-size:13px; color:var(--text-muted); }
         .gallery-heading strong { color:var(--text-main); font-size:15px; }
         .thumb-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; overflow:visible; padding:0; }
@@ -468,7 +471,7 @@
         }
 
         function renderAiPicks() {
-            if (!state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
+            if (state.isFinalized || !state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
             elements.aiPicksPanel.style.display = '';
             elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
             elements.aiPicksGrid.innerHTML = '';
@@ -601,10 +604,13 @@
             selectedImages.forEach(item => {
                 const card = document.createElement('div');
                 card.className = 'selection-item';
-                card.innerHTML = `
-                    <strong>${item.shortName || item.fullName || 'Ảnh'}</strong>
-                    <span>${item.note ? item.note : 'Không có ghi chú'}</span>
-                `;
+                const thumb = document.createElement('img');
+                thumb.loading = 'lazy'; thumb.decoding = 'async'; thumb.src = item.thumbnail || item.preview || item.originalUrl || '';
+                thumb.alt = item.shortName || item.fullName || 'Ảnh đã chọn';
+                const info = document.createElement('div');
+                info.innerHTML = `<strong>${escapeHtml(item.shortName || item.fullName || 'Ảnh')}</strong><span>${escapeHtml(item.note || 'Không có ghi chú')}</span>`;
+                card.append(thumb, info);
+                card.addEventListener('click', () => { const index = state.images.indexOf(item); if (index >= 0) { state.currentIndex = index; render(); openLightbox(); } });
                 elements.selectionList.appendChild(card);
             });
         }
@@ -753,12 +759,13 @@
             const current = getCurrentImage();
             if (!current || (!current.selected && !canSelect(current))) return;
             current.selected = !current.selected;
+            render();
+            setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
             try {
                 await saveCurrentSelection();
-                render();
-                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
             } catch (error) {
                 current.selected = !current.selected;
+                render();
                 setMessage(`❌ ${error.message}`, 'error');
             }
         });
@@ -866,12 +873,13 @@
             if (!current) return;
             if (!current.selected && !canSelect(current)) return;
             current.selected = !current.selected;
+            render();
+            setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
             try {
                 await saveCurrentSelection();
-                render();
-                setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
             } catch (error) {
                 current.selected = !current.selected;
+                render();
                 setMessage(`❌ ${error.message}`, 'error');
             }
         });
@@ -879,12 +887,16 @@
         elements.saveNoteBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current) return;
+            const previousNote = current.note;
+            current.note = elements.noteInput.value.trim();
+            render();
+            setMessage('📝 Đang lưu ghi chú…', 'success');
             try {
-                current.note = elements.noteInput.value.trim();
                 await saveCurrentSelection();
-                render();
                 setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
             } catch (error) {
+                current.note = previousNote;
+                render();
                 setMessage(`❌ ${error.message}`, 'error');
             }
         });
