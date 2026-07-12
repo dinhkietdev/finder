@@ -419,6 +419,14 @@
             if (!status.success || !status.found) document.getElementById('drive-auth-modal').classList.add('open');
         }
 
+        // Check the machine-local Drive session as soon as Finder opens. This
+        // avoids discovering a missing/expired session only after folder
+        // browsing or upload has already started.
+        async function checkDriveAccessOnStartup() {
+            try { await checkDriveAccessAfterLogin(); }
+            catch (_) { document.getElementById('drive-auth-modal').classList.add('open'); }
+        }
+
         document.getElementById('drive-auth-connect').addEventListener('click', async event => {
             const button = event.currentTarget;
             const message = document.getElementById('drive-auth-message');
@@ -838,6 +846,7 @@
 
         restoreLastDriveFolder();
         loadDashboard();
+        checkDriveAccessOnStartup();
 
         let lastUploadedLink = '';
         function showUploadSuccess(link) {
