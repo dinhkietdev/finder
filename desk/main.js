@@ -581,7 +581,17 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
                     const scopes = (tokens.scope || '').split(' ');
                     if ((!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) && (tokens.refresh_token || tokens.access_token)) {
-                        oauth2Client.setCredentials(tokens); return resolve(oauth2Client);
+                        (async () => {
+                            if (tokens.refresh_token && tokens.expiry_date && tokens.expiry_date < Date.now() + 60000) {
+                                const refreshed = await postServerJson('/api/auth/drive-refresh', { refreshToken: tokens.refresh_token }, serverAuthHeaders());
+                                if (!refreshed.access_token) throw new Error('Không thể làm mới phiên Google Drive.');
+                                tokens.access_token = refreshed.access_token;
+                                tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
+                                fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                            }
+                            oauth2Client.setCredentials(tokens); resolve(oauth2Client);
+                        })().catch(() => reject(new Error('DRIVE_REAUTH_REQUIRED')));
+                        return;
                     }
                 } catch (_) {
                     // A cancelled Windows callback can leave a zero-byte JSON
