@@ -575,7 +575,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     oauth2Client.setCredentials(tokens); return resolve(oauth2Client);
                 }
             }
-            shell.openExternal(oauth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file'] }));
+            shell.openExternal(oauth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'select_account', scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file'] }));
             const server = http.createServer(async (req, res) => {
                 if (!req.url.includes('/oauth2callback')) return res.end();
                 try {
