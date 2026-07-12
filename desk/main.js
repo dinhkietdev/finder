@@ -577,10 +577,17 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                 try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
             }
             if (!forceReauth && fs.existsSync(LOCAL_TOKEN_PATH)) {
-                const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
-                const scopes = (tokens.scope || '').split(' ');
-                if (!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) {
-                    oauth2Client.setCredentials(tokens); return resolve(oauth2Client);
+                try {
+                    const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+                    const scopes = (tokens.scope || '').split(' ');
+                    if ((!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) && (tokens.refresh_token || tokens.access_token)) {
+                        oauth2Client.setCredentials(tokens); return resolve(oauth2Client);
+                    }
+                } catch (_) {
+                    // A cancelled Windows callback can leave a zero-byte JSON
+                    // file. Treat it as a new machine instead of surfacing a
+                    // cryptic "Unexpected end of JSON input" error.
+                    try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
                 }
             }
             shell.openExternal(oauth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'select_account', scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file'] }));
@@ -588,6 +595,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                 if (!req.url.includes('/oauth2callback')) return res.end();
                 try {
                     const qs = new URL(req.url, `http://localhost:${port}`).searchParams;
+                    if (!qs.get('code')) { res.statusCode = 400; res.end('Thiếu mã xác thực Google.'); server.close(); return reject(new Error('Google không trả về mã xác thực.')); }
                     const { tokens } = await oauth2Client.getToken(qs.get('code'));
                     if (requireFullDriveScope && !tokens.scope) tokens.scope = 'https://www.googleapis.com/auth/drive';
                     oauth2Client.setCredentials(tokens); fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
@@ -612,7 +620,9 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
         const createClient = clientId => new google.auth.OAuth2(clientId, undefined, redirectUri);
         const useStoredToken = async () => {
             if (forceReauth || !fs.existsSync(LOCAL_TOKEN_PATH)) return false;
-            const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+            let tokens;
+            try { tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8')); }
+            catch (_) { try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {} return false; }
             if (!tokens.refresh_token && (!tokens.access_token || !tokens.expiry_date || tokens.expiry_date < Date.now())) return false;
             let clientId = null;
             try { clientId = (await getServerJson('/api/auth/drive-client')).clientId; } catch (_) {}
