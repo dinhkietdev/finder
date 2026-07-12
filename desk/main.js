@@ -50,13 +50,38 @@ let updateCheckStarted = false;
 
 const ONLINE_DOMAIN = 'finder-swart-pi.vercel.app'; 
 const ONLINE_SERVER = `https://${ONLINE_DOMAIN}`;
-const MAX_CONCURRENT_UPLOADS = 4;
+// Google Drive cho phép nhiều request upload song song. Giới hạn 6 luồng để
+// tận dụng băng thông nhưng vẫn tránh làm nghẽn máy hoặc bị quota 429.
+const MAX_CONCURRENT_UPLOADS = Math.max(2, Math.min(8, Number(process.env.FINDER_UPLOAD_CONCURRENCY) || 6));
 const AI_ANALYSIS_CONCURRENCY = Math.max(2, Math.min(6, (os.cpus().length || 4) - 1));
 const qualityCache = new Map();
 // Release marker: packaged OAuth endpoint integration and redirect fix.
 // Release sync marker: build from the current local Finder baseline.
 // Packaged clients reuse LOCAL_TOKEN_PATH and server refresh before OAuth.
 const signatureCache = new Map();
+
+function isRetryableDriveUploadError(error) {
+    const status = Number(error?.code || error?.response?.status || error?.status) || 0;
+    return status === 408 || status === 429 || status >= 500 || /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|network/i.test(`${error?.code || ''} ${error?.message || ''}`);
+}
+
+async function uploadDriveFileWithRetry(drive, { fileName, parentId, localPath, mimeType }) {
+    let lastError;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            return await drive.files.create({
+                resource: { name: fileName, parents: [parentId] },
+                media: { mimeType, body: fs.createReadStream(localPath) },
+                fields: 'id'
+            });
+        } catch (error) {
+            lastError = error;
+            if (!isRetryableDriveUploadError(error) || attempt === 2) throw error;
+            await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)));
+        }
+    }
+    throw lastError;
+}
 
 function slugifyAlbumName(value = '') {
     return String(value)
@@ -855,10 +880,11 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
                 const fileName = filesToUpload[index];
                 try {
-                    await drive.files.create({
-                        resource: { name: fileName, parents: [googleDriveFolderId] },
-                        media: { mimeType: 'image/jpeg', body: fs.createReadStream(path.join(folderPath, fileName)) },
-                        fields: 'id'
+                    await uploadDriveFileWithRetry(drive, {
+                        fileName,
+                        parentId: googleDriveFolderId,
+                        localPath: path.join(folderPath, fileName),
+                        mimeType: 'image/jpeg'
                     });
                     completedFiles++;
                     mainWindow.webContents.send('upload-progress', {
@@ -978,10 +1004,11 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath }) 
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-                    await drive.files.create({
-                        resource: { name: fileName, parents: [checkFolderId] },
-                        media: { mimeType, body: fs.createReadStream(path.join(folderPath, fileName)) },
-                        fields: 'id'
+                    await uploadDriveFileWithRetry(drive, {
+                        fileName,
+                        parentId: checkFolderId,
+                        localPath: path.join(folderPath, fileName),
+                        mimeType
                     });
                     completed++;
                     mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})` });

@@ -38,6 +38,7 @@
         .stat-chip span { font-size: 11px; color: var(--text-muted); }
 
         .content-grid { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 18px; }
+        .content-grid.check-view { grid-template-columns: 1fr; }
         .viewer-panel { padding: 16px; }
         .viewer-shell { position: relative; border-radius: 16px; overflow: hidden; background: #000; min-height: 460px; display: flex; align-items: center; justify-content: center; }
         .viewer-shell img { width: 100%; height: 100%; max-height: 70vh; object-fit: contain; display: block; cursor: zoom-in; }
@@ -228,10 +229,6 @@
         .gallery-panel { overflow:hidden; }
         .gallery-heading { position:sticky; top:0; z-index:3; padding:5px 2px 12px; background:linear-gradient(var(--bg-card) 72%,transparent); }
         .gallery-heading span { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
-        .gallery-filters { display:flex; gap:7px; overflow:auto; padding:0 2px 10px; scrollbar-width:none; }
-        .gallery-filters::-webkit-scrollbar { display:none; }
-        .gallery-filter-btn { flex:none; min-height:34px; padding:7px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-muted); font-size:11px; font-weight:800; cursor:pointer; }
-        .gallery-filter-btn.active { background:rgba(124,140,255,.18); color:#dbe5ff; border-color:rgba(124,140,255,.65); }
         .thumb-btn { content-visibility:auto; contain-intrinsic-size:92px; }
         .thumb-btn img { opacity:0; transition:opacity .22s ease, transform .3s ease; }
         .thumb-btn img.is-ready { opacity:1; }
@@ -249,8 +246,9 @@
         .review-mode-bar.visible { display:flex; }
         .review-mode-btn { min-height:42px; padding:9px 14px; border:1px solid var(--border); border-radius:11px; background:transparent; color:var(--text-muted); font-weight:750; cursor:pointer; }
         .review-mode-btn.active { background:linear-gradient(135deg,#7c8cff,#5867e8); color:#fff; border-color:transparent; box-shadow:0 8px 18px rgba(88,103,232,.24); }
-        .check-ready-banner { display:none; padding:12px 16px; border:1px solid rgba(59,217,160,.3); border-radius:14px; background:rgba(59,217,160,.1); color:#9bf2d1; text-align:center; font-size:13px; font-weight:700; }
-        .check-ready-banner.visible { display:block; }
+        .check-ready-banner { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:30; width:min(620px,calc(100vw - 28px)); padding:12px 16px; border:1px solid rgba(59,217,160,.38); border-radius:14px; background:rgba(11,42,39,.94); box-shadow:0 12px 32px rgba(0,0,0,.28); color:#b9f8dc; text-align:center; font-size:13px; font-weight:750; backdrop-filter:blur(16px); }
+        .check-ready-banner.visible { display:block; animation:checkBannerIn .24s ease-out both; }
+        @keyframes checkBannerIn { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
         @media (max-width:560px) {
             body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
             .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -259,6 +257,7 @@
             .selection-item { scroll-snap-align:start; }
             .lightbox-toolbar { left:50%; right:auto; justify-content:center; }
             .lightbox-toolbar button { min-width:44px; min-height:44px; }
+            .check-ready-banner { bottom:max(10px,env(safe-area-inset-bottom)); width:calc(100vw - 20px); font-size:12px; }
         }
 
         /* Album landing/branding layer */
@@ -314,7 +313,7 @@
         </div>
 
 
-        <div class="content-grid">
+        <div class="content-grid" id="contentGrid">
             <div class="panel viewer-panel" id="currentImageSection" tabindex="-1">
                 <div class="viewer-shell" id="viewerShell">
                     <img id="mainImage" src="" alt="Ảnh đang tải">
@@ -358,13 +357,6 @@
 
         <div class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
-            <div id="galleryFilters" class="gallery-filters" aria-label="Lọc thư viện ảnh">
-                <button class="gallery-filter-btn active" type="button" data-filter="all">Tất cả</button>
-                <button class="gallery-filter-btn" type="button" data-filter="unseen">Chưa chọn</button>
-                <button class="gallery-filter-btn" type="button" data-filter="selected">Đã chọn</button>
-                <button class="gallery-filter-btn" type="button" data-filter="notes">Có ghi chú</button>
-                <button class="gallery-filter-btn" type="button" data-filter="ai">AI đề xuất</button>
-            </div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
@@ -379,7 +371,7 @@
             <div class="compare-label compare-label-original">Ảnh gốc</div><div class="compare-label compare-label-check">Ảnh chỉnh sửa</div>
         </div>
         <div id="lightboxLoading" class="lightbox-loading">Đang tải ảnh chất lượng cao…</div>
-        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="lightboxDownloadBtn" style="display:none" aria-label="Tải ảnh chỉnh sửa">⬇️ Tải ảnh</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
+        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="compareToggleBtn" style="display:none" aria-label="So sánh ảnh">↔ So sánh</button><button id="lightboxDownloadBtn" style="display:none" aria-label="Tải ảnh chỉnh sửa">⬇️ Tải ảnh</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
         <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
     </div>
     <div id="qrModal" class="qr-modal" aria-hidden="true"><div class="qr-card"><h3>Chia sẻ album</h3><img id="qrImage" alt="QR code album"><p id="qrLinkText" style="font-size:12px;word-break:break-all;color:#475569;"></p><button id="closeQrBtn" type="button">Đóng</button></div></div>
@@ -390,8 +382,8 @@
             <div class="quick-note-actions"><button id="quickNoteCancelBtn" class="btn btn-outline">Hủy</button><button id="quickNoteSaveBtn" class="btn btn-success">Lưu ghi chú</button></div>
         </div>
     </div>
-    <div id="helpRobot" class="help-robot visible">
-        <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
+    <div id="helpRobot" class="help-robot">
+        <div class="robot-message"></div>
         <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ">
             <svg class="robot-avatar" viewBox="0 0 100 100" role="img" aria-label="Finder Assistant">
                 <g class="robot-body">
@@ -428,11 +420,12 @@
             aiGroups: [],
             publicSlug: albumSlug,
             studioName: 'Finder',
-            galleryFilter: 'all'
+            compareEnabled: false
         };
 
         const elements = {
             mainImage: document.getElementById('mainImage'),
+            contentGrid: document.getElementById('contentGrid'),
             currentImageSection: document.getElementById('currentImageSection'),
             selectedImagesSection: document.getElementById('selectedImagesSection'),
             jumpToCurrent: document.getElementById('jumpToCurrent'),
@@ -471,12 +464,12 @@
             robotButton: document.getElementById('robotButton'),
             robotMessage: document.querySelector('#helpRobot .robot-message'),
             noteSection: document.getElementById('noteSection'),
-            galleryCount: document.getElementById('galleryCount'), galleryFilters: document.getElementById('galleryFilters')
+            galleryCount: document.getElementById('galleryCount')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
             copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
-            compareStage: document.getElementById('compareStage'), compareOriginalImage: document.getElementById('compareOriginalImage'), compareCheckImage: document.getElementById('compareCheckImage'), compareClip: document.getElementById('compareClip'), compareDivider: document.getElementById('compareDivider'), compareRange: document.getElementById('compareRange'), lightboxDownloadBtn: document.getElementById('lightboxDownloadBtn'),
+            compareStage: document.getElementById('compareStage'), compareOriginalImage: document.getElementById('compareOriginalImage'), compareCheckImage: document.getElementById('compareCheckImage'), compareClip: document.getElementById('compareClip'), compareDivider: document.getElementById('compareDivider'), compareRange: document.getElementById('compareRange'), compareToggleBtn: document.getElementById('compareToggleBtn'), lightboxDownloadBtn: document.getElementById('lightboxDownloadBtn'),
             qrModal: document.getElementById('qrModal'), qrImage: document.getElementById('qrImage'), qrLinkText: document.getElementById('qrLinkText'), closeQrBtn: document.getElementById('closeQrBtn')
         };
         let zoomScale = 1;
@@ -491,6 +484,9 @@
         let panPointer = null;
         let lightboxSwipeStart = null;
         let lastLightboxSwipeAt = 0;
+        let lightboxPointerMoved = false;
+        let suppressLightboxCloseUntil = 0;
+        let lightboxPanStart = null;
         const activePointers = new Map();
         let faceLandmarkerPromise = null;
         const aiScores = new WeakMap();
@@ -597,38 +593,88 @@
             const nextMode = mode === 'check' && state.checkReady ? 'check' : 'original';
             const currentName = preserveFileName || getCurrentImage()?.fullName || '';
             state.viewMode = nextMode;
+            state.compareEnabled = false;
             state.images = nextMode === 'check' ? state.checkImages : state.originalImages;
             const nextIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
             state.currentIndex = nextIndex >= 0 ? nextIndex : 0;
-            if (nextMode === 'original') buildAiGroups();
+            if (nextMode === 'original') { buildAiGroups().then(() => render()).catch(() => render()); }
             else state.aiGroups = [];
             render();
         }
 
-        // MVP thử nghiệm: gom các tên file có cùng tiền tố và số thứ tự liên
-        // tiếp (IMG_1201, IMG_1202...). Không ẩn ảnh nào khỏi gallery đầy đủ.
-        function buildAiGroups() {
-            const indexed = state.images.map((image, index) => {
-                const stem = String(image.shortName || image.fullName || '').replace(/\.[^.]+$/, '');
-                const match = stem.match(/^(.*?)(\d{3,})$/);
-                return { image, index, prefix: match?.[1] || '', number: match ? Number(match[2]) : null };
-            }).filter(item => item.number !== null);
-            const byPrefix = new Map();
-            indexed.forEach(item => { if (!byPrefix.has(item.prefix)) byPrefix.set(item.prefix, []); byPrefix.get(item.prefix).push(item); });
-            state.aiGroups = [];
-            byPrefix.forEach(items => {
-                items.sort((a, b) => a.number - b.number);
-                let group = [];
-                items.forEach(item => {
-                    if (group.length && item.number - group[group.length - 1].number > 3) {
-                        if (group.length >= 2) state.aiGroups.push(group);
-                        group = [];
-                    }
-                    group.push(item);
-                });
-                if (group.length >= 2) state.aiGroups.push(group);
+        function naturalImageCompare(a, b) {
+            return String(a?.fullName || a?.shortName || '').localeCompare(String(b?.fullName || b?.shortName || ''), undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        const visualSignatureCache = new WeakMap();
+        async function getVisualSignature(image) {
+            if (visualSignatureCache.has(image)) return visualSignatureCache.get(image);
+            const source = image.thumbnail || image.preview || '';
+            if (!source) return null;
+            const signature = await new Promise((resolve, reject) => {
+                const sourceImage = new Image();
+                sourceImage.crossOrigin = 'anonymous';
+                sourceImage.decoding = 'async';
+                sourceImage.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas'); canvas.width = 12; canvas.height = 12;
+                        const context = canvas.getContext('2d', { willReadFrequently: true });
+                        context.drawImage(sourceImage, 0, 0, canvas.width, canvas.height);
+                        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+                        const values = []; let total = 0;
+                        for (let i = 0; i < pixels.length; i += 4) { const gray = pixels[i] * .299 + pixels[i + 1] * .587 + pixels[i + 2] * .114; values.push(gray); total += gray; }
+                        const mean = total / Math.max(1, values.length);
+                        const scale = Math.sqrt(values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(1, values.length)) || 1;
+                        resolve(values.map(value => (value - mean) / scale));
+                    } catch (error) { reject(error); }
+                };
+                sourceImage.onerror = reject;
+                sourceImage.src = source;
             });
-            state.aiGroups = state.aiGroups.slice(0, 80);
+            visualSignatureCache.set(image, signature);
+            return signature;
+        }
+
+        function signatureDistance(a, b) {
+            if (!a || !b || a.length !== b.length) return 1;
+            let total = 0;
+            for (let index = 0; index < a.length; index++) total += Math.abs(a[index] - b[index]);
+            return total / a.length;
+        }
+
+        // Gom theo thứ tự tên + độ tương đồng thumbnail. Tên file chỉ dùng để
+        // giữ đúng thứ tự burst; quyết định ảnh có cùng cụm hay không dựa trên
+        // đặc trưng hình ảnh, tránh việc cả album bị đề xuất hàng loạt.
+        async function buildAiGroups() {
+            if (state.viewMode !== 'original' || !state.images.length) { state.aiGroups = []; return; }
+            const ordered = state.images.slice().sort(naturalImageCompare);
+            state.images = ordered;
+            const indexed = ordered.map((image, index) => ({ image, index }));
+            const signatures = new Map();
+            let nextSignatureIndex = 0;
+            const signatureWorker = async () => {
+                while (true) {
+                    const index = nextSignatureIndex++;
+                    if (index >= indexed.length) return;
+                    const item = indexed[index];
+                    try { signatures.set(item.image, await getVisualSignature(item.image)); } catch (_) { signatures.set(item.image, null); }
+                }
+            };
+            await Promise.all(Array.from({ length: Math.min(6, indexed.length) }, signatureWorker));
+            const groups = []; let group = [];
+            for (let index = 0; index < indexed.length; index++) {
+                const item = indexed[index];
+                const previous = group[group.length - 1];
+                const distance = previous ? signatureDistance(signatures.get(previous.image), signatures.get(item.image)) : 1;
+                const sameVisualBurst = Boolean(previous && distance <= 0.34);
+                if (group.length && !sameVisualBurst) {
+                    if (group.length >= 2) groups.push(group);
+                    group = [];
+                }
+                group.push(item);
+            }
+            if (group.length >= 2) groups.push(group);
+            state.aiGroups = groups;
         }
 
         function renderAiPicks() {
@@ -651,10 +697,11 @@
             elements.aiPicksDescription.textContent = ' AI đang chấm mắt mở, nụ cười và khuôn mặt…';
             try {
                 await getFaceLandmarker();
-                const candidates = state.aiGroups.flatMap(group => group).slice(0, 240);
-                for (const candidate of candidates) {
+                const candidates = state.aiGroups.flatMap(group => group);
+                for (let index = 0; index < candidates.length; index++) {
+                    const candidate = candidates[index];
                     try { aiScores.set(candidate.image, await scoreFaceImage(candidate.image)); } catch (error) { aiScores.set(candidate.image, 0); }
-                    if (candidates.indexOf(candidate) % 8 === 0) renderAiPicks();
+                    if (index % 8 === 0) renderAiPicks();
                 }
                 elements.aiPicksDescription.textContent = ' AI đã chấm khuôn mặt, mắt và biểu cảm trên ảnh xem trước';
                 renderAiPicks();
@@ -663,21 +710,16 @@
             }
         }
 
+        function updateCheckBannerVisibility() {
+            const lightboxOpen = elements.imageLightbox.classList.contains('open');
+            elements.checkReadyBanner.classList.toggle('visible', state.checkReady && state.viewMode === 'check' && !lightboxOpen);
+        }
+
         function canSelect(image) {
             if (!image || image.selected || state.maxSelections <= 0) return true;
             if (selectedCount() < state.maxSelections) return true;
             setMessage(`⚠️ Album này chỉ cho phép chọn tối đa ${state.maxSelections} ảnh.`, 'error');
             return false;
-        }
-
-        function galleryFilterMatches(image) {
-            if (state.galleryFilter === 'selected') return !!image.selected;
-            if (state.galleryFilter === 'unseen') return !image.selected;
-            if (state.galleryFilter === 'notes') return Boolean(String(image.note || '').trim());
-            if (state.galleryFilter === 'ai') {
-                return state.aiGroups.some(group => group.some(item => item.image === image));
-            }
-            return true;
         }
 
         function render() {
@@ -717,12 +759,15 @@
             elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
-            const galleryEntries = state.images.map((img, index) => ({ img, index })).filter(({ img }) => galleryFilterMatches(img));
-            elements.galleryCount.textContent = state.galleryFilter === 'all' ? `${state.images.length} ảnh` : `${galleryEntries.length}/${state.images.length} ảnh`;
+            const galleryEntries = state.images.map((img, index) => ({ img, index }));
+            elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.reviewModeBar.classList.toggle('visible', state.checkReady);
             elements.checkModeBtn.classList.toggle('active', isCheckView);
             elements.originalModeBtn.classList.toggle('active', !isCheckView);
-            elements.checkReadyBanner.classList.toggle('visible', state.checkReady && isCheckView);
+            elements.contentGrid.classList.toggle('check-view', isCheckView);
+            elements.selectedImagesSection.style.display = isCheckView ? 'none' : '';
+            elements.jumpToSelected.style.display = isCheckView ? 'none' : '';
+            updateCheckBannerVisibility();
             elements.finalizedBanner.style.display = state.isFinalized && !isCheckView ? 'block' : 'none';
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
@@ -848,8 +893,30 @@
         }
 
         function setZoomOrigin(clientX, clientY) {
-            // Pan dùng hệ tọa độ tâm ảnh để giới hạn phần ảnh kéo ra ngoài khung nhìn.
-            elements.lightboxImage.style.transformOrigin = 'center';
+            const rect = elements.lightboxImage.getBoundingClientRect();
+            if (!rect.width || !rect.height) { elements.lightboxImage.style.transformOrigin = 'center'; return; }
+            const x = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+            const y = Math.max(0, Math.min(100, ((clientY - rect.top) / rect.height) * 100));
+            elements.lightboxImage.style.transformOrigin = `${x}% ${y}%`;
+        }
+
+        function normalizeCompareName(name = '') {
+            return String(name).toLowerCase()
+                .replace(/\.[^.]+$/, '')
+                .replace(/(?:[_ -](?:edited?|check|final|retouched|edit))$/i, '')
+                .replace(/(?:[_ -]\d{1,3})$/i, '')
+                .replace(/[^a-z0-9]+/g, '');
+        }
+
+        function findOriginalForCheck(checkImage) {
+            if (!checkImage) return null;
+            const exact = state.originalImages.find(item => item.fullName === checkImage.fullName);
+            if (exact) return exact;
+            const normalized = normalizeCompareName(checkImage.fullName);
+            const byNormalizedName = state.originalImages.find(item => normalizeCompareName(item.fullName) === normalized);
+            if (byNormalizedName) return byNormalizedName;
+            const fallbackIndex = state.checkImages.indexOf(checkImage);
+            return fallbackIndex >= 0 && state.originalImages.length === state.checkImages.length ? state.originalImages[fallbackIndex] : null;
         }
 
         function updateCompareSlider() {
@@ -862,11 +929,14 @@
             const current = getCurrentImage();
             if (!current) return;
             const highResolutionUrl = current.lightbox || current.originalUrl || current.preview || current.thumbnail || '';
-            const compareOriginal = state.viewMode === 'check' ? state.originalImages.find(item => item.fullName === current.fullName) : null;
+            const compareOriginal = state.viewMode === 'check' ? findOriginalForCheck(current) : null;
             const canCompare = Boolean(compareOriginal && (compareOriginal.lightbox || compareOriginal.originalUrl));
-            elements.compareStage.classList.toggle('visible', canCompare);
-            elements.lightboxImage.style.display = canCompare ? 'none' : '';
-            if (canCompare) {
+            const showCompare = canCompare && state.compareEnabled;
+            elements.compareToggleBtn.style.display = canCompare ? '' : 'none';
+            elements.compareToggleBtn.textContent = showCompare ? '🖼️ Ảnh đơn' : '↔ So sánh';
+            elements.compareStage.classList.toggle('visible', showCompare);
+            elements.lightboxImage.style.display = showCompare ? 'none' : '';
+            if (showCompare) {
                 const compareRect = elements.compareStage.getBoundingClientRect();
                 elements.compareStage.style.setProperty('--compare-stage-width', `${compareRect.width}px`);
                 elements.compareStage.style.setProperty('--compare-stage-height', `${compareRect.height}px`);
@@ -888,8 +958,10 @@
 
         function openLightbox() {
             if (!getCurrentImage()) return;
+            state.compareEnabled = false;
             elements.imageLightbox.classList.add('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'false');
+            updateCheckBannerVisibility();
             updateLightboxContent();
         }
 
@@ -898,6 +970,7 @@
             elements.imageLightbox.setAttribute('aria-hidden', 'true');
             activePointers.clear();
             panPointer = null;
+            updateCheckBannerVisibility();
         }
 
         function showRobotStatus(message, repeat = false) {
@@ -913,9 +986,11 @@
         }
 
         function robotContextGreeting() {
-            if (state.checkReady) return '✨ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể kéo thanh giữa hai ảnh để so sánh nhé.';
-            if (state.isFinalized) return '💙 Mình đã nhận lựa chọn của bạn. Studio sẽ xử lý ảnh sớm nhé.';
-            return '👋 Xin chào! Bạn có thể chạm vào ảnh để xem lớn, chọn ảnh và gửi ghi chú chỉnh sửa.';
+            if (!state.images.length) return 'Hiện album chưa có ảnh để xem.';
+            if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở một ảnh rồi bấm “↔ So sánh”.`;
+            if (state.isFinalized) return `Đã ghi nhận ${selectedCount()} ảnh bạn chọn. Studio sẽ xử lý theo các ghi chú trong album.`;
+            if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; hiện đã chọn ${selectedCount()}.`;
+            return `Album có ${state.images.length} ảnh. Hãy mở ảnh bạn quan tâm để xem và gửi lựa chọn cho studio.`;
         }
 
         function scheduleRobotAssistant() {
@@ -923,8 +998,10 @@
             robotIdleTimer = window.setTimeout(() => {
                 if (elements.imageLightbox.classList.contains('open')) { scheduleRobotAssistant(); return; }
                 const prompts = state.checkReady
-                    ? ['Bạn muốn xem ảnh gốc đã chọn không?', 'Bạn có thể kéo thanh ↔ để kiểm tra trước và sau khi chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.']
-                    : ['Bạn đang tìm một khoảnh khắc ưng ý nào đó à?', 'Chạm vào ảnh để xem rõ hơn, rồi bấm Chọn ảnh nếu bạn thích nhé.', 'Bạn có thể ghi chú yêu cầu chỉnh sửa riêng cho từng ảnh.'];
+                    ? ['Bạn có thể kéo thanh ↔ để kiểm tra trước và sau khi chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`]
+                    : state.isFinalized
+                        ? ['Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh và ghi chú yêu cầu chỉnh sửa.', `Album đã chốt ${selectedCount()} ảnh.`]
+                        : [`Bạn đã chọn ${selectedCount()} ảnh trong album.`, 'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.', 'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'];
                 showRobotStatus(prompts[robotPromptIndex++ % prompts.length]);
                 scheduleRobotAssistant();
             }, 22000);
@@ -960,9 +1037,17 @@
         elements.compareCheckImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
         elements.compareRange.addEventListener('input', updateCompareSlider);
         elements.compareRange.addEventListener('pointerdown', event => event.stopPropagation());
+        elements.compareToggleBtn.addEventListener('click', event => {
+            event.stopPropagation();
+            state.compareEnabled = !state.compareEnabled;
+            updateLightboxContent();
+        });
         elements.lightboxDownloadBtn.addEventListener('click', downloadCheckImage);
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
-        elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox && Date.now() - lastLightboxSwipeAt >= 350) closeLightbox(); });
+        elements.imageLightbox.addEventListener('click', event => {
+            if (Date.now() < suppressLightboxCloseUntil) { event.preventDefault(); return; }
+            if (event.target === elements.imageLightbox && Date.now() - lastLightboxSwipeAt >= 350) closeLightbox();
+        });
         elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
         elements.imageLightbox.addEventListener('wheel', event => {
             event.preventDefault();
@@ -974,6 +1059,10 @@
             if (event.target.closest('button')) return;
             elements.imageLightbox.setPointerCapture?.(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 1) {
+                lightboxPointerMoved = false;
+                lightboxPanStart = { x: event.clientX, y: event.clientY };
+            }
             if (activePointers.size === 1 && zoomScale <= 1) {
                 lightboxSwipeStart = { pointerId: event.pointerId, x: event.clientX };
             }
@@ -993,6 +1082,7 @@
             if (!activePointers.has(event.pointerId)) return;
             const previous = activePointers.get(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (lightboxPanStart && (Math.abs(event.clientX - lightboxPanStart.x) > 3 || Math.abs(event.clientY - lightboxPanStart.y) > 3)) lightboxPointerMoved = true;
             if (activePointers.size === 2 && pinchStartDistance) {
                 const [a, b] = [...activePointers.values()];
                 zoomScale = pinchStartScale * (Math.hypot(a.x - b.x, a.y - b.y) / pinchStartDistance);
@@ -1004,6 +1094,10 @@
             }
         });
         ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            if (type === 'pointerup' && lightboxPointerMoved) {
+                lastLightboxSwipeAt = Date.now();
+                suppressLightboxCloseUntil = Date.now() + 450;
+            }
             if (type === 'pointerup' && lightboxSwipeStart?.pointerId === event.pointerId) {
                 const startX = lightboxSwipeStart.x;
                 lightboxSwipeStart = null;
@@ -1019,6 +1113,7 @@
             if (activePointers.size < 2) pinchStartDistance = 0;
             if (panPointer === event.pointerId) panPointer = null;
             if (!panPointer) elements.lightboxImage.classList.remove('panning');
+            if (activePointers.size === 0) { lightboxPointerMoved = false; lightboxPanStart = null; }
         }));
         // Fallback cho WebView/mobile cũ không phát Pointer Events. Trên trình
         // duyệt hiện đại pointerup đã xử lý, mốc thời gian tránh chuyển ảnh 2 lần.
@@ -1174,6 +1269,8 @@
                 });
                 state.originalImages = (data.files || []).map(mapImage);
                 state.checkImages = (data.checkFiles || []).map(mapImage);
+                state.originalImages.sort(naturalImageCompare);
+                state.checkImages.sort(naturalImageCompare);
                 state.checkFolderId = data.settings?.checkFolderId || null;
                 state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
@@ -1194,7 +1291,7 @@
                 state.viewMode = state.checkReady ? 'check' : 'original';
                 state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
                 state.currentIndex = 0;
-                buildAiGroups();
+                await buildAiGroups();
                 if (state.viewMode === 'check') state.aiGroups = [];
                 render();
                 runAiFaceScoring();
@@ -1321,14 +1418,6 @@
         }
         elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
         elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
-        elements.galleryFilters.addEventListener('click', event => {
-            const button = event.target.closest('[data-filter]');
-            if (!button) return;
-            state.galleryFilter = button.dataset.filter || 'all';
-            elements.galleryFilters.querySelectorAll('[data-filter]').forEach(item => item.classList.toggle('active', item === button));
-            render();
-            resetRobotAssistant();
-        });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();
