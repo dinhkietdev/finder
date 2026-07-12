@@ -31,7 +31,9 @@ jobs:
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Configure Desktop OAuth
-        run: printf '%s' "$DESKTOP_OAUTH_CREDENTIALS" > oauth-desktop-credentials.json
+        run: |
+          printf '%s' "$DESKTOP_OAUTH_CREDENTIALS" > oauth-desktop-credentials.json
+          node -e "JSON.parse(require('fs').readFileSync('oauth-desktop-credentials.json','utf8')); console.log('Desktop OAuth JSON valid')"
         env:
           DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
@@ -97,7 +99,10 @@ jobs:
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
       - name: Configure Desktop OAuth
-        run: printf '%s' "$DESKTOP_OAUTH_CREDENTIALS" > oauth-desktop-credentials.json
+        shell: pwsh
+        run: |
+          Set-Content -Path oauth-desktop-credentials.json -Value $env:DESKTOP_OAUTH_CREDENTIALS -NoNewline
+          node -e "JSON.parse(require('fs').readFileSync('oauth-desktop-credentials.json','utf8')); console.log('Desktop OAuth JSON valid')"
         env:
           DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
