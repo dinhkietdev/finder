@@ -565,8 +565,8 @@ function friendlyDriveError(error) {
 // git and must never be shipped.
 function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth = false) {
     return new Promise((resolve, reject) => {
-        const credentialsPath = path.join(__dirname, 'oauth-credentials.json');
-        if (!fs.existsSync(credentialsPath)) return reject(new Error('Thiếu oauth-credentials.json cho chế độ thử nghiệm local.'));
+        const credentialsPath = path.join(__dirname, app.isPackaged ? 'oauth-desktop-credentials.json' : 'oauth-credentials.json');
+        if (!fs.existsSync(credentialsPath)) return reject(new Error('Thiếu OAuth Desktop credentials.'));
         try {
             const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));
             const { client_id, client_secret } = credentials.installed || credentials.web;
@@ -600,7 +600,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
 }
 
 function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
-    if (!app.isPackaged && fs.existsSync(path.join(__dirname, 'oauth-credentials.json'))) {
+    if (fs.existsSync(path.join(__dirname, app.isPackaged ? 'oauth-desktop-credentials.json' : 'oauth-credentials.json'))) {
         return authenticateLegacyLocalDrive(requireFullDriveScope, forceReauth);
     }
     // Several UI events can arrive while the folder picker is opening. Reuse

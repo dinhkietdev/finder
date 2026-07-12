@@ -30,6 +30,10 @@ jobs:
           node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      - name: Configure Desktop OAuth
+        run: printf '%s' "$DESKTOP_OAUTH_CREDENTIALS" > oauth-desktop-credentials.json
+        env:
+          DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
       - name: Create release tag
@@ -92,6 +96,10 @@ jobs:
           node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+      - name: Configure Desktop OAuth
+        run: printf '%s' "$DESKTOP_OAUTH_CREDENTIALS" > oauth-desktop-credentials.json
+        env:
+          DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
       # Publish Windows into the non-draft release created by macOS.

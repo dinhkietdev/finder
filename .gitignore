@@ -5,6 +5,7 @@
 # Firebase / Google credentials and local sessions
 desk/firabase.json
 desk/oauth-credentials.json
+desk/oauth-desktop-credentials.json
 desk/firebase-auth-config.js
 sever/oauth-credentials.json
 sever/session-token.json
