@@ -1,0 +1,9 @@
+# Never upload local credentials or mutable local state to Vercel.
+oauth-credentials.json
+session-token.json
+database.json
+desk/oauth-credentials.json
+desk/oauth-desktop-credentials.json
+desk/firebase-auth-config.js
+**/.env
+**/.env.*

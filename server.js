@@ -11,6 +11,16 @@ const app = express();
 const driveOAuthStates = new Map();
 app.use(cors());
 app.use(bodyParser.json());
+
+// Credential/session files are only for local development. Keep them out of
+// the public static file handler even if a local deployment directory contains
+// one by mistake.
+app.use((req, res, next) => {
+    if (/^\/(?:oauth-credentials|session-token|database)\.json$/.test(req.path)) {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+});
 app.use(express.static(__dirname));
 
 app.use((req, res, next) => {
@@ -254,26 +264,41 @@ app.post('/api/auth/save-token', (req, res) => {
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    const { isEnabled, text, maxSelections } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection } = req.body;
+    const hasLimitUpdate = maxSelections !== undefined;
+    const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
+    const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
     
     if(!albumSettingsDatabase[folderId]) {
         albumSettingsDatabase[folderId] = { 
             isEnabled: isEnabled !== undefined ? isEnabled : true, 
             text: text || "FINDERPICTURE STUDIO", 
-            maxSelections: parseInt(maxSelections) || 0 
+            maxSelections: nextLimit
         };
     } else {
         if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
-        if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = parseInt(maxSelections) || 0;
+        if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
     }
+    // Khi admin thay đổi hạn mức, khách cần được mở lại album để bổ sung
+    // lựa chọn. Dữ liệu likedImagesDatabase vẫn giữ nguyên, chỉ bỏ trạng thái
+    // đã chốt; vì vậy các ảnh cũ không bị mất và server nhận được ảnh mới.
+    const isBackgroundSync = req.get('x-finder-background-sync') === '1';
+    // Explicit admin edits (including older desktop builds that do not send
+    // reopenSelection) reopen the album. Startup/background sync must not.
+    if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) delete finalizedDatabase[folderId];
     await persistState();
     res.json({ success: true });
 });
 
 app.get('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
-    res.json({ success: true, settings: albumSettingsDatabase[req.params.folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 } });
+    const folderId = req.params.folderId;
+    res.json({
+        success: true,
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 },
+        isFinalized: !!finalizedDatabase[folderId]
+    });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {

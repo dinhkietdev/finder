@@ -54,6 +54,7 @@
         .btn:active { transform: translateY(0); }
         .btn-primary { background: linear-gradient(135deg, var(--accent), #2563eb); }
         .btn-success { background: linear-gradient(135deg, var(--accent-2), #16a34a); }
+        .btn-select-selected { background: linear-gradient(135deg, #22c55e, #15803d); color:#fff; border-color:#22c55e; }
         .btn-warning { background: linear-gradient(135deg, var(--warning), #d97706); }
         .btn-outline { background: transparent; color: var(--text-main); border: 1px solid var(--border); }
         .btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.25); }
@@ -273,7 +274,7 @@
                 </div>
 
                 <div class="action-row" id="imageActionRow">
-                    <button id="selectBtn" class="btn btn-success">☑️ Chọn ảnh</button>
+                    <button id="selectBtn" class="btn btn-outline">☑️ Chọn ảnh</button>
                     <button id="saveNoteBtn" class="btn btn-warning">📝 Lưu ghi chú</button>
                 </div>
 
@@ -381,6 +382,8 @@
         let panX = 0;
         let panY = 0;
         let panPointer = null;
+        let lightboxSwipeStart = null;
+        let lastLightboxSwipeAt = 0;
         const activePointers = new Map();
         let faceLandmarkerPromise = null;
         const aiScores = new WeakMap();
@@ -434,6 +437,21 @@
             elements.statusMessage.className = 'status-message';
             if (type === 'error') elements.statusMessage.classList.add('error');
             if (type === 'success') elements.statusMessage.classList.add('success');
+        }
+
+        function escapeHtml(value = '') {
+            return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+        }
+
+        async function readApiJson(response, fallbackMessage = 'Máy chủ trả về phản hồi không hợp lệ.') {
+            const raw = await response.text();
+            let data = {};
+            try { data = raw ? JSON.parse(raw) : {}; }
+            catch (_) { throw new Error(`${fallbackMessage} (HTTP ${response.status})${raw ? `: ${raw.slice(0, 180)}` : ''}`); }
+            if (!response.ok || data.success === false) {
+                throw new Error(data.error || data.message || `${fallbackMessage} (HTTP ${response.status})`);
+            }
+            return data;
         }
 
         function getCurrentImage() {
@@ -541,8 +559,11 @@
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.selectBtn.classList.toggle('active', !!current.selected);
+            elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
+            elements.selectBtn.classList.toggle('btn-outline', !current.selected);
             elements.selectBtn.textContent = current.selected ? '✅ Đã chọn' : '☑️ Chọn ảnh';
             elements.lightboxSelectBtn.textContent = current.selected ? '✓ Đã chọn' : '✓ Chọn';
+            elements.lightboxSelectBtn.style.background = current.selected ? 'rgba(22,163,74,.92)' : 'rgba(15,23,42,.75)';
             elements.noteInput.value = current.note || '';
             [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
                 .forEach(element => { element.disabled = state.isFinalized; });
@@ -712,7 +733,7 @@
         });
         elements.lightboxImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
-        elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox) closeLightbox(); });
+        elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox && Date.now() - lastLightboxSwipeAt >= 350) closeLightbox(); });
         elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
         elements.imageLightbox.addEventListener('wheel', event => {
             event.preventDefault();
@@ -724,8 +745,12 @@
             if (event.target.closest('button')) return;
             elements.imageLightbox.setPointerCapture?.(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (activePointers.size === 1 && zoomScale <= 1) {
+                lightboxSwipeStart = { pointerId: event.pointerId, x: event.clientX };
+            }
             if (activePointers.size === 2) {
                 panPointer = null;
+                lightboxSwipeStart = null;
                 const [a, b] = [...activePointers.values()];
                 pinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
                 pinchStartScale = zoomScale;
@@ -750,11 +775,39 @@
             }
         });
         ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            if (type === 'pointerup' && lightboxSwipeStart?.pointerId === event.pointerId) {
+                const startX = lightboxSwipeStart.x;
+                lightboxSwipeStart = null;
+                const delta = event.clientX - startX;
+                if (zoomScale <= 1 && Math.abs(delta) >= 55) {
+                    lastLightboxSwipeAt = Date.now();
+                    delta < 0 ? nextImage() : prevImage();
+                }
+            } else if (type === 'pointercancel' && lightboxSwipeStart?.pointerId === event.pointerId) {
+                lightboxSwipeStart = null;
+            }
             activePointers.delete(event.pointerId);
             if (activePointers.size < 2) pinchStartDistance = 0;
             if (panPointer === event.pointerId) panPointer = null;
             if (!panPointer) elements.lightboxImage.classList.remove('panning');
         }));
+        // Fallback cho WebView/mobile cũ không phát Pointer Events. Trên trình
+        // duyệt hiện đại pointerup đã xử lý, mốc thời gian tránh chuyển ảnh 2 lần.
+        let lightboxSwipeStartX = null;
+        elements.imageLightbox.addEventListener('touchstart', event => {
+            if (zoomScale > 1 || event.touches.length !== 1 || event.target.closest('button')) return;
+            lightboxSwipeStartX = event.touches[0].clientX;
+        }, { passive: true });
+        elements.imageLightbox.addEventListener('touchend', event => {
+            if (lightboxSwipeStartX === null || zoomScale > 1) return;
+            const delta = event.changedTouches[0].clientX - lightboxSwipeStartX;
+            lightboxSwipeStartX = null;
+            if (Date.now() - lastLightboxSwipeAt < 300) return;
+            if (Math.abs(delta) >= 55) {
+                lastLightboxSwipeAt = Date.now();
+                delta < 0 ? nextImage() : prevImage();
+            }
+        }, { passive: true });
         elements.lightboxSelectBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current || (!current.selected && !canSelect(current))) return;
@@ -783,7 +836,7 @@
             if (!current) return;
             current.note = elements.quickNoteInput.value.trim();
             try {
-                await saveCurrentSelection();
+                await saveCurrentSelection(current.note);
                 elements.quickNoteModal.classList.remove('open');
                 render();
                 setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
@@ -793,11 +846,11 @@
         elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
         window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 6000);
 
-        async function saveCurrentSelection() {
+        async function saveCurrentSelection(noteOverride) {
             const current = getCurrentImage();
             if (!current) return;
 
-            current.note = elements.noteInput.value.trim();
+            current.note = noteOverride === undefined ? elements.noteInput.value.trim() : String(noteOverride).trim();
             const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -827,13 +880,8 @@
             }
 
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`);
-                const data = await response.json();
-
-                if (!data.success) {
-                    setMessage(`❌ ${data.error || 'Không thể tải album.'}`, 'error');
-                    return;
-                }
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' });
+                const data = await readApiJson(response, 'Không thể tải album');
 
                 state.isFinalized = !!data.isFinalized;
                 if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
@@ -864,21 +912,34 @@
                 runAiFaceScoring();
                 setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
-                setMessage('❌ Không thể kết nối tới Server.', 'error');
+                setMessage(`❌ ${error.message || 'Không thể kết nối tới Server.'}`, 'error');
             }
         }
 
         async function refreshAlbumLimit() {
             try {
                 const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' });
-                const data = await response.json();
+                const data = await readApiJson(response, 'Không thể đồng bộ cài đặt album');
                 const nextLimit = Number(data.settings?.maxSelections) || 0;
-                if (nextLimit !== state.maxSelections) {
+                const nextFinalized = typeof data.isFinalized === 'boolean' ? data.isFinalized : state.isFinalized;
+                const limitChanged = nextLimit !== state.maxSelections;
+                const statusChanged = nextFinalized !== state.isFinalized;
+                if (limitChanged || statusChanged) {
                     state.maxSelections = nextLimit;
+                    state.isFinalized = nextFinalized;
+                    elements.finalizedBanner.style.display = nextFinalized ? 'block' : 'none';
                     render();
-                    setMessage(nextLimit > 0 ? `ℹ️ Giới hạn mới: ${nextLimit} ảnh. Các ảnh đã chọn vẫn được giữ nguyên.` : 'ℹ️ Album hiện không giới hạn số ảnh chọn.', 'success');
+                    if (!nextFinalized && statusChanged) {
+                        setMessage('🔓 Album đã mở lại. Các ảnh cũ vẫn được giữ nguyên, bạn có thể chọn thêm ảnh.', 'success');
+                    } else if (limitChanged) {
+                        setMessage(nextLimit > 0 ? `ℹ️ Giới hạn mới: ${nextLimit} ảnh. Các ảnh đã chọn vẫn được giữ nguyên.` : 'ℹ️ Album hiện không giới hạn số ảnh chọn.', 'success');
+                    }
                 }
-            } catch (_) {}
+            } catch (error) {
+                // Không làm mất trạng thái hiện tại khi mạng chập chờn; lần
+                // polling kế tiếp sẽ tự đồng bộ lại và báo lỗi cụ thể nếu cần.
+                console.warn('[Finder] Không đồng bộ được cài đặt album:', error.message);
+            }
         }
 
         elements.selectBtn.addEventListener('click', async () => {
@@ -889,7 +950,7 @@
             render();
             setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
             try {
-                await saveCurrentSelection();
+                await saveCurrentSelection(current.note);
             } catch (error) {
                 current.selected = !current.selected;
                 render();
@@ -966,7 +1027,9 @@
 
         attachSwipe();
         loadAlbum();
-        window.setInterval(refreshAlbumLimit, 8000);
+        // Cài đặt giới hạn rất nhẹ (chỉ một JSON nhỏ), kiểm tra ngắn để khách
+        // được mở lựa chọn mới gần như ngay sau khi admin lưu thay đổi.
+        window.setInterval(refreshAlbumLimit, 3000);
     </script>
 </body>
 </html>

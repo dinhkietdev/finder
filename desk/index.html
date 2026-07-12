@@ -201,10 +201,10 @@
     </div>
     <div class="sidebar">
         <div class="sidebar-brand">Finder <small id="app-version-label" style="display:block; margin-top:4px; opacity:.55; font-size:10px; font-weight:500;">v—</small></div>
-        <div class="nav-item active" data-view="view-dashboard" onclick="switchView('view-dashboard', this); loadDashboard();">▣ &nbsp;Tổng quan</div>
+        <div class="nav-item active" data-view="view-dashboard" onclick="switchView('view-dashboard', this)">▣ &nbsp;Tổng quan</div>
         <div class="nav-item" data-view="view-upload" onclick="switchView('view-upload', this)">↑ &nbsp;Tạo album</div>
-        <div class="nav-item" data-view="view-history" onclick="switchView('view-history', this); loadAlbumHistory();">▦ &nbsp;Thư viện</div>
-        <div class="nav-item" data-view="view-sync" onclick="switchView('view-sync', this); loadAlbumHistory();">◌ &nbsp;Công cụ</div>
+        <div class="nav-item" data-view="view-history" onclick="switchView('view-history', this)">▦ &nbsp;Thư viện</div>
+        <div class="nav-item" data-view="view-sync" onclick="switchView('view-sync', this)">◌ &nbsp;Công cụ</div>
     </div>
 
     <div class="main-content">
@@ -646,12 +646,18 @@
             } finally { chooseButton.disabled = false; }
         }
 
+        let dashboardRefreshSequence = 0;
+
         function switchView(viewId, btnElement) {
             document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
             document.getElementById(viewId).classList.add('active');
             btnElement.classList.add('active');
             document.getElementById('sync-progress-box-wrapper').style.display = 'none';
+            // Render dữ liệu local ngay trong cùng frame chuyển trang, sau đó
+            // đồng bộ cloud ở nền để giao diện không bị đứng chờ mạng.
+            if (viewId === 'view-dashboard') window.setTimeout(() => loadDashboard(), 0);
+            if (viewId === 'view-history' || viewId === 'view-sync') window.setTimeout(() => loadAlbumHistory(), 0);
         }
 
         function openDashboardUpload() {
@@ -679,7 +685,7 @@
 
         async function getDashboardLiveAlbum(album) {
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`);
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`, { cache: 'no-store' });
                 const data = await response.json();
                 if (!data.success) throw new Error('Không thể đồng bộ');
                 const selectedCount = Object.keys(data.liked_files || {}).length;
@@ -687,8 +693,13 @@
                 const isFinalized = !!data.isFinalized;
                 return { ...album, selectedCount, isFinalized, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
             } catch (error) {
-                return { ...album, selectedCount: 0, isFinalized: false, finalizedAt: null, isDone: /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
+                return { ...album, selectedCount: album.selectedCount || 0, isFinalized: !!album.isFinalized, finalizedAt: album.finalizedAt || null, isDone: !!album.isDone || /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
             }
+        }
+
+        function getLocalDashboardAlbum(album) {
+            const manuallyDone = /đã\s*(xong|chốt|hoàn)/i.test(album.status || '');
+            return { ...album, selectedCount: 0, isFinalized: false, finalizedAt: null, isDone: manuallyDone };
         }
 
         function addCalendarEvent(cell, label, isDone = false) {
@@ -756,13 +767,10 @@
             } catch (error) { list.innerHTML = '<div class="dashboard-empty">Không thể tải yêu cầu xét duyệt.</div>'; }
         }
 
-        async function loadDashboard() {
+        function renderDashboard() {
             const recent = document.getElementById('dashboard-recent');
             const tasks = document.getElementById('dashboard-tasks');
-            recent.innerHTML = '<div class="dashboard-empty">Đang đồng bộ trạng thái album...</div>';
             tasks.innerHTML = '';
-            const history = await ipcRenderer.invoke('get-history');
-            dashboardAlbums = await Promise.all(history.map(getDashboardLiveAlbum));
             const waiting = dashboardAlbums.filter(album => !album.isDone);
             const done = dashboardAlbums.filter(album => album.isDone);
             document.getElementById('dashboard-total').textContent = dashboardAlbums.length;
@@ -791,6 +799,27 @@
             }
             renderDashboardCalendar();
             loadStudioApprovals();
+        }
+
+        async function loadDashboard() {
+            const recent = document.getElementById('dashboard-recent');
+            const history = await ipcRenderer.invoke('get-history');
+            const sequence = ++dashboardRefreshSequence;
+            // Local history is available immediately, so the user sees the
+            // dashboard without waiting for one request per album.
+            dashboardAlbums = history.map(getLocalDashboardAlbum);
+            renderDashboard();
+
+            // Live status is fetched in parallel and replaces the optimistic
+            // local view only if this is still the latest navigation request.
+            try {
+                const liveAlbums = await Promise.all(history.map(getDashboardLiveAlbum));
+                if (sequence !== dashboardRefreshSequence) return;
+                dashboardAlbums = liveAlbums;
+                renderDashboard();
+            } catch (error) {
+                if (!dashboardAlbums.length) recent.innerHTML = '<div class="dashboard-empty">Chưa có album nào. Hãy tạo album đầu tiên của bạn.</div>';
+            }
         }
 
         document.getElementById('dashboard-calendar-prev').addEventListener('click', () => {
@@ -1118,7 +1147,8 @@
             if (result.success) {
                 alert("Đã cập nhật giới hạn ảnh thành công và đồng bộ lên Cloud!");
                 loadAlbumHistory(); 
-            }
+                if (document.getElementById('view-dashboard').classList.contains('active')) loadDashboard();
+            } else alert(result.error || 'Không thể cập nhật giới hạn ảnh.');
         }
         // ================= KẾT THÚC =================
 
@@ -1148,6 +1178,11 @@
                         btn.style.background = "#10b981"; 
                         btn.style.color = "#fff";
                         btn.style.border = "none";
+                        const status = document.getElementById(`status-${folderId}`);
+                        if (status?.classList.contains('done')) {
+                            status.innerText = "Đang chờ khách chọn";
+                            status.className = "album-badge waiting";
+                        }
                     }
                 }
             } catch (e) { if (!silent) btn.innerText = "❌ Lỗi"; }

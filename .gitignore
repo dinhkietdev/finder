@@ -7,9 +7,9 @@ desk/firabase.json
 desk/oauth-credentials.json
 desk/oauth-desktop-credentials.json
 desk/firebase-auth-config.js
-sever/oauth-credentials.json
-sever/session-token.json
-sever/database.json
+oauth-credentials.json
+session-token.json
+database.json
 **/.env
 **/.env.*
 *.pem

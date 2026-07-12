@@ -287,7 +287,7 @@ function syncDataToServer() {
                 text: album.watermarkText || "FINDERPICTURE STUDIO", 
                 maxSelections: album.maxSelections || 0 
             });
-            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...serverAuthHeaders() } });
+            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'X-Finder-Background-Sync': '1', ...serverAuthHeaders() } });
             req.write(payload); req.end();
         });
     } catch(e) {}
@@ -338,14 +338,11 @@ ipcMain.handle('flush-all-data', async () => {
 ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections }) => {
     const history = getAlbumHistory();
     const index = history.findIndex(a => a.id === folderId);
-    if (index !== -1) {
-        history[index].maxSelections = parseInt(maxSelections) || 0;
-        fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-    }
+    const nextLimit = parseInt(maxSelections) || 0;
 
     try {
         const syncResult = await new Promise((resolve) => {
-            const payload = JSON.stringify({ maxSelections: parseInt(maxSelections) || 0 });
+            const payload = JSON.stringify({ maxSelections: nextLimit, reopenSelection: true });
             const req = https.request({ 
                 hostname: ONLINE_DOMAIN, port: 443, 
                 path: `/api/album/${folderId}/settings`, 
@@ -356,6 +353,20 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
         });
         if (!syncResult?.success) return { success: false, error: 'Server không lưu được giới hạn mới.' };
     } catch (e) { return { success: false, error: e.message }; }
+
+    if (index !== -1) {
+        history[index].maxSelections = nextLimit;
+        // Đổi giới hạn đồng nghĩa mở lại luồng chọn ảnh. Giữ nguyên các ảnh
+        // khách đã chọn nhưng đưa album về trạng thái chờ để họ có thể bổ sung.
+        history[index].status = 'Đang chờ khách chọn';
+        fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
+        if (db && currentAuthSession?.uid) {
+            db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({
+                maxSelections: history[index].maxSelections,
+                status: history[index].status
+            }).catch(e => console.log(e));
+        }
+    }
     return { success: true };
 });
 

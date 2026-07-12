@@ -1,0 +1,22 @@
+{
+  "name": "finder-web-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Finder client gallery and Vercel API server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "deploy": "vercel --prod"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "firebase-admin": "^14.1.0",
+    "googleapis": "^144.0.0"
+  }
+}
