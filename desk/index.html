@@ -823,6 +823,10 @@
             }
         });
 
+        ipcRenderer.on('scan-progress', (event, data) => {
+            document.getElementById('scan-result').innerHTML = `⏳ Đang quét thư mục: <b>${data.scanned}/${data.total}</b> tệp · tìm thấy <b>${data.found}</b> ảnh`;
+        });
+
         async function runCullingAnalysis() {
             const button = document.getElementById('btn-cull');
             const panel = document.getElementById('culling-panel');

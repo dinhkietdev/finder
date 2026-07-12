@@ -408,9 +408,18 @@ ipcMain.handle('select-folder', async () => {
 
 ipcMain.handle('scan-images', async (event, folderPath) => {
     if (!folderPath) return [];
-    const files = fs.readdirSync(folderPath);
+    const files = await fs.promises.readdir(folderPath);
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.webp'];
-    return files.filter(file => imageExtensions.includes(path.extname(file).toLowerCase()));
+    const images = [];
+    for (let index = 0; index < files.length; index++) {
+        const file = files[index];
+        if (imageExtensions.includes(path.extname(file).toLowerCase())) images.push(file);
+        if (index === files.length - 1 || index % 50 === 0) {
+            mainWindow.webContents.send('scan-progress', { scanned: index + 1, total: files.length, found: images.length });
+            await new Promise(resolve => setImmediate(resolve));
+        }
+    }
+    return images;
 });
 
 function getPercentile(values, percentile) {
