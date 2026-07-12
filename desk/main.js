@@ -608,7 +608,9 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     if (!qs.get('code')) { res.statusCode = 400; res.end('Thiếu mã xác thực Google.'); server.close(); return reject(new Error('Google không trả về mã xác thực.')); }
                     const { tokens } = await oauth2Client.getToken(qs.get('code'));
                     if (requireFullDriveScope && !tokens.scope) tokens.scope = 'https://www.googleapis.com/auth/drive';
-                    oauth2Client.setCredentials(tokens); fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                    oauth2Client.setCredentials(tokens);
+                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                    if (client_id) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: client_id }), 'utf8');
                     res.end('Xác thực thành công. Quay lại Finder.'); server.close(); resolve(oauth2Client);
                 } catch (error) { res.end('Xác thực thất bại.'); server.close(); reject(error); }
             });
