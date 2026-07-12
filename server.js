@@ -140,7 +140,10 @@ app.post('/api/auth/drive-authorize', (req, res) => {
         if (!client) return res.status(503).json({ error: 'Server chưa cấu hình GOOGLE_OAUTH_CREDENTIALS.' });
         const state = require('crypto').randomBytes(24).toString('hex');
         driveOAuthStates.set(state, Date.now() + 10 * 60 * 1000);
-        res.json({ success: true, clientId: client._clientId, authUrl: client.generateAuthUrl({ access_type:'offline', prompt:'consent', state, scope:['https://www.googleapis.com/auth/drive'] }) });
+        // Do not force Google's consent page on every recovery attempt. The
+        // first grant still returns an offline refresh token; later attempts
+        // only select the account unless Google genuinely needs consent again.
+        res.json({ success: true, clientId: client._clientId, authUrl: client.generateAuthUrl({ access_type:'offline', prompt:'select_account', state, scope:['https://www.googleapis.com/auth/drive'] }) });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 app.get('/api/auth/drive-client', (req, res) => {
