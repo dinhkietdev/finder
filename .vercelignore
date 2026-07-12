@@ -4,6 +4,7 @@ session-token.json
 database.json
 desk/oauth-credentials.json
 desk/oauth-desktop-credentials.json
+desk/firabase.json
 desk/firebase-auth-config.js
 **/.env
 **/.env.*

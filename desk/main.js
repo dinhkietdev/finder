@@ -98,6 +98,24 @@ const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
 const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
 const DRIVE_LOG_PATH = path.join(userDataPath, 'finder-drive.log');
 const PENDING_UPLOAD_PATH = path.join(userDataPath, 'finder-pending-upload.json');
+const BACKUP_DIR = path.join(userDataPath, 'backups');
+const QUALITY_CACHE_PATH = path.join(userDataPath, 'finder-quality-cache.json');
+let qualityCachePersistTimer = null;
+try {
+    if (fs.existsSync(QUALITY_CACHE_PATH)) {
+        const saved = JSON.parse(fs.readFileSync(QUALITY_CACHE_PATH, 'utf8'));
+        Object.entries(saved).forEach(([key, value]) => qualityCache.set(key, value));
+    }
+} catch (_) {}
+function scheduleQualityCachePersist() {
+    clearTimeout(qualityCachePersistTimer);
+    qualityCachePersistTimer = setTimeout(() => {
+        try {
+            const entries = [...qualityCache.entries()].slice(-5000);
+            fs.writeFileSync(QUALITY_CACHE_PATH, JSON.stringify(Object.fromEntries(entries)), 'utf8');
+        } catch (_) {}
+    }, 800);
+}
 const AUTH_SESSION_PATH = path.join(userDataPath, 'finder-auth-session.json');
 let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
@@ -281,7 +299,21 @@ function getStudioHistoryFilePath() {
         : historyFilePath;
 }
 
+function createHistoryBackup(reason = 'manual') {
+    try {
+        fs.mkdirSync(BACKUP_DIR, { recursive: true });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const target = path.join(BACKUP_DIR, `albums-${reason}-${stamp}.json`);
+        fs.writeFileSync(target, JSON.stringify({ version: 1, createdAt: new Date().toISOString(), albums: getAlbumHistory() }, null, 2), 'utf8');
+        const files = fs.readdirSync(BACKUP_DIR).filter(file => file.endsWith('.json')).sort();
+        files.slice(0, Math.max(0, files.length - 20)).forEach(file => { try { fs.unlinkSync(path.join(BACKUP_DIR, file)); } catch (_) {} });
+        return target;
+    } catch (_) { return null; }
+}
+
 function saveAlbumToHistory(albumData) {
+    const initialStatus = albumData.status || 'Đang chờ khách chọn';
+    albumData.statusHistory = albumData.statusHistory || [{ status: initialStatus, at: new Date().toISOString(), source: 'create' }];
     const history = getAlbumHistory();
     history.unshift(albumData);
     // Lưu vào máy tính để UI app chạy mượt mà
@@ -297,6 +329,13 @@ function updateAlbumStatus(folderId, newStatus) {
     const history = getAlbumHistory();
     const index = history.findIndex(a => a.id === folderId);
     if (index !== -1) {
+        const previous = history[index].status || 'Đang chờ khách chọn';
+        if (previous !== newStatus) {
+            createHistoryBackup('before-status-change');
+            history[index].statusHistory = Array.isArray(history[index].statusHistory) ? history[index].statusHistory : [{ status: previous, at: new Date().toISOString(), source: 'legacy' }];
+            history[index].statusHistory.push({ status: newStatus, at: new Date().toISOString(), source: 'manual' });
+            history[index].statusHistory = history[index].statusHistory.slice(-30);
+        }
         history[index].status = newStatus;
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
     }
@@ -305,6 +344,22 @@ function updateAlbumStatus(folderId, newStatus) {
     if (db && currentAuthSession?.uid) {
         db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ status: newStatus }).catch(e => console.log(e));
     }
+}
+
+function revertAlbumStatus(folderId) {
+    const history = getAlbumHistory();
+    const index = history.findIndex(a => a.id === folderId);
+    if (index === -1) return { success: false, error: 'Không tìm thấy album.' };
+    const timeline = Array.isArray(history[index].statusHistory) ? history[index].statusHistory : [];
+    if (timeline.length < 2) return { success: false, error: 'Album chưa có trạng thái trước đó.' };
+    timeline.pop();
+    const previous = timeline[timeline.length - 1].status;
+    createHistoryBackup('before-revert');
+    history[index].status = previous;
+    history[index].statusHistory = timeline;
+    fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
+    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ status: previous, statusHistory: timeline }).catch(e => console.log(e));
+    return { success: true, status: previous };
 }
 
 // ---------------------------------------------------------
@@ -338,6 +393,34 @@ function syncDataToServer() {
 }
 
 ipcMain.handle('get-history', () => getAlbumHistory());
+ipcMain.handle('backup-album-config', async () => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: 'Sao lưu cấu hình album', defaultPath: path.join(app.getPath('documents'), `finder-albums-${new Date().toISOString().slice(0,10)}.json`), filters: [{ name: 'Finder backup', extensions: ['json'] }] });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    try {
+        fs.writeFileSync(result.filePath, JSON.stringify({ version: 1, createdAt: new Date().toISOString(), albums: getAlbumHistory() }, null, 2), 'utf8');
+        return { success: true, path: result.filePath };
+    } catch (error) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('restore-album-config', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, { title: 'Khôi phục cấu hình album', properties: ['openFile'], filters: [{ name: 'Finder backup', extensions: ['json'] }] });
+    if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+    try {
+        const data = JSON.parse(fs.readFileSync(result.filePaths[0], 'utf8'));
+        if (!data || !Array.isArray(data.albums)) throw new Error('File backup không đúng định dạng Finder.');
+        createHistoryBackup('before-restore');
+        fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(data.albums, null, 2), 'utf8');
+        return { success: true, count: data.albums.length };
+    } catch (error) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('export-drive-log', async () => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: 'Xuất log Finder', defaultPath: path.join(app.getPath('documents'), 'finder-drive.log'), filters: [{ name: 'Log file', extensions: ['log', 'txt'] }] });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    try {
+        fs.copyFileSync(DRIVE_LOG_PATH, result.filePath);
+        return { success: true, path: result.filePath };
+    } catch (error) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('open-drive-log', async () => { try { if (!fs.existsSync(DRIVE_LOG_PATH)) fs.writeFileSync(DRIVE_LOG_PATH, 'Finder Drive log\n', 'utf8'); await shell.openPath(DRIVE_LOG_PATH); return { success: true, path: DRIVE_LOG_PATH }; } catch (error) { return { success: false, error: error.message }; } });
 ipcMain.handle('get-last-drive-folder', () => {
     const latestAlbum = getAlbumHistory().find(album => Object.prototype.hasOwnProperty.call(album, 'driveParentId'));
     if (!latestAlbum || !latestAlbum.driveParentId) return { id: null, path: 'Drive của tôi' };
@@ -353,9 +436,11 @@ ipcMain.handle('get-last-drive-folder', () => {
     return { id: latestAlbum.driveParentId, path: parentPath || 'Drive của tôi' };
 });
 ipcMain.handle('update-status', (event, { id, status }) => { updateAlbumStatus(id, status); return true; });
+ipcMain.handle('revert-album-status', (event, { id }) => revertAlbumStatus(id));
 ipcMain.handle('open-external-link', (event, url) => { shell.openExternal(url); });
 
 ipcMain.handle('delete-album', async (event, folderId) => {
+    createHistoryBackup('before-delete');
     let history = getAlbumHistory();
     history = history.filter(a => a.id !== folderId);
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
@@ -399,17 +484,22 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
     } catch (e) { return { success: false, error: e.message }; }
 
     if (index !== -1) {
+        createHistoryBackup('before-settings-change');
         history[index].maxSelections = nextLimit;
         history[index].rawSynced = false;
         delete history[index].rawSyncedAt;
         // Đổi giới hạn đồng nghĩa mở lại luồng chọn ảnh. Giữ nguyên các ảnh
         // khách đã chọn nhưng đưa album về trạng thái chờ để họ có thể bổ sung.
         history[index].status = 'Đang chờ khách chọn';
+        history[index].statusHistory = Array.isArray(history[index].statusHistory) ? history[index].statusHistory : [];
+        if (history[index].statusHistory.at(-1)?.status !== history[index].status) history[index].statusHistory.push({ status: history[index].status, at: new Date().toISOString(), source: 'limit-change' });
+        history[index].statusHistory = history[index].statusHistory.slice(-30);
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
         if (db && currentAuthSession?.uid) {
             db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({
                 maxSelections: history[index].maxSelections,
-                status: history[index].status
+                status: history[index].status,
+                statusHistory: history[index].statusHistory
             }).catch(e => console.log(e));
         }
     }
@@ -532,6 +622,7 @@ async function inspectImageQuality(folderPath, file) {
     };
     qualityCache.set(cacheKey, result);
     if (qualityCache.size > 5000) qualityCache.delete(qualityCache.keys().next().value);
+    scheduleQualityCachePersist();
     return result;
 }
 
@@ -548,7 +639,7 @@ async function imageSignature(folderPath, file) {
 }
 function signatureDistance(a, b) { let d = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) if (a[i] !== b[i]) d++; return d / Math.max(a.length, 1); }
 
-ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }) => {
+ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles, strictness = 'balanced' }) => {
     if (!folderPath || !Array.isArray(imageFiles)) return { success: false, error: 'Thiếu thư mục hoặc danh sách ảnh.' };
     const metrics = [];
     const errors = [];
@@ -567,17 +658,22 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }
     };
     await Promise.all(Array.from({ length: Math.min(AI_ANALYSIS_CONCURRENCY, queue.length) }, worker));
     const softImageThreshold = getPercentile(metrics.map(item => item.sharpness), 0.15);
+    const strictFactor = strictness === 'strict' ? 1.18 : strictness === 'relaxed' ? 0.82 : 1;
+    const maxSharpness = Math.max(metrics.reduce((max, item) => Math.max(max, item.sharpness), 0), softImageThreshold * 2, 1);
 
     const results = metrics.map(item => {
         const issues = [];
-        if (item.brightness < 58 || item.darkRatio > 0.62) issues.push('Thiếu sáng');
+        if (item.brightness < 58 * strictFactor || item.darkRatio > 0.62 * (strictness === 'strict' ? .9 : 1.08)) issues.push('Thiếu sáng');
         // Chỉ cảnh báo khi có đủ vùng sáng bị mất chi tiết, không chỉ vì ảnh
         // có nền trắng hoặc ánh sáng mạnh. Hai ngưỡng giúp giảm cảnh báo giả.
-        if (item.highlightClipRatio > 0.025 && item.brightness > 205) issues.push('Cháy sáng');
-        else if ((item.highlightClipRatio > 0.008 && item.brightness > 190) ||
-            (item.nearHighlightRatio > 0.16 && item.brightness > 198)) issues.push('Có nguy cơ cháy sáng');
-        if (item.sharpness <= softImageThreshold && item.sharpness < 13) issues.push('Có thể out nét');
-        return { ...item, issues, score: Math.max(0, 100 - issues.length * 28) };
+        if (item.highlightClipRatio > 0.025 / strictFactor && item.brightness > 205) issues.push('Cháy sáng');
+        else if ((item.highlightClipRatio > 0.008 / strictFactor && item.brightness > 190) ||
+            (item.nearHighlightRatio > 0.16 / strictFactor && item.brightness > 198)) issues.push('Có nguy cơ cháy sáng');
+        if (item.sharpness <= softImageThreshold * strictFactor && item.sharpness < 13 * strictFactor) issues.push('Có thể out nét');
+        const sharpnessScore = Math.max(0, Math.min(100, Math.round((item.sharpness / maxSharpness) * 100)));
+        const exposureScore = Math.max(0, Math.min(100, Math.round(100 - Math.abs(item.brightness - 128) * .72 - item.darkRatio * 18 - item.highlightClipRatio * 90)));
+        const score = Math.max(0, Math.min(100, Math.round(sharpnessScore * .55 + exposureScore * .45 - issues.length * 8)));
+        return { ...item, issues, score, sharpnessScore, exposureScore, expressionHint: 'Cần kiểm tra biểu cảm bằng mắt' };
     });
     const ordered = [...results].sort((a, b) => a.file.localeCompare(b.file, undefined, { numeric: true }));
     const signatures = new Map();
@@ -598,7 +694,9 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles }
     if (current.length >= 2) burstGroups.push(current);
     burstGroups.forEach((group, index) => {
         const ranked = [...group].sort((a, b) => b.score - a.score || b.sharpness - a.sharpness);
-        const selected = new Set(ranked.slice(0, Math.min(group.length, Math.max(2, Math.ceil(group.length * .4)))).map(item => item.file));
+        // Không giới hạn tổng số ảnh đề xuất; trong mỗi cụm giữ lại nhóm đầu
+        // theo điểm chất lượng để người dùng có nhiều lựa chọn hơn.
+        const selected = new Set(ranked.slice(0, Math.max(2, Math.ceil(group.length * .5))).map(item => item.file));
         group.forEach(item => { item.burstGroup = index + 1; item.aiRecommended = selected.has(item.file); });
     });
     return { success: true, results, skipped: errors.length };
@@ -829,10 +927,10 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {
-    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath, resumeData } = payload;
+    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, resumeData } = payload;
     let resumableUpload = resumeData || null;
     try {
-        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath } = resumeData);
+        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath } = resumeData);
         uploadInProgress = true;
         mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: "Đang kiểm tra bảo mật..." });
         // Uploading into a user-selected folder requires the full Drive scope.
@@ -869,7 +967,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                 }
             } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
-        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
+        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
         try { fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
 
         const existingFiles = await drive.files.list({
@@ -961,6 +1059,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             maxSelections: parseInt(maxSelections) || 0, 
             watermarkToggle: watermarkToggle,
             watermarkText: watermarkText
+            , dueDate: dueDate || null
         });
 
         try { fs.unlinkSync(PENDING_UPLOAD_PATH); } catch (_) {}
@@ -1065,8 +1164,14 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         const checkData = { checkFolderId, checkLocalPath: folderPath, checkImageCount: imageFiles.length, checkStatus: 'ready', checkUpdatedAt: new Date().toISOString(), status: 'Ảnh đã chỉnh sửa · chờ khách kiểm tra' };
         if (index !== -1) {
             Object.assign(history[index], checkData);
+            const previous = history[index].statusHistory?.at(-1)?.status;
+            if (previous !== checkData.status) {
+                history[index].statusHistory = Array.isArray(history[index].statusHistory) ? history[index].statusHistory : [];
+                history[index].statusHistory.push({ status: checkData.status, at: checkData.checkUpdatedAt, source: 'check-upload' });
+                history[index].statusHistory = history[index].statusHistory.slice(-30);
+            }
             fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-            if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update(checkData).catch(error => console.log(error));
+            if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ ...checkData, statusHistory: history[index].statusHistory }).catch(error => console.log(error));
         }
         mainWindow.webContents.send('check-upload-progress', { progress: 100, currentFile: 'Đã hoàn tất thư mục CHECK.' });
         return { success: true, count: imageFiles.length, selectedCount, countMatched: selectedCount === null || selectedCount === imageFiles.length, checkFolderId };
@@ -1146,11 +1251,14 @@ ipcMain.handle('auto-sync-raw', async (event, { folderId, likedList }) => {
     fs.writeFileSync(path.join(targetFolder, 'Yêu_Cầu_Chỉnh_Sửa.txt'), txtContent, 'utf8');
     shell.openPath(targetFolder);
     const historyIndex = history.findIndex(item => item.id === folderId);
-    const rawSyncData = { rawSynced: true, rawSyncedAt: new Date().toISOString() };
+    const rawSyncData = { rawSynced: true, rawSyncedAt: new Date().toISOString(), status: 'Đang edit' };
     if (historyIndex !== -1) {
         Object.assign(history[historyIndex], rawSyncData);
+        history[historyIndex].statusHistory = Array.isArray(history[historyIndex].statusHistory) ? history[historyIndex].statusHistory : [];
+        if (history[historyIndex].statusHistory.at(-1)?.status !== rawSyncData.status) history[historyIndex].statusHistory.push({ status: rawSyncData.status, at: rawSyncData.rawSyncedAt, source: 'raw-sync' });
+        history[historyIndex].statusHistory = history[historyIndex].statusHistory.slice(-30);
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-        if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update(rawSyncData).catch(error => console.log(error));
+        if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ ...rawSyncData, statusHistory: history[historyIndex].statusHistory }).catch(error => console.log(error));
     }
     return { success: true, msg: `Đã bốc thành công ${copiedCount} file RAW!` };
 });

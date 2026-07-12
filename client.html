@@ -157,7 +157,7 @@
         .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; }
         .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; }
         .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-        .ai-pick-card::after { content:'AI đề xuất'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
+        .ai-pick-card::after { content:'Cụm tương tự'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
         .ai-pick-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(50,60,130,.25); }
         .selection-item { display:flex; align-items:center; gap:10px; cursor:pointer; }
         .selection-item img { width:58px; height:58px; border-radius:10px; object-fit:cover; flex:none; background:#0b1220; }
@@ -358,7 +358,7 @@
         </div>
 
         <div id="aiPicksPanel" class="panel ai-picks-panel" style="display:none;">
-            <div class="ai-picks-heading"><div><strong>✦ Ảnh AI đề xuất</strong><span id="aiPicksDescription"> Ảnh nổi bật trong từng cụm burst</span></div><span id="aiPicksCount"></span></div>
+            <div class="ai-picks-heading"><div><strong>▦ Nhóm ảnh tương tự</strong><span id="aiPicksDescription"> Các ảnh gần giống nhau được gom để bạn xem nhanh</span></div><span id="aiPicksCount"></span></div>
             <div id="aiPicksGrid" class="ai-picks-grid"></div>
         </div>
 
@@ -437,6 +437,7 @@
             compareEnabled: false,
             selectionReopenedAt: null
         };
+        const savingFiles = new Set();
 
         const elements = {
             mainImage: document.getElementById('mainImage'),
@@ -504,42 +505,6 @@
         let suppressLightboxCloseUntil = 0;
         let lightboxPanStart = null;
         const activePointers = new Map();
-        let faceLandmarkerPromise = null;
-        const aiScores = new WeakMap();
-
-        async function getFaceLandmarker() {
-            if (!faceLandmarkerPromise) faceLandmarkerPromise = (async () => {
-                const { FaceLandmarker, FilesetResolver } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/+esm');
-                const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm');
-                return FaceLandmarker.createFromOptions(vision, { baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' }, runningMode: 'IMAGE', numFaces: 3, outputFaceBlendshapes: true });
-            })();
-            return faceLandmarkerPromise;
-        }
-
-        async function scoreFaceImage(image) {
-            const source = image.thumbnail || image.preview || image.originalUrl;
-            if (!source) return 0;
-            const bitmap = await new Promise((resolve, reject) => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => resolve(img); img.onerror = reject; img.src = source; });
-            const canvas = document.createElement('canvas'); canvas.width = Math.min(640, bitmap.naturalWidth || 640); canvas.height = Math.round(canvas.width * (bitmap.naturalHeight / bitmap.naturalWidth));
-            const context = canvas.getContext('2d', { willReadFrequently:true }); context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-            const result = (await getFaceLandmarker()).detect(canvas);
-            const faces = result.faceBlendshapes || [];
-            if (!faces.length) return 0;
-            const categories = Object.fromEntries(faces[0].categories.map(item => [item.categoryName, item.score]));
-            const eyeOpen = 1 - ((categories.eyeBlinkLeft || 0) + (categories.eyeBlinkRight || 0)) / 2;
-            const smile = ((categories.mouthSmileLeft || 0) + (categories.mouthSmileRight || 0)) / 2;
-            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-            let edgeTotal = 0; let edgeSamples = 0;
-            for (let y = 1; y < canvas.height - 1; y += 3) for (let x = 1; x < canvas.width - 1; x += 3) {
-                const p = (y * canvas.width + x) * 4; const right = p + 4; const down = p + canvas.width * 4;
-                const center = pixels[p] * .299 + pixels[p + 1] * .587 + pixels[p + 2] * .114;
-                const horizontal = Math.abs(center - (pixels[right] * .299 + pixels[right + 1] * .587 + pixels[right + 2] * .114));
-                const vertical = Math.abs(center - (pixels[down] * .299 + pixels[down + 1] * .587 + pixels[down + 2] * .114));
-                edgeTotal += horizontal + vertical; edgeSamples++;
-            }
-            const sharpness = Math.min(1, (edgeTotal / Math.max(1, edgeSamples)) / 42);
-            return Math.round(45 + eyeOpen * 25 + smile * 15 + sharpness * 15);
-        }
         const thumbObserver = 'IntersectionObserver' in window
             ? new IntersectionObserver(entries => entries.forEach(entry => {
                 if (!entry.isIntersecting) return;
@@ -675,6 +640,15 @@
             if (state.viewMode !== 'original' || !state.images.length) { state.aiGroups = []; return; }
             const ordered = state.images.slice().sort(naturalImageCompare);
             state.images = ordered;
+            const groupCacheKey = 'finder-ai-groups:' + folderId + ':' + ordered.map(item => item.fullName + ':' + (item.thumbnail || '')).join('|');
+            try {
+                const cachedGroups = JSON.parse(localStorage.getItem(groupCacheKey) || 'null');
+                if (Array.isArray(cachedGroups)) {
+                    const byName = new Map(ordered.map((image, index) => [image.fullName, { image, index }]));
+                    state.aiGroups = cachedGroups.map(group => group.map(name => byName.get(name)).filter(Boolean)).filter(group => group.length >= 2);
+                    if (state.aiGroups.length) return;
+                }
+            } catch (_) {}
             const indexed = ordered.map((image, index) => ({ image, index }));
             const signatures = new Map();
             let nextSignatureIndex = 0;
@@ -701,40 +675,24 @@
             }
             if (group.length >= 2) groups.push(group);
             state.aiGroups = groups;
+            try { localStorage.setItem(groupCacheKey, JSON.stringify(groups.map(group => group.map(item => item.image.fullName)))); } catch (_) {}
         }
 
         function renderAiPicks() {
             if (state.viewMode !== 'original' || state.isFinalized || !state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
             elements.aiPicksPanel.style.display = '';
-            elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
+            elements.aiPicksCount.textContent = state.aiGroups.length + ' cụm';
             elements.aiPicksGrid.innerHTML = '';
-            state.aiGroups.forEach(group => {
-                const pick = group.slice().sort((a, b) => (aiScores.get(b.image) || 0) - (aiScores.get(a.image) || 0))[0];
+            state.aiGroups.forEach((group, groupIndex) => {
+                const first = group[0];
                 const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
-                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = pick.image.thumbnail || pick.image.originalUrl || ''; image.alt = `AI đề xuất: ${pick.image.shortName}`;
-                const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = `${pick.image.shortName} · ${group.length} ảnh tương tự`;
-                card.append(image, label); card.addEventListener('click', () => { state.currentIndex = pick.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
+                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = first.image.thumbnail || first.image.originalUrl || ''; image.alt = 'Nhóm ảnh tương tự ' + (groupIndex + 1);
+                const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = 'Cụm ' + (groupIndex + 1) + ' · ' + group.length + ' ảnh tương tự';
+                card.append(image, label); card.addEventListener('click', () => { state.currentIndex = first.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
                 elements.aiPicksGrid.appendChild(card);
             });
         }
 
-        async function runAiFaceScoring() {
-            if (!state.aiGroups.length) return;
-            elements.aiPicksDescription.textContent = ' AI đang chấm mắt mở, nụ cười và khuôn mặt…';
-            try {
-                await getFaceLandmarker();
-                const candidates = state.aiGroups.flatMap(group => group);
-                for (let index = 0; index < candidates.length; index++) {
-                    const candidate = candidates[index];
-                    try { aiScores.set(candidate.image, await scoreFaceImage(candidate.image)); } catch (error) { aiScores.set(candidate.image, 0); }
-                    if (index % 8 === 0) renderAiPicks();
-                }
-                elements.aiPicksDescription.textContent = ' AI đã chấm khuôn mặt, mắt và biểu cảm trên ảnh xem trước';
-                renderAiPicks();
-            } catch (error) {
-                elements.aiPicksDescription.textContent = ' Đề xuất thử nghiệm theo cụm ảnh (AI khuôn mặt chưa tải được)';
-            }
-        }
 
         function updateCheckBannerVisibility() {
             const lightboxOpen = elements.imageLightbox.classList.contains('open');
@@ -803,16 +761,16 @@
             elements.lightboxSelectBtn.style.background = current.selected ? 'rgba(22,163,74,.92)' : 'rgba(15,23,42,.75)';
             elements.noteInput.value = current.note || '';
             [elements.selectBtn, elements.confirmAllBtn]
-                .forEach(element => { element.disabled = !canEditSelection; });
+                .forEach(element => { element.disabled = !canEditSelection || savingFiles.has(current.fullName); });
             [elements.saveNoteBtn, elements.noteInput]
-                .forEach(element => { element.disabled = !canEditNote; });
+                .forEach(element => { element.disabled = !canEditNote || savingFiles.has(current.fullName); });
             elements.noteSection.style.display = canEditNote ? 'block' : 'none';
             elements.imageActionRow.style.display = (canEditSelection || isCheckView) ? '' : 'none';
             elements.selectBtn.style.display = canEditSelection ? '' : 'none';
             elements.saveNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.confirmAllBtn.style.display = canEditSelection ? '' : 'none';
-            elements.lightboxSelectBtn.disabled = !canEditSelection;
-            elements.lightboxNoteBtn.disabled = !canEditNote;
+            elements.lightboxSelectBtn.disabled = !canEditSelection || savingFiles.has(current.fullName);
+            elements.lightboxNoteBtn.disabled = !canEditNote || savingFiles.has(current.fullName);
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.lightboxDownloadBtn.style.display = isCheckView ? '' : 'none';
@@ -1161,6 +1119,9 @@
         elements.lightboxSelectBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current || (!current.selected && !canSelect(current))) return;
+            if (savingFiles.has(current.fullName)) return;
+            savingFiles.add(current.fullName);
+            elements.lightboxSelectBtn.disabled = true;
             current.selected = !current.selected;
             render();
             setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
@@ -1171,6 +1132,9 @@
                 current.selected = !current.selected;
                 render();
                 setMessage(`❌ ${error.message}`, 'error');
+            } finally {
+                savingFiles.delete(current.fullName);
+                elements.lightboxSelectBtn.disabled = false;
             }
         });
         elements.copyShareBtn.addEventListener('click', async () => {
@@ -1281,7 +1245,7 @@
             if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
 
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' });
+                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' }, 3);
                 const data = await readApiJson(response, 'Không thể tải album');
 
                 state.isFinalized = !!data.isFinalized;
@@ -1324,7 +1288,6 @@
                 await buildAiGroups();
                 if (state.viewMode === 'check') state.aiGroups = [];
                 render();
-                runAiFaceScoring();
                 scheduleRobotAssistant();
                 setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
@@ -1334,7 +1297,7 @@
 
         async function refreshAlbumLimit() {
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' });
+                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' }, 3);
                 const data = await readApiJson(response, 'Không thể đồng bộ cài đặt album');
                 const nextLimit = Number(data.settings?.maxSelections) || 0;
                 const nextFinalized = typeof data.isFinalized === 'boolean' ? data.isFinalized : state.isFinalized;
@@ -1384,6 +1347,9 @@
             const current = getCurrentImage();
             if (!current) return;
             if (!current.selected && !canSelect(current)) return;
+            if (savingFiles.has(current.fullName)) return;
+            savingFiles.add(current.fullName);
+            elements.selectBtn.disabled = true;
             current.selected = !current.selected;
             render();
             setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
@@ -1393,12 +1359,18 @@
                 current.selected = !current.selected;
                 render();
                 setMessage(`❌ ${error.message}`, 'error');
+            } finally {
+                savingFiles.delete(current.fullName);
+                elements.selectBtn.disabled = false;
             }
         });
 
         elements.saveNoteBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current) return;
+            if (savingFiles.has(current.fullName)) return;
+            savingFiles.add(current.fullName);
+            elements.saveNoteBtn.disabled = true;
             const previousNote = current.note;
             current.note = elements.noteInput.value.trim();
             render();
@@ -1411,6 +1383,9 @@
                 current.note = previousNote;
                 render();
                 setMessage(`❌ ${error.message}`, 'error');
+            } finally {
+                savingFiles.delete(current.fullName);
+                elements.saveNoteBtn.disabled = false;
             }
         });
 

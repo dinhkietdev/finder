@@ -128,6 +128,13 @@
         .dashboard-album-meta { display:block; margin-top:3px; color:var(--muted); font-size:11px; }
         .dashboard-status { padding:4px 8px; border-radius:999px; background:#fff4d6; color:#9a6700; font-size:11px; font-weight:720; white-space:nowrap; }
         .dashboard-status.done { background:#ddf7e9; color:#087443; }
+        .dashboard-status.overdue { background:#fee2e2; color:#b91c1c; }
+        .dashboard-status.today { background:#fef3c7; color:#92400e; }
+        .dashboard-work-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:14px; margin-top:18px; }
+        .dashboard-work-panel { padding:18px; background:var(--panel); border:1px solid #e8ebf1; border-radius:16px; }
+        .dashboard-work-panel h3 { margin:0 0 12px; font-size:14px; }
+        .dashboard-work-panel .dashboard-album { padding:9px 0; }
+        @media (max-width:960px) { .dashboard-work-grid { grid-template-columns:1fr; } }
         .dashboard-empty { padding:20px 0; color:var(--muted); font-size:13px; text-align:center; }
         .calendar-panel { margin-top:18px; }
         .calendar-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
@@ -233,6 +240,11 @@
                 <div class="dashboard-panel"><div class="dashboard-panel-title">Album gần đây</div><div id="dashboard-recent" class="dashboard-list"></div></div>
                 <div class="dashboard-panel"><div class="dashboard-panel-title">Việc cần làm</div><div id="dashboard-tasks" class="dashboard-list"></div></div>
             </div>
+            <div class="dashboard-work-grid">
+                <div class="dashboard-work-panel"><h3>📌 Cần xử lý hôm nay <span id="dashboard-today-count"></span></h3><div id="dashboard-today-list" class="dashboard-list"></div></div>
+                <div class="dashboard-work-panel"><h3>💬 Đang chờ khách <span id="dashboard-client-count"></span></h3><div id="dashboard-client-list" class="dashboard-list"></div></div>
+                <div class="dashboard-work-panel"><h3>⚠️ Đã quá hạn <span id="dashboard-overdue-count"></span></h3><div id="dashboard-overdue-list" class="dashboard-list"></div></div>
+            </div>
             <div id="dashboard-approvals" class="dashboard-panel calendar-panel" style="display:none;"><div class="dashboard-panel-title">Yêu cầu studio chờ duyệt</div><div id="dashboard-approval-list" class="dashboard-list"></div></div>
             <div class="dashboard-panel calendar-panel">
                 <div class="calendar-header"><div class="calendar-month" id="dashboard-calendar-title">Lịch công việc</div><div class="calendar-controls"><button type="button" id="dashboard-calendar-prev" class="btn-outline">←</button><button type="button" id="dashboard-calendar-today" class="btn-outline">Hôm nay</button><button type="button" id="dashboard-calendar-next" class="btn-outline">→</button></div></div>
@@ -248,6 +260,14 @@
                 <p id="selected-path" style="color: #10b981; font-weight: bold; margin-top: 10px; font-size: 13px;"></p>
                 <p id="scan-result" style="margin-top: 10px; font-size: 13px;"></p>
                 <button id="btn-cull" class="btn-outline" style="display:none; margin-top:12px;">✦ Kiểm tra lại chất lượng ảnh</button>
+                <div class="input-group" style="margin-top:12px; max-width:450px;">
+                    <label>Mức độ khắt khe của AI culling:</label>
+                    <select id="ai-strictness-input">
+                        <option value="relaxed">Nới lỏng · ưu tiên giữ ảnh</option>
+                        <option value="balanced" selected>Cân bằng · khuyến nghị</option>
+                        <option value="strict">Khắt khe · cảnh báo nhiều hơn</option>
+                    </select>
+                </div>
                 <div id="culling-panel" class="culling-panel">
                     <div class="culling-summary">
                         <span id="culling-summary-text">Đang phân tích ảnh...</span>
@@ -266,6 +286,10 @@
                 <div class="input-group">
                     <label>Tên thương hiệu hiển thị cho khách <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label>
                     <input type="text" id="studio-name-input" placeholder="Mặc định: Finder">
+                </div>
+                <div class="input-group">
+                    <label>Ngày giao dự kiến <span style="font-weight:400;color:#64748b;">(tùy chọn, dùng cho dashboard)</span>:</label>
+                    <input type="date" id="album-due-date-input">
                 </div>
                 <!-- Tạm ẩn phần bản quyền, giữ nguyên để tiếp tục phát triển sau. -->
                 <div class="input-group" style="display:none; margin-bottom: 12px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; max-width: 450px;">
@@ -318,6 +342,20 @@
                     <div id="drive-account-status" style="font-size:13px; color:#64748b;">Đang kiểm tra trạng thái đăng nhập…</div>
                 </div>
                 <button type="button" id="btn-refresh-drive-status" class="btn-outline">↻ Kiểm tra lại</button>
+            </div>
+            <div class="box">
+                <h3>🛡️ An toàn dữ liệu</h3>
+                <p style="font-size:13px;color:#64748b;line-height:1.5;">Sao lưu cấu hình album để khôi phục khi thao tác nhầm. Finder chỉ xóa dữ liệu quản lý/link; không tự động xóa ảnh gốc trên máy hoặc Google Drive.</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 20px;">
+                    <button type="button" id="btn-backup-albums" class="btn-success">⬇️ Sao lưu cấu hình</button>
+                    <button type="button" id="btn-restore-albums" class="btn-outline">↩️ Khôi phục cấu hình</button>
+                </div>
+                <h3 style="margin-top:12px;">🧾 Nhật ký upload và lỗi</h3>
+                <p style="font-size:13px;color:#64748b;">Xuất log để gửi hỗ trợ khi gặp lỗi Google Drive hoặc upload.</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+                    <button type="button" id="btn-open-drive-log" class="btn-outline">Mở log</button>
+                    <button type="button" id="btn-export-drive-log" class="btn-outline">⬆️ Xuất log</button>
+                </div>
             </div>
             <h2>Khôi phục file gốc</h2>
             <div class="box">
@@ -622,7 +660,7 @@
                 filename.className = 'culling-file'; filename.textContent = item.file;
                 const issues = document.createElement('span');
                 issues.className = `culling-issues${item.issues.length ? '' : ' good'}`;
-                issues.textContent = item.issues.length ? item.issues.join(' · ') : 'Chất lượng ổn';
+                issues.textContent = item.score + '/100 · ' + (item.issues.length ? item.issues.join(' · ') : 'Chất lượng ổn');
                 if (item.aiRecommended) filename.textContent += ' · AI chọn';
                 details.append(filename, issues); row.append(checkbox, details);
                 row.addEventListener('click', () => openCullingPreview(item));
@@ -744,8 +782,12 @@
                 dashboardAlbums.forEach(album => {
                     const createdAt = parseDashboardDate(album.date);
                     const finalizedAt = parseDashboardDate(album.finalizedAt);
+                    const dueAt = albumDueDate(album);
+                    const checkAt = parseDashboardDate(album.checkUpdatedAt);
                     if (createdAt && createdAt.getFullYear() === dashboardMonth.getFullYear() && createdAt.getMonth() === dashboardMonth.getMonth() && createdAt.getDate() === day) events.push({ label: `Tạo · ${album.name}`, done: false });
                     if (finalizedAt && finalizedAt.getFullYear() === dashboardMonth.getFullYear() && finalizedAt.getMonth() === dashboardMonth.getMonth() && finalizedAt.getDate() === day) events.push({ label: `Cần edit · ${album.name}`, done: true });
+                    if (dueAt && dueAt.getFullYear() === dashboardMonth.getFullYear() && dueAt.getMonth() === dashboardMonth.getMonth() && dueAt.getDate() === day) events.push({ label: `Hạn · ${album.name}`, done: Boolean(album.checkReady) });
+                    if (checkAt && checkAt.getFullYear() === dashboardMonth.getFullYear() && checkAt.getMonth() === dashboardMonth.getMonth() && checkAt.getDate() === day) events.push({ label: `Giao CHECK · ${album.name}`, done: true });
                 });
                 events.slice(0, 2).forEach(item => addCalendarEvent(cell, item.label, item.done));
                 if (events.length > 2) addCalendarEvent(cell, `+${events.length - 2} việc`, false);
@@ -786,16 +828,58 @@
             } catch (error) { list.innerHTML = '<div class="dashboard-empty">Không thể tải yêu cầu xét duyệt.</div>'; }
         }
 
+        function albumDueDate(album) {
+            const explicit = parseDashboardDate(album.dueDate || album.deadline || album.deliveryDate);
+            if (explicit) return explicit;
+            const finalized = parseDashboardDate(album.finalizedAt);
+            if (!finalized) return null;
+            // Chỉ bắt đầu tính tiến độ sau khi khách đã chốt ảnh.
+            return new Date(finalized.getFullYear(), finalized.getMonth(), finalized.getDate() + 7);
+        }
+
+        function isSameDay(a, b) {
+            return a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+        }
+
+        function renderWorkList(elementId, albums, emptyText, labelFactory, tone = '') {
+            const list = document.getElementById(elementId);
+            list.innerHTML = '';
+            if (!albums.length) { list.innerHTML = `<div class="dashboard-empty">${emptyText}</div>`; return; }
+            albums.slice(0, 6).forEach(album => {
+                const row = createDashboardAlbumRow(album, 'Mở', () => ipcRenderer.invoke('open-external-link', album.link));
+                const badge = document.createElement('span');
+                badge.className = `dashboard-status ${tone}`;
+                badge.textContent = labelFactory(album);
+                row.insertBefore(badge, row.lastElementChild);
+                list.appendChild(row);
+            });
+        }
+
         function renderDashboard() {
             const recent = document.getElementById('dashboard-recent');
             const tasks = document.getElementById('dashboard-tasks');
             tasks.innerHTML = '';
             const waiting = dashboardAlbums.filter(album => !album.isDone);
             const done = dashboardAlbums.filter(album => album.isDone);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const waitingClients = dashboardAlbums.filter(album => !album.isFinalized && !album.checkReady);
+            const todayWork = dashboardAlbums.filter(album => {
+                if (album.checkReady) return false;
+                const due = albumDueDate(album);
+                return (album.isFinalized || album.rawSynced || album.status === 'Đang edit') && isSameDay(due, today);
+            });
+            const overdue = dashboardAlbums.filter(album => {
+                const due = albumDueDate(album);
+                return due && due < today && !album.checkReady;
+            });
             document.getElementById('dashboard-total').textContent = dashboardAlbums.length;
             document.getElementById('dashboard-waiting').textContent = waiting.length;
             document.getElementById('dashboard-done').textContent = done.length;
             document.getElementById('dashboard-limited').textContent = dashboardAlbums.filter(album => Number(album.maxSelections) > 0).length;
+            document.getElementById('dashboard-today-count').textContent = `(${todayWork.length})`;
+            document.getElementById('dashboard-client-count').textContent = `(${waitingClients.length})`;
+            document.getElementById('dashboard-overdue-count').textContent = `(${overdue.length})`;
 
             recent.innerHTML = '';
             if (!dashboardAlbums.length) recent.innerHTML = '<div class="dashboard-empty">Chưa có album nào. Hãy tạo album đầu tiên của bạn.</div>';
@@ -816,6 +900,9 @@
             } else {
                 tasks.innerHTML = '<div class="dashboard-empty">Chưa có album nào được khách chốt để edit.</div>';
             }
+            renderWorkList('dashboard-today-list', todayWork, 'Không có việc cần xử lý hôm nay.', album => album.isFinalized ? `Cần edit · ${album.selectedCount || 0} ảnh` : 'Tiếp tục edit', 'today');
+            renderWorkList('dashboard-client-list', waitingClients, 'Không có album đang chờ khách.', album => album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : 'Chờ khách chọn');
+            renderWorkList('dashboard-overdue-list', overdue, 'Không có album quá hạn.', album => `Hạn ${albumDueDate(album).toLocaleDateString('vi-VN')}`, 'overdue');
             renderDashboardCalendar();
             loadStudioApprovals();
         }
@@ -854,6 +941,27 @@
             renderDashboardCalendar();
         });
 
+        document.getElementById('btn-backup-albums').addEventListener('click', async () => {
+            const result = await ipcRenderer.invoke('backup-album-config');
+            if (result.success) alert('Đã sao lưu cấu hình album thành công.');
+            else if (!result.canceled) alert('Không thể sao lưu: ' + (result.error || 'Lỗi không xác định.'));
+        });
+        document.getElementById('btn-restore-albums').addEventListener('click', async () => {
+            if (!confirm('Khôi phục sẽ thay thế danh sách album quản lý hiện tại. Finder sẽ tự tạo một bản sao lưu trước đó. Tiếp tục?')) return;
+            const result = await ipcRenderer.invoke('restore-album-config');
+            if (result.success) { alert('Đã khôi phục ' + result.count + ' album.'); await loadAlbumHistory(); loadDashboard(); }
+            else if (!result.canceled) alert('Không thể khôi phục: ' + (result.error || 'File backup không hợp lệ.'));
+        });
+        document.getElementById('btn-open-drive-log').addEventListener('click', async () => {
+            const result = await ipcRenderer.invoke('open-drive-log');
+            if (!result.success) alert('Không thể mở log: ' + result.error);
+        });
+        document.getElementById('btn-export-drive-log').addEventListener('click', async () => {
+            const result = await ipcRenderer.invoke('export-drive-log');
+            if (result.success) alert('Đã xuất log thành công.');
+            else if (!result.canceled) alert('Không thể xuất log: ' + (result.error || 'Lỗi không xác định.'));
+        });
+
         document.getElementById('btn-select').addEventListener('click', async () => {
             currentFolder = await ipcRenderer.invoke('select-folder');
             if (currentFolder) { 
@@ -881,7 +989,8 @@
             button.disabled = true; panel.style.display = 'block';
             document.getElementById('culling-summary-text').textContent = `Đang phân tích ${scannedImages.length} ảnh trên máy…`;
             document.getElementById('culling-list').innerHTML = '';
-            const result = await ipcRenderer.invoke('analyze-image-quality', { folderPath: currentFolder, imageFiles: scannedImages });
+            const strictness = document.getElementById('ai-strictness-input')?.value || 'balanced';
+            const result = await ipcRenderer.invoke('analyze-image-quality', { folderPath: currentFolder, imageFiles: scannedImages, strictness });
             button.disabled = false;
             if (!result.success) {
                 document.getElementById('culling-summary-text').textContent = `Không thể phân tích: ${result.error}`;
@@ -897,6 +1006,9 @@
         });
 
         document.getElementById('btn-cull').addEventListener('click', runCullingAnalysis);
+        document.getElementById('ai-strictness-input').addEventListener('change', () => {
+            if (currentFolder && scannedImages.length) runCullingAnalysis();
+        });
 
         document.getElementById('btn-keep-all').addEventListener('click', () => {
             const shouldKeep = !cullingResults.every(item => item.keep);
@@ -966,6 +1078,7 @@
             const watermarkText = document.getElementById('watermark-text-input').value.trim();
             const maxSelections = document.getElementById('max-selections-input').value.trim(); 
             const studioName = document.getElementById('studio-name-input').value.trim() || 'Finder';
+            const dueDate = document.getElementById('album-due-date-input').value || '';
 
             document.getElementById('progress-container').style.display = "block";
             document.getElementById('upload-status').innerText = "Đang thiết lập cổng kết nối bảo mật...";
@@ -980,6 +1093,7 @@
                 watermarkText,
                 maxSelections,
                 studioName,
+                dueDate,
                 driveParentId: selectedDriveFolder.id,
                 driveParentPath: selectedDriveFolder.path
             }); } catch (error) {
@@ -1070,6 +1184,7 @@
                         <div>
                             <div class="album-title-text" title="${escapeHtml(album.name || '')}">${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
                             <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-status-history" id="status-history-${album.id}" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
                             <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">
                                 <span class="album-flow-step active"><i class="album-flow-dot">1</i>Chọn</span>
                                 <span class="album-flow-step"><i class="album-flow-dot">2</i>Chốt</span>
@@ -1084,12 +1199,21 @@
                             <button class="btn-danger btn-sync" data-action="raw" style="display:none;" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
+                            <button class="btn-outline btn-revert-status" onclick="revertAlbumStatus('${album.id}')" title="Quay lại trạng thái trước">↶ Trạng thái trước</button>
                             <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
                     </div>
                 `;
                 gridContainer.appendChild(card);
+                const timelineEl = document.getElementById(`status-history-${album.id}`);
+                if (timelineEl) {
+                    (album.statusHistory || []).slice(-4).reverse().forEach(item => {
+                        const line = document.createElement('div');
+                        line.textContent = `↳ ${item.status} · ${new Date(item.at).toLocaleString('vi-VN')}`;
+                        timelineEl.appendChild(line);
+                    });
+                }
 
                 ipcRenderer.invoke('get-album-thumbnail', album.localPath).then(thumbUri => {
                     if (thumbUri) {
@@ -1242,6 +1366,12 @@
             loadAlbumHistory();
         }
 
+        async function revertAlbumStatus(folderId) {
+            const result = await ipcRenderer.invoke('revert-album-status', { id: folderId });
+            if (!result.success) return alert(result.error || 'Không thể quay lại trạng thái trước.');
+            await loadAlbumHistory();
+        }
+
         async function checkProgress(folderId, btn, silent = false) {
             if (!silent) btn.innerText = "⏳...";
             try {
@@ -1257,6 +1387,7 @@
                     const checkReadyForWorkflow = checkReady && !!data.isFinalized;
                     updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow);
                     if (checkReady && !data.isFinalized) {
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Đang chờ khách chọn lại' });
                         btn.innerHTML = `🔓 Đang chờ khách chọn lại · ${count} ảnh cũ`;
                         btn.style.background = "#f59e0b";
                         btn.style.color = "#fff";
@@ -1264,6 +1395,7 @@
                         const status = document.getElementById(`status-${folderId}`);
                         if (status) { status.innerText = "Đang chờ khách chọn lại"; status.className = "album-badge waiting"; }
                     } else if (checkReady) {
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Ảnh đã chỉnh sửa · chờ khách kiểm tra' });
                         btn.innerHTML = `✅ CHECK sẵn sàng · ${count} ảnh đã chọn`;
                         btn.style.background = "#0ea5e9";
                         btn.style.color = "#fff";
@@ -1271,6 +1403,7 @@
                         const status = document.getElementById(`status-${folderId}`);
                         if (status) { status.innerText = "Ảnh đã chỉnh sửa · chờ kiểm tra"; status.className = "album-badge done"; }
                     } else if (data.isFinalized) {
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Đã chốt' });
                         btn.innerHTML = `🔒 ĐÃ CHỐT: ${count} tấm`;
                         btn.style.background = "#8b5cf6"; 
                         btn.style.color = "#fff";
@@ -1278,6 +1411,7 @@
                         document.getElementById(`status-${folderId}`).innerText = "Đã chốt (Khóa)";
                         document.getElementById(`status-${folderId}`).className = "album-badge done";
                     } else {
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Đang chờ khách chọn' });
                         btn.innerHTML = `✅ Đang chọn: ${count} tấm`;
                         btn.style.background = "#10b981"; 
                         btn.style.color = "#fff";
