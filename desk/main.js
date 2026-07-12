@@ -97,6 +97,7 @@ const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
 const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
 const DRIVE_LOG_PATH = path.join(userDataPath, 'finder-drive.log');
+const PENDING_UPLOAD_PATH = path.join(userDataPath, 'finder-pending-upload.json');
 const AUTH_SESSION_PATH = path.join(userDataPath, 'finder-auth-session.json');
 let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
@@ -173,6 +174,10 @@ ipcMain.handle('auth-drive-token-status', async () => {
     } catch (error) { return { success: true, found: false, error: error.message }; }
 });
 ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('get-pending-upload', () => {
+    try { return fs.existsSync(PENDING_UPLOAD_PATH) ? JSON.parse(fs.readFileSync(PENDING_UPLOAD_PATH, 'utf8')) : null; }
+    catch (_) { return null; }
+});
 ipcMain.handle('drive-account', async () => {
     try {
         const auth = await authenticateCasi(true);
@@ -835,6 +840,13 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         // successfully but fail when creating files under an existing folder.
         const auth = await authenticateCasi(true);
         const drive = google.drive({ version: 'v3', auth: auth });
+        // Preflight bằng một request nhẹ để phát hiện token hết hạn/quyền sai
+        // trước khi tạo album. Nhờ vậy không tạo album dở dang rồi mới báo lỗi.
+        try { await drive.about.get({ fields: 'user(emailAddress)' }); }
+        catch (error) {
+            logDriveDiagnostic('upload-preflight', error);
+            throw new Error(`DRIVE_AUTH_INVALID: ${friendlyDriveError(error)}`);
+        }
 
         let folderNameOnDrive;
         let googleDriveFolderId;
@@ -858,6 +870,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
         resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
+        try { fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
 
         const existingFiles = await drive.files.list({
             q: `'${googleDriveFolderId}' in parents and trashed = false`,
@@ -871,6 +884,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         let nextFileIndex = 0;
         let completedFiles = imageFiles.length - filesToUpload.length;
         let uploadError = null;
+        const failedFiles = [];
+        const uploadStartedAt = Date.now();
 
         async function uploadWorker() {
             while (!uploadError) {
@@ -888,10 +903,16 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                     completedFiles++;
                     mainWindow.webContents.send('upload-progress', {
                         progress: Math.round((completedFiles / imageFiles.length) * 100),
-                        currentFile: `${fileName} (${completedFiles}/${imageFiles.length})`
+                        currentFile: `${fileName} (${completedFiles}/${imageFiles.length})`,
+                        completed: completedFiles,
+                        total: imageFiles.length,
+                        failed: failedFiles.length,
+                        rate: Math.round(completedFiles / Math.max(1, (Date.now() - uploadStartedAt) / 1000) * 60)
                     });
                 } catch (error) {
+                    failedFiles.push({ fileName, error: friendlyDriveError(error) });
                     uploadError = error;
+                    mainWindow.webContents.send('upload-progress', { progress: Math.round((completedFiles / imageFiles.length) * 100), currentFile: `Lỗi: ${fileName}`, completed: completedFiles, total: imageFiles.length, failed: failedFiles.length, rate: completedFiles ? Math.round(completedFiles / Math.max(1, (Date.now() - uploadStartedAt) / 1000) * 60) : 0 });
                 }
             }
         }
@@ -942,13 +963,15 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             watermarkText: watermarkText
         });
 
-        return { success: true, folderLink: publicLink };
+        try { fs.unlinkSync(PENDING_UPLOAD_PATH); } catch (_) {}
+        return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: failedFiles.length };
     } catch (error) {
         logDriveDiagnostic('upload-to-drive', error);
         if (isEmptyJsonError(error)) {
             try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
             return { success: false, error: 'Google Drive trả về phản hồi rỗng khi upload. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH, resumeData: resumableUpload };
         }
+        try { if (resumableUpload) fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
         return { success: false, error: friendlyDriveError(error), resumeData: resumableUpload };
     }
     finally { uploadInProgress = false; }

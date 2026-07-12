@@ -922,6 +922,13 @@
         checkDriveAccessOnStartup();
         ipcRenderer.invoke('app-version').then(version => { const el = document.getElementById('app-version-label'); if (el) el.textContent = `v${version}`; });
         refreshDriveAccountStatus();
+        // Khôi phục phiên upload còn dang dở sau khi app/ máy bị gián đoạn.
+        ipcRenderer.invoke('get-pending-upload').then(saved => {
+            if (!saved) return;
+            pendingResumeData = saved;
+            document.getElementById('resume-upload-box').style.display = 'block';
+            document.getElementById('upload-status').innerHTML = '<span style="color:#b45309;">Có phiên upload chưa hoàn tất. Các file đã có trên Drive sẽ được bỏ qua.</span>';
+        }).catch(() => {});
 
         let lastUploadedLink = '';
         function showUploadSuccess(link) {
@@ -1014,7 +1021,8 @@
         ipcRenderer.on('upload-progress', (event, data) => {
             document.getElementById('progress-bar').style.width = data.progress + "%";
             document.getElementById('progress-text').innerText = `${data.progress}%`;
-            document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile}`;
+            const stats = `${data.completed || 0}/${data.total || 0} thành công · ${data.failed || 0} lỗi${data.rate ? ` · ~${data.rate} ảnh/phút` : ''}`;
+            document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile} · ${stats}`;
         });
 
         ipcRenderer.on('sync-progress', (event, data) => {
