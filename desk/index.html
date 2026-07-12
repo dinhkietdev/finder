@@ -200,7 +200,7 @@
         </div>
     </div>
     <div class="sidebar">
-        <div class="sidebar-brand">Finder</div>
+        <div class="sidebar-brand">Finder <small id="app-version-label" style="display:block; margin-top:4px; opacity:.55; font-size:10px; font-weight:500;">v—</small></div>
         <div class="nav-item active" data-view="view-dashboard" onclick="switchView('view-dashboard', this); loadDashboard();">▣ &nbsp;Tổng quan</div>
         <div class="nav-item" data-view="view-upload" onclick="switchView('view-upload', this)">↑ &nbsp;Tạo album</div>
         <div class="nav-item" data-view="view-history" onclick="switchView('view-history', this); loadAlbumHistory();">▦ &nbsp;Thư viện</div>
@@ -298,17 +298,24 @@
         </div>
 
         <div id="view-sync" class="view-section">
+            <div class="box" style="display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; background:#f8fafc; border:1px solid #dbeafe;">
+                <div>
+                    <h3 style="margin:0 0 6px;">☁️ Google Drive</h3>
+                    <div id="drive-account-status" style="font-size:13px; color:#64748b;">Đang kiểm tra trạng thái đăng nhập…</div>
+                </div>
+                <button type="button" id="btn-refresh-drive-status" class="btn-outline">↻ Kiểm tra lại</button>
+            </div>
             <h2>Khôi phục file gốc</h2>
             <div class="box">
-                <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">Chỉ sử dụng tính năng này khi bạn lỡ di dời thư mục ảnh sang vị trí khác.</p>
+                <p style="font-size: 13px; color: #64748b; margin-bottom: 15px;">Finder sẽ tự tìm RAW/JPG theo tên ảnh khách đã chọn, tạo thư mục riêng và ghi kèm file yêu cầu chỉnh sửa.</p>
                 <div class="input-group">
-                    <label>1. Chọn Album từ lịch sử hệ thống:</label>
+                    <label>① Chọn album khách đã chọn ảnh:</label>
                     <select id="sync-folder-select" onchange="toggleManualIdInput()"><option value="">-- Đang tải danh sách... --</option></select>
                     <input type="text" id="sync-folder-id-manual" style="display:none; margin-top:10px;" placeholder="Dán mã ID Drive trực tiếp tại đây...">
                 </div>
-                <button id="btn-sync-select-folder" class="btn-outline">2. Trỏ đường dẫn tới folder RAW</button>
+                <button id="btn-sync-select-folder" class="btn-outline">② Chọn thư mục chứa ảnh gốc (RAW/JPG)</button>
                 <p id="sync-source-path" style="color: #06b6d4; font-weight: bold; margin: 10px 0; font-size: 12px;"></p>
-                <button id="btn-sync-execute" class="btn-danger" style="display: none;">3. Tiến hành tách lọc file</button>
+                <button id="btn-sync-execute" class="btn-danger" style="display: none;">③ Khôi phục file khách đã chọn</button>
                 <div id="manual-sync-progress-box" class="sync-tracker-container">
                     <div id="manual-sync-progress-bar" class="sync-tracker-bar"></div>
                     <div id="manual-sync-progress-text" class="sync-tracker-text">0%</div>
@@ -427,6 +434,19 @@
             catch (_) { document.getElementById('drive-auth-modal').classList.add('open'); }
         }
 
+        async function refreshDriveAccountStatus() {
+            const label = document.getElementById('drive-account-status');
+            if (!label) return;
+            label.textContent = 'Đang kiểm tra…';
+            const status = await ipcRenderer.invoke('auth-drive-token-status');
+            if (!status.found) { label.innerHTML = '<span style="color:#dc2626;">● Chưa đăng nhập Google Drive</span>'; return; }
+            const account = await ipcRenderer.invoke('drive-account');
+            if (account.success) {
+                const user = account.user || {};
+                label.innerHTML = `<span style="color:#059669;">● Đã kết nối</span> · ${escapeHtml(user.displayName || user.emailAddress || 'Tài khoản Google')}${user.emailAddress ? ` <span style="color:#64748b;">(${escapeHtml(user.emailAddress)})</span>` : ''}`;
+            } else label.innerHTML = `<span style="color:#dc2626;">● Không thể xác thực</span> · ${escapeHtml(account.error || 'Vui lòng đăng nhập lại')}`;
+        }
+
         document.getElementById('drive-auth-connect').addEventListener('click', async event => {
             const button = event.currentTarget;
             const message = document.getElementById('drive-auth-message');
@@ -442,6 +462,7 @@
                 button.disabled = false; button.textContent = 'Thử kết nối lại';
             }
         });
+        document.getElementById('btn-refresh-drive-status')?.addEventListener('click', refreshDriveAccountStatus);
 
         function showUpdateOverlay(message, actionText, disabled = false, showMacFix = false) {
             document.getElementById('update-message').textContent = message;
@@ -847,6 +868,8 @@
         restoreLastDriveFolder();
         loadDashboard();
         checkDriveAccessOnStartup();
+        ipcRenderer.invoke('app-version').then(version => { const el = document.getElementById('app-version-label'); if (el) el.textContent = `v${version}`; });
+        refreshDriveAccountStatus();
 
         let lastUploadedLink = '';
         function showUploadSuccess(link) {

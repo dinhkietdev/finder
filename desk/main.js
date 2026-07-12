@@ -138,6 +138,18 @@ ipcMain.handle('auth-drive-token-status', async () => {
         return { success: true, found: !!session.tokens, source: 'server' };
     } catch (error) { return { success: true, found: false, error: error.message }; }
 });
+ipcMain.handle('app-version', () => app.getVersion());
+ipcMain.handle('drive-account', async () => {
+    try {
+        const auth = await authenticateCasi(true);
+        const drive = google.drive({ version: 'v3', auth });
+        const result = await drive.about.get({ fields: 'user(displayName,emailAddress,photoLink)' });
+        return { success: true, user: result.data.user || {} };
+    } catch (error) {
+        logDriveDiagnostic('drive-account', error);
+        return { success: false, error: friendlyDriveError(error) };
+    }
+});
 ipcMain.handle('auth-ensure-drive-access', async () => {
     // This IPC action is invoked only by the explicit "Đăng nhập lại Google"
     // button. Automatic folder browsing/upload never reaches OAuth here.
