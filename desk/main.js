@@ -62,6 +62,7 @@ const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
 const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
+const DRIVE_LOG_PATH = path.join(userDataPath, 'finder-drive.log');
 const AUTH_SESSION_PATH = path.join(userDataPath, 'finder-auth-session.json');
 let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
@@ -559,7 +560,21 @@ function friendlyDriveError(error) {
     if (String(error?.message || error).startsWith('DRIVE_REFRESH_FAILED:')) {
         return `Không thể làm mới phiên Google Drive. Chi tiết: ${String(error.message).slice(21)}`;
     }
+    if (/Unexpected end of JSON input/i.test(String(error?.message || error))) {
+        return 'Google Drive trả về phản hồi rỗng hoặc không hợp lệ. Phiên Drive cần được đăng nhập lại. Mã: DRIVE_EMPTY_RESPONSE';
+    }
     return error?.message || String(error);
+}
+
+function logDriveDiagnostic(stage, error) {
+    try {
+        const detail = error instanceof Error ? `${error.message}\n${error.stack || ''}` : String(error);
+        fs.appendFileSync(DRIVE_LOG_PATH, `[${new Date().toISOString()}] ${stage}\n${detail}\n\n`, 'utf8');
+    } catch (_) {}
+}
+
+function isEmptyJsonError(error) {
+    return /Unexpected end of JSON input/i.test(String(error?.message || error));
 }
 
 // Local fallback for testing: the legacy desktop OAuth flow is kept out of
@@ -725,6 +740,11 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
         const response = await loadFolders(false);
         return { success: true, folders: response.data.files || [] };
     } catch (error) {
+        logDriveDiagnostic('list-drive-folders', error);
+        if (isEmptyJsonError(error)) {
+            try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+            return { success: false, error: 'Google Drive trả về phản hồi rỗng. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH };
+        }
         return { success: false, error: friendlyDriveError(error) };
     }
 });
@@ -833,7 +853,14 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         });
 
         return { success: true, folderLink: publicLink };
-    } catch (error) { return { success: false, error: friendlyDriveError(error), resumeData: resumableUpload }; }
+    } catch (error) {
+        logDriveDiagnostic('upload-to-drive', error);
+        if (isEmptyJsonError(error)) {
+            try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+            return { success: false, error: 'Google Drive trả về phản hồi rỗng khi upload. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH, resumeData: resumableUpload };
+        }
+        return { success: false, error: friendlyDriveError(error), resumeData: resumableUpload };
+    }
     finally { uploadInProgress = false; }
 });
 
