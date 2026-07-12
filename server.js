@@ -325,7 +325,10 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     const isBackgroundSync = req.get('x-finder-background-sync') === '1';
     // Explicit admin edits (including older desktop builds that do not send
     // reopenSelection) reopen the album. Startup/background sync must not.
-    if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) delete finalizedDatabase[folderId];
+    if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) {
+        delete finalizedDatabase[folderId];
+        albumSettingsDatabase[folderId].selectionReopenedAt = new Date().toISOString();
+    }
     await persistState();
     res.json({ success: true, settings: albumSettingsDatabase[folderId] });
 });
@@ -335,7 +338,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
         isFinalized: !!finalizedDatabase[folderId]
     });
 });
@@ -393,7 +396,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
+        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false, selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
         const isFinalized = !!finalizedDatabase[folderId];
         const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 

@@ -397,7 +397,6 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
         history[index].maxSelections = nextLimit;
         history[index].rawSynced = false;
         delete history[index].rawSyncedAt;
-        history[index].checkStatus = undefined;
         // Đổi giới hạn đồng nghĩa mở lại luồng chọn ảnh. Giữ nguyên các ảnh
         // khách đã chọn nhưng đưa album về trạng thái chờ để họ có thể bổ sung.
         history[index].status = 'Đang chờ khách chọn';
@@ -955,7 +954,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
     finally { uploadInProgress = false; }
 });
 
-ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath }) => {
+ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, allowCountMismatch = false }) => {
     const history = getAlbumHistory();
     const album = history.find(item => item.id === folderId);
     if (!album) return { success: false, error: 'Không tìm thấy album trong thư viện.' };
@@ -963,6 +962,24 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath }) 
 
     const imageFiles = (await fs.promises.readdir(folderPath)).filter(file => /\.(jpe?g|png|webp)$/i.test(file));
     if (!imageFiles.length) return { success: false, error: 'Thư mục CHECK không có ảnh hợp lệ.' };
+
+    let selectedCount = null;
+    try {
+        const selectedData = await getServerJson(`/api/album/${folderId}/liked/all`, serverAuthHeaders());
+        selectedCount = Object.keys(selectedData.liked_files || {}).length;
+    } catch (error) {
+        console.warn('Không thể đối chiếu số ảnh CHECK:', error.message);
+    }
+    if (selectedCount !== null && selectedCount !== imageFiles.length && !allowCountMismatch) {
+        return {
+            success: false,
+            code: 'CHECK_COUNT_MISMATCH',
+            requiresConfirmation: true,
+            selectedCount,
+            checkCount: imageFiles.length,
+            error: `Khách đã chọn ${selectedCount} ảnh nhưng thư mục CHECK có ${imageFiles.length} ảnh.`
+        };
+    }
 
     try {
         uploadInProgress = true;
@@ -1029,7 +1046,7 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath }) 
             if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update(checkData).catch(error => console.log(error));
         }
         mainWindow.webContents.send('check-upload-progress', { progress: 100, currentFile: 'Đã hoàn tất thư mục CHECK.' });
-        return { success: true, count: imageFiles.length, checkFolderId };
+        return { success: true, count: imageFiles.length, selectedCount, countMatched: selectedCount === null || selectedCount === imageFiles.length, checkFolderId };
     } catch (error) {
         logDriveDiagnostic('upload-check-to-drive', error);
         return { success: false, error: friendlyDriveError(error) };

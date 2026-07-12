@@ -709,7 +709,7 @@
                 const selectedCount = Object.keys(data.liked_files || {}).length;
                 const manuallyDone = /đã\s*(xong|chốt|hoàn)/i.test(album.status || '');
                 const isFinalized = !!data.isFinalized;
-                const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
+                const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId && isFinalized);
                 return { ...album, selectedCount, isFinalized, checkReady, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
             } catch (error) {
                 return { ...album, selectedCount: album.selectedCount || 0, isFinalized: !!album.isFinalized, finalizedAt: album.finalizedAt || null, isDone: !!album.isDone || /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
@@ -1137,7 +1137,7 @@
             const rawSynced = card.dataset.rawSynced === '1';
             // Luồng thao tác bắt buộc: khách chốt → Gom RAW → Upload CHECK.
             if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
-            if (checkButton) checkButton.style.display = rawSynced && !checkReady ? '' : 'none';
+            if (checkButton) checkButton.style.display = isFinalized && rawSynced && !checkReady ? '' : 'none';
             renderAlbumTimeline(folderId, isFinalized, checkReady);
         }
 
@@ -1211,11 +1211,18 @@
             const originalText = button.textContent;
             button.disabled = true;
             button.textContent = '⏳ Đang tải CHECK…';
-            const result = await ipcRenderer.invoke('upload-check-to-drive', { folderId, folderPath });
+            let result = await ipcRenderer.invoke('upload-check-to-drive', { folderId, folderPath });
+            if (result.requiresConfirmation && result.code === 'CHECK_COUNT_MISMATCH') {
+                const proceed = confirm(`${result.error}\n\nBạn vẫn muốn tiếp tục upload CHECK để kiểm tra không?`);
+                if (!proceed) { button.disabled = false; button.textContent = originalText; return; }
+                button.textContent = '⏳ Đang xác nhận và tải CHECK…';
+                result = await ipcRenderer.invoke('upload-check-to-drive', { folderId, folderPath, allowCountMismatch: true });
+            }
             button.disabled = false;
             button.textContent = originalText;
             if (result.success) {
-                alert(`Đã tải ${result.count} ảnh CHECK. Trang khách sẽ tự chuyển sang ảnh đã chỉnh sửa.`);
+                const compareText = result.selectedCount === null || result.countMatched ? 'Số lượng khớp với ảnh khách đã chọn.' : `Lưu ý: khách chọn ${result.selectedCount} ảnh, CHECK có ${result.count} ảnh.`;
+                alert(`Đã tải ${result.count} ảnh CHECK. ${compareText}\nTrang khách sẽ tự chuyển sang ảnh đã chỉnh sửa.`);
                 loadAlbumHistory();
             } else alert(`Không thể tải ảnh CHECK: ${result.error}`);
         }
@@ -1239,8 +1246,16 @@
                 if(data.success) { 
                     const count = Object.keys(data.liked_files).length;
                     const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
-                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReady);
-                    if (checkReady) {
+                    const checkReadyForWorkflow = checkReady && !!data.isFinalized;
+                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow);
+                    if (checkReady && !data.isFinalized) {
+                        btn.innerHTML = `🔓 Đang chờ khách chọn lại · ${count} ảnh cũ`;
+                        btn.style.background = "#f59e0b";
+                        btn.style.color = "#fff";
+                        btn.style.border = "none";
+                        const status = document.getElementById(`status-${folderId}`);
+                        if (status) { status.innerText = "Đang chờ khách chọn lại"; status.className = "album-badge waiting"; }
+                    } else if (checkReady) {
                         btn.innerHTML = `✅ CHECK sẵn sàng · ${count} ảnh đã chọn`;
                         btn.style.background = "#0ea5e9";
                         btn.style.color = "#fff";

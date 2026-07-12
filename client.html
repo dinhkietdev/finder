@@ -100,14 +100,14 @@
         .compare-label-original { left:14px; } .compare-label-check { right:14px; }
         .lightbox-toolbar { position:absolute; bottom:max(18px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:4; }
         .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
-        .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
+        .zoom-tip { position:absolute; bottom:78px; left:50%; transform:translateX(-50%); z-index:3; background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:7px 11px; font-size:11px; white-space:nowrap; }
         .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
         .quick-note-modal.open { display:flex; }
         .quick-note-card { width:min(440px,100%); background:#111827; border:1px solid var(--border); border-radius:16px; padding:18px; box-shadow:0 18px 40px rgba(0,0,0,.42); }
         .quick-note-card h3 { font-size:17px; margin-bottom:10px; }
         .quick-note-card textarea { width:100%; min-height:130px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:#fff; padding:11px; resize:vertical; }
         .quick-note-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
-        .help-robot { position:fixed; right:20px; bottom:20px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
+        .help-robot { position:fixed; right:20px; bottom:84px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
         .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
         .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
         .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
@@ -197,7 +197,7 @@
             .note-box { min-height:92px; }
             .selection-list { max-height:220px; }
             .thumb-btn, .thumb-btn img { width:74px; height:74px; }
-            .help-robot { right:14px; bottom:14px; }
+            .help-robot { right:14px; bottom:82px; }
             .robot-button { width:54px; height:54px; font-size:28px; }
             .header-panel { border-radius:18px; }
             .intro { order:-1; }
@@ -218,7 +218,7 @@
             .thumb-btn { border-radius:11px; }
             .image-lightbox { align-items:center; }
             .lightbox-image { max-width:100vw; }
-            .zoom-tip { bottom:max(14px,env(safe-area-inset-bottom)); max-width:calc(100vw - 28px); overflow:hidden; text-overflow:ellipsis; }
+            .zoom-tip { bottom:max(78px,calc(env(safe-area-inset-bottom) + 70px)); max-width:calc(100vw - 28px); overflow:hidden; text-overflow:ellipsis; }
         }
 
         /* Final client polish: touch-first gallery and clear loading feedback. */
@@ -249,6 +249,13 @@
         .check-ready-banner { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:30; width:min(620px,calc(100vw - 28px)); padding:12px 16px; border:1px solid rgba(59,217,160,.38); border-radius:14px; background:rgba(11,42,39,.94); box-shadow:0 12px 32px rgba(0,0,0,.28); color:#b9f8dc; text-align:center; font-size:13px; font-weight:750; backdrop-filter:blur(16px); }
         .check-ready-banner.visible { display:block; animation:checkBannerIn .24s ease-out both; }
         @keyframes checkBannerIn { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
+        .selection-reopen-modal { display:none; position:fixed; inset:0; z-index:1150; align-items:center; justify-content:center; padding:20px; background:rgba(2,6,14,.72); backdrop-filter:blur(8px); }
+        .selection-reopen-modal.open { display:flex; }
+        .selection-reopen-card { width:min(440px,100%); padding:24px; border:1px solid var(--border); border-radius:20px; background:#111827; color:var(--text-main); box-shadow:0 22px 70px rgba(0,0,0,.45); text-align:center; }
+        .selection-reopen-card h3 { font-size:19px; margin-bottom:9px; }
+        .selection-reopen-card p { color:var(--text-muted); font-size:13px; line-height:1.6; }
+        .selection-reopen-actions { display:flex; gap:9px; justify-content:center; margin-top:18px; }
+        .selection-reopen-actions .btn { flex:1; }
         @media (max-width:560px) {
             body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
             .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -382,6 +389,13 @@
             <div class="quick-note-actions"><button id="quickNoteCancelBtn" class="btn btn-outline">Hủy</button><button id="quickNoteSaveBtn" class="btn btn-success">Lưu ghi chú</button></div>
         </div>
     </div>
+    <div id="selectionReopenModal" class="selection-reopen-modal" aria-hidden="true">
+        <div class="selection-reopen-card">
+            <h3>Album đã được mở lại</h3>
+            <p>Studio vừa điều chỉnh số lượng ảnh cần chọn. Các ảnh bạn đã chọn vẫn được giữ nguyên; hãy quay lại trang ảnh gốc để bổ sung hoặc thay đổi lựa chọn.</p>
+            <div class="selection-reopen-actions"><button id="reopenOriginalBtn" class="btn btn-primary" type="button">Ảnh lựa chọn</button><button id="reopenCheckBtn" class="btn btn-outline" type="button">Xem ảnh đã sửa</button></div>
+        </div>
+    </div>
     <div id="helpRobot" class="help-robot">
         <div class="robot-message"></div>
         <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ">
@@ -420,7 +434,8 @@
             aiGroups: [],
             publicSlug: albumSlug,
             studioName: 'Finder',
-            compareEnabled: false
+            compareEnabled: false,
+            selectionReopenedAt: null
         };
 
         const elements = {
@@ -471,6 +486,7 @@
             copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
             compareStage: document.getElementById('compareStage'), compareOriginalImage: document.getElementById('compareOriginalImage'), compareCheckImage: document.getElementById('compareCheckImage'), compareClip: document.getElementById('compareClip'), compareDivider: document.getElementById('compareDivider'), compareRange: document.getElementById('compareRange'), compareToggleBtn: document.getElementById('compareToggleBtn'), lightboxDownloadBtn: document.getElementById('lightboxDownloadBtn'),
             qrModal: document.getElementById('qrModal'), qrImage: document.getElementById('qrImage'), qrLinkText: document.getElementById('qrLinkText'), closeQrBtn: document.getElementById('closeQrBtn')
+            ,selectionReopenModal: document.getElementById('selectionReopenModal'), reopenOriginalBtn: document.getElementById('reopenOriginalBtn'), reopenCheckBtn: document.getElementById('reopenCheckBtn')
         };
         let zoomScale = 1;
         let robotMessageTimeout = null;
@@ -600,6 +616,16 @@
             if (nextMode === 'original') { buildAiGroups().then(() => render()).catch(() => render()); }
             else state.aiGroups = [];
             render();
+        }
+
+        function closeSelectionReopenModal() {
+            elements.selectionReopenModal.classList.remove('open');
+            elements.selectionReopenModal.setAttribute('aria-hidden', 'true');
+        }
+
+        function showSelectionReopenModal() {
+            elements.selectionReopenModal.classList.add('open');
+            elements.selectionReopenModal.setAttribute('aria-hidden', 'false');
         }
 
         function naturalImageCompare(a, b) {
@@ -1163,6 +1189,9 @@
         function closeQr() { elements.qrModal.classList.remove('open'); elements.qrModal.setAttribute('aria-hidden', 'true'); }
         elements.closeQrBtn.addEventListener('click', closeQr);
         elements.qrModal.addEventListener('click', event => { if (event.target === elements.qrModal) closeQr(); });
+        elements.reopenOriginalBtn.addEventListener('click', () => { closeSelectionReopenModal(); setViewMode('original'); });
+        elements.reopenCheckBtn.addEventListener('click', () => { closeSelectionReopenModal(); setViewMode('check'); });
+        elements.selectionReopenModal.addEventListener('click', event => { if (event.target === elements.selectionReopenModal) closeSelectionReopenModal(); });
         elements.lightboxNoteBtn.addEventListener('click', () => {
             const current = getCurrentImage();
             if (!current) return;
@@ -1273,6 +1302,7 @@
                 state.checkImages.sort(naturalImageCompare);
                 state.checkFolderId = data.settings?.checkFolderId || null;
                 state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
+                state.selectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
                 state.studioName = data.settings?.studioName && data.settings.studioName !== 'Finder Studio' ? data.settings.studioName : 'Finder';
@@ -1311,9 +1341,12 @@
                 const nextCheckFolderId = data.settings?.checkFolderId || null;
                 const nextCheckReady = Boolean(data.settings?.checkReady && nextCheckFolderId);
                 const nextCheckUpdatedAt = data.settings?.checkUpdatedAt || null;
+                const nextSelectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 const limitChanged = nextLimit !== state.maxSelections;
                 const statusChanged = nextFinalized !== state.isFinalized;
                 const checkChanged = nextCheckReady && (!state.checkReady || nextCheckUpdatedAt !== state.checkUpdatedAt);
+                const selectionWasReopened = Boolean(nextSelectionReopenedAt && state.selectionReopenedAt && nextSelectionReopenedAt !== state.selectionReopenedAt);
+                state.selectionReopenedAt = nextSelectionReopenedAt || state.selectionReopenedAt;
                 if (limitChanged || statusChanged) {
                     state.maxSelections = nextLimit;
                     state.isFinalized = nextFinalized;
@@ -1330,6 +1363,15 @@
                     state.checkUpdatedAt = nextCheckUpdatedAt;
                     await loadAlbum();
                     setMessage('✨ Ảnh chỉnh sửa đã sẵn sàng. Đang mở bản CHECK để bạn kiểm tra.', 'success');
+                }
+                if (selectionWasReopened) {
+                    state.isFinalized = false;
+                    state.viewMode = 'original';
+                    state.images = state.originalImages;
+                    await buildAiGroups();
+                    render();
+                    showSelectionReopenModal();
+                    setMessage('🔓 Studio đã mở lại album để bạn bổ sung lựa chọn. Ảnh chỉnh sửa cũ vẫn có thể xem ở tab CHECK.', 'success');
                 }
             } catch (error) {
                 // Không làm mất trạng thái hiện tại khi mạng chập chờn; lần
