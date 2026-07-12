@@ -868,6 +868,19 @@
             }
         }
 
+        async function refreshAlbumLimit() {
+            try {
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' });
+                const data = await response.json();
+                const nextLimit = Number(data.settings?.maxSelections) || 0;
+                if (nextLimit !== state.maxSelections) {
+                    state.maxSelections = nextLimit;
+                    render();
+                    setMessage(nextLimit > 0 ? `ℹ️ Giới hạn mới: ${nextLimit} ảnh. Các ảnh đã chọn vẫn được giữ nguyên.` : 'ℹ️ Album hiện không giới hạn số ảnh chọn.', 'success');
+                }
+            } catch (_) {}
+        }
+
         elements.selectBtn.addEventListener('click', async () => {
             const current = getCurrentImage();
             if (!current) return;
@@ -953,6 +966,7 @@
 
         attachSwipe();
         loadAlbum();
+        window.setInterval(refreshAlbumLimit, 8000);
     </script>
 </body>
 </html>

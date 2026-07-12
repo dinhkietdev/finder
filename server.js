@@ -271,6 +271,11 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     res.json({ success: true });
 });
 
+app.get('/api/album/:folderId/settings', async (req, res) => {
+    await loadPersistentState();
+    res.json({ success: true, settings: albumSettingsDatabase[req.params.folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 } });
+});
+
 app.post('/api/album/:folderId/finalize', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
