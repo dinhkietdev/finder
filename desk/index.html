@@ -685,13 +685,18 @@
 
         async function getDashboardLiveAlbum(album) {
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`, { cache: 'no-store' });
+                const [response, settingsResponse] = await Promise.all([
+                    fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`, { cache: 'no-store' }),
+                    fetch(`${ONLINE_SERVER}/api/album/${album.id}/settings`, { cache: 'no-store' })
+                ]);
                 const data = await response.json();
+                const settingsData = await settingsResponse.json().catch(() => ({}));
                 if (!data.success) throw new Error('Không thể đồng bộ');
                 const selectedCount = Object.keys(data.liked_files || {}).length;
                 const manuallyDone = /đã\s*(xong|chốt|hoàn)/i.test(album.status || '');
                 const isFinalized = !!data.isFinalized;
-                return { ...album, selectedCount, isFinalized, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
+                const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
+                return { ...album, selectedCount, isFinalized, checkReady, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
             } catch (error) {
                 return { ...album, selectedCount: album.selectedCount || 0, isFinalized: !!album.isFinalized, finalizedAt: album.finalizedAt || null, isDone: !!album.isDone || /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
             }
@@ -783,7 +788,7 @@
             dashboardAlbums.slice(0, 6).forEach(album => {
                 const row = createDashboardAlbumRow(album, 'Mở album', () => ipcRenderer.invoke('open-external-link', album.link));
                 const status = document.createElement('span'); status.className = `dashboard-status${album.isDone ? ' done' : ''}`;
-                status.textContent = album.isFinalized ? `Đã chốt · ${album.selectedCount} ảnh` : album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : (album.status || 'Đang chờ khách chọn');
+                status.textContent = album.checkReady ? `Đã chỉnh sửa · chờ kiểm tra` : album.isFinalized ? `Đã chốt · ${album.selectedCount} ảnh` : album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : (album.status || 'Đang chờ khách chọn');
                 row.insertBefore(status, row.lastElementChild); recent.appendChild(row);
             });
 
@@ -1048,6 +1053,7 @@
                             <button class="btn-danger btn-sync" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
+                            <button class="btn-success btn-check-upload" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
                     </div>
@@ -1152,6 +1158,21 @@
         }
         // ================= KẾT THÚC =================
 
+        async function uploadCheckForAlbum(folderId, button) {
+            const folderPath = await ipcRenderer.invoke('select-folder');
+            if (!folderPath) return;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ Đang tải CHECK…';
+            const result = await ipcRenderer.invoke('upload-check-to-drive', { folderId, folderPath });
+            button.disabled = false;
+            button.textContent = originalText;
+            if (result.success) {
+                alert(`Đã tải ${result.count} ảnh CHECK. Trang khách sẽ tự chuyển sang ảnh đã chỉnh sửa.`);
+                loadAlbumHistory();
+            } else alert(`Không thể tải ảnh CHECK: ${result.error}`);
+        }
+
         async function toggleStatus(folderId) {
             const span = document.getElementById(`status-${folderId}`);
             const newStatus = span.innerText.includes('chờ') ? 'Đã xong' : 'Đang chờ khách chọn';
@@ -1162,11 +1183,23 @@
         async function checkProgress(folderId, btn, silent = false) {
             if (!silent) btn.innerText = "⏳...";
             try {
-                const res = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const [res, settingsRes] = await Promise.all([
+                    fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`, { cache: 'no-store' }),
+                    fetch(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' })
+                ]);
                 const data = await res.json();
+                const settingsData = await settingsRes.json().catch(() => ({}));
                 if(data.success) { 
                     const count = Object.keys(data.liked_files).length;
-                    if (data.isFinalized) {
+                    const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
+                    if (checkReady) {
+                        btn.innerHTML = `✅ CHECK sẵn sàng · ${count} ảnh đã chọn`;
+                        btn.style.background = "#0ea5e9";
+                        btn.style.color = "#fff";
+                        btn.style.border = "none";
+                        const status = document.getElementById(`status-${folderId}`);
+                        if (status) { status.innerText = "Ảnh đã chỉnh sửa · chờ kiểm tra"; status.className = "album-badge done"; }
+                    } else if (data.isFinalized) {
                         btn.innerHTML = `🔒 ĐÃ CHỐT: ${count} tấm`;
                         btn.style.background = "#8b5cf6"; 
                         btn.style.color = "#fff";

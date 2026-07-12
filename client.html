@@ -222,6 +222,12 @@
         .lightbox-loading.hidden { display:none; }
         .image-lightbox { overscroll-behavior:contain; }
         .lightbox-image { user-select:none; -webkit-user-drag:none; }
+        .review-mode-bar { display:none; align-items:center; justify-content:center; gap:8px; flex-wrap:wrap; padding:8px; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
+        .review-mode-bar.visible { display:flex; }
+        .review-mode-btn { min-height:42px; padding:9px 14px; border:1px solid var(--border); border-radius:11px; background:transparent; color:var(--text-muted); font-weight:750; cursor:pointer; }
+        .review-mode-btn.active { background:linear-gradient(135deg,#7c8cff,#5867e8); color:#fff; border-color:transparent; box-shadow:0 8px 18px rgba(88,103,232,.24); }
+        .check-ready-banner { display:none; padding:12px 16px; border:1px solid rgba(59,217,160,.3); border-radius:14px; background:rgba(59,217,160,.1); color:#9bf2d1; text-align:center; font-size:13px; font-weight:700; }
+        .check-ready-banner.visible { display:block; }
         @media (max-width:560px) {
             body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
             .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -236,6 +242,11 @@
 <body>
     <div class="container">
         <div id="finalizedBanner" class="finalized-banner">ALBUM ĐÃ ĐƯỢC CHỐT - KHÔNG THỂ THAY ĐỔI</div>
+        <div id="checkReadyBanner" class="check-ready-banner">✅ Ảnh đã chỉnh sửa xong. Bạn đang xem bản CHECK để kiểm tra.</div>
+        <div id="reviewModeBar" class="review-mode-bar">
+            <button id="checkModeBtn" type="button" class="review-mode-btn">✨ Ảnh đã chỉnh sửa</button>
+            <button id="originalModeBtn" type="button" class="review-mode-btn">🖼️ Ảnh gốc đã chọn</button>
+        </div>
 
         <div class="panel header-panel">
             <div></div>
@@ -328,10 +339,16 @@
 
         const state = {
             images: [],
+            originalImages: [],
+            checkImages: [],
             currentIndex: 0,
             isLoading: false,
             maxSelections: 0,
             isFinalized: false,
+            viewMode: 'original',
+            checkReady: false,
+            checkFolderId: null,
+            checkUpdatedAt: null,
             aiGroups: []
         };
 
@@ -357,6 +374,10 @@
             nextBtn: document.getElementById('nextBtn'),
             viewerShell: document.getElementById('viewerShell'),
             finalizedBanner: document.getElementById('finalizedBanner'),
+            checkReadyBanner: document.getElementById('checkReadyBanner'),
+            reviewModeBar: document.getElementById('reviewModeBar'),
+            checkModeBtn: document.getElementById('checkModeBtn'),
+            originalModeBtn: document.getElementById('originalModeBtn'),
             imageLightbox: document.getElementById('imageLightbox'),
             lightboxImage: document.getElementById('lightboxImage'),
             lightboxLoading: document.getElementById('lightboxLoading'),
@@ -459,7 +480,19 @@
         }
 
         function selectedCount() {
-            return state.images.filter(item => item.selected).length;
+            return state.originalImages.filter(item => item.selected).length;
+        }
+
+        function setViewMode(mode, preserveFileName = '') {
+            const nextMode = mode === 'check' && state.checkReady ? 'check' : 'original';
+            const currentName = preserveFileName || getCurrentImage()?.fullName || '';
+            state.viewMode = nextMode;
+            state.images = nextMode === 'check' ? state.checkImages : state.originalImages;
+            const nextIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
+            state.currentIndex = nextIndex >= 0 ? nextIndex : 0;
+            if (nextMode === 'original') buildAiGroups();
+            else state.aiGroups = [];
+            render();
         }
 
         // MVP thử nghiệm: gom các tên file có cùng tiền tố và số thứ tự liên
@@ -489,7 +522,7 @@
         }
 
         function renderAiPicks() {
-            if (state.isFinalized || !state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
+            if (state.viewMode !== 'original' || state.isFinalized || !state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
             elements.aiPicksPanel.style.display = '';
             elements.aiPicksCount.textContent = `${state.aiGroups.length} cụm · thử nghiệm`;
             elements.aiPicksGrid.innerHTML = '';
@@ -540,6 +573,8 @@
             }
 
             const current = getCurrentImage();
+            const isCheckView = state.viewMode === 'check';
+            const canEditSelection = !isCheckView && !state.isFinalized;
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
             if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
                 elements.viewerShell.classList.add('loading');
@@ -554,10 +589,14 @@
             elements.selectedCountLabel.textContent = state.maxSelections > 0
                 ? `${currentSelectedCount}/${state.maxSelections}`
                 : currentSelectedCount;
-            elements.photoStatusBadge.textContent = current.selected ? 'Đã chọn' : 'Chưa chọn';
+            elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
+            elements.reviewModeBar.classList.toggle('visible', state.checkReady);
+            elements.checkModeBtn.classList.toggle('active', isCheckView);
+            elements.originalModeBtn.classList.toggle('active', !isCheckView);
+            elements.checkReadyBanner.classList.toggle('visible', state.checkReady && isCheckView);
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
             elements.selectBtn.classList.toggle('btn-outline', !current.selected);
@@ -566,15 +605,15 @@
             elements.lightboxSelectBtn.style.background = current.selected ? 'rgba(22,163,74,.92)' : 'rgba(15,23,42,.75)';
             elements.noteInput.value = current.note || '';
             [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
-                .forEach(element => { element.disabled = state.isFinalized; });
-            elements.noteSection.style.display = state.isFinalized ? 'none' : 'block';
-            elements.imageActionRow.style.display = state.isFinalized ? 'none' : '';
-            elements.saveNoteBtn.style.display = state.isFinalized ? 'none' : '';
-            elements.confirmAllBtn.style.display = state.isFinalized ? 'none' : '';
-            elements.lightboxSelectBtn.disabled = state.isFinalized;
-            elements.lightboxNoteBtn.disabled = state.isFinalized;
-            elements.lightboxSelectBtn.style.display = state.isFinalized ? 'none' : '';
-            elements.lightboxNoteBtn.style.display = state.isFinalized ? 'none' : '';
+                .forEach(element => { element.disabled = !canEditSelection; });
+            elements.noteSection.style.display = canEditSelection ? 'block' : 'none';
+            elements.imageActionRow.style.display = canEditSelection ? '' : 'none';
+            elements.saveNoteBtn.style.display = canEditSelection ? '' : 'none';
+            elements.confirmAllBtn.style.display = canEditSelection ? '' : 'none';
+            elements.lightboxSelectBtn.disabled = !canEditSelection;
+            elements.lightboxNoteBtn.disabled = !canEditSelection;
+            elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
+            elements.lightboxNoteBtn.style.display = canEditSelection ? '' : 'none';
 
             elements.thumbStrip.innerHTML = '';
             state.images.map((img, index) => ({ img, index }))
@@ -614,7 +653,7 @@
         }
 
         function renderSelectionList() {
-            const selectedImages = state.images.filter(item => item.selected);
+            const selectedImages = state.originalImages.filter(item => item.selected);
             elements.selectionList.innerHTML = '';
 
             if (!selectedImages.length) {
@@ -631,7 +670,10 @@
                 const info = document.createElement('div');
                 info.innerHTML = `<strong>${escapeHtml(item.shortName || item.fullName || 'Ảnh')}</strong><span>${escapeHtml(item.note || 'Không có ghi chú')}</span>`;
                 card.append(thumb, info);
-                card.addEventListener('click', () => { const index = state.images.indexOf(item); if (index >= 0) { state.currentIndex = index; render(); openLightbox(); } });
+                card.addEventListener('click', () => {
+                    setViewMode('original', item.fullName);
+                    openLightbox();
+                });
                 elements.selectionList.appendChild(card);
             });
         }
@@ -888,17 +930,21 @@
                 else elements.finalizedBanner.style.display = 'none';
                 if (state.isFinalized) showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
-
-                state.images = (data.files || []).map(file => ({
+                const mapImage = file => ({
                     ...file,
                     fullName: file.fullName || file.shortName || '',
                     shortName: file.shortName || file.fullName || '',
                     selected: false,
                     note: ''
-                }));
+                });
+                state.originalImages = (data.files || []).map(mapImage);
+                state.checkImages = (data.checkFiles || []).map(mapImage);
+                state.checkFolderId = data.settings?.checkFolderId || null;
+                state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
+                state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
 
                 const likedList = data.liked_list || {};
-                state.images.forEach(item => {
+                [...state.originalImages, ...state.checkImages].forEach(item => {
                     const savedData = likedList[item.fullName];
                     if (savedData && typeof savedData === 'object') {
                         item.selected = !!savedData.isLiked;
@@ -906,11 +952,14 @@
                     }
                 });
 
+                state.viewMode = state.checkReady ? 'check' : 'original';
+                state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
                 state.currentIndex = 0;
                 buildAiGroups();
+                if (state.viewMode === 'check') state.aiGroups = [];
                 render();
                 runAiFaceScoring();
-                setMessage('✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+                setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
                 setMessage(`❌ ${error.message || 'Không thể kết nối tới Server.'}`, 'error');
             }
@@ -922,8 +971,12 @@
                 const data = await readApiJson(response, 'Không thể đồng bộ cài đặt album');
                 const nextLimit = Number(data.settings?.maxSelections) || 0;
                 const nextFinalized = typeof data.isFinalized === 'boolean' ? data.isFinalized : state.isFinalized;
+                const nextCheckFolderId = data.settings?.checkFolderId || null;
+                const nextCheckReady = Boolean(data.settings?.checkReady && nextCheckFolderId);
+                const nextCheckUpdatedAt = data.settings?.checkUpdatedAt || null;
                 const limitChanged = nextLimit !== state.maxSelections;
                 const statusChanged = nextFinalized !== state.isFinalized;
+                const checkChanged = nextCheckReady && (!state.checkReady || nextCheckUpdatedAt !== state.checkUpdatedAt);
                 if (limitChanged || statusChanged) {
                     state.maxSelections = nextLimit;
                     state.isFinalized = nextFinalized;
@@ -934,6 +987,12 @@
                     } else if (limitChanged) {
                         setMessage(nextLimit > 0 ? `ℹ️ Giới hạn mới: ${nextLimit} ảnh. Các ảnh đã chọn vẫn được giữ nguyên.` : 'ℹ️ Album hiện không giới hạn số ảnh chọn.', 'success');
                     }
+                }
+                if (checkChanged) {
+                    state.checkFolderId = nextCheckFolderId;
+                    state.checkUpdatedAt = nextCheckUpdatedAt;
+                    await loadAlbum();
+                    setMessage('✨ Ảnh chỉnh sửa đã sẵn sàng. Đang mở bản CHECK để bạn kiểm tra.', 'success');
                 }
             } catch (error) {
                 // Không làm mất trạng thái hiện tại khi mạng chập chờn; lần
@@ -1013,6 +1072,8 @@
 
         elements.prevBtn.addEventListener('click', prevImage);
         elements.nextBtn.addEventListener('click', nextImage);
+        elements.checkModeBtn.addEventListener('click', () => setViewMode('check'));
+        elements.originalModeBtn.addEventListener('click', () => setViewMode('original'));
         function jumpToSection(section) {
             section.scrollIntoView({ behavior: 'smooth', block: 'start' });
             window.setTimeout(() => section.focus({ preventScroll: true }), 350);

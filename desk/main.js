@@ -897,6 +897,86 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
     finally { uploadInProgress = false; }
 });
 
+ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath }) => {
+    const history = getAlbumHistory();
+    const album = history.find(item => item.id === folderId);
+    if (!album) return { success: false, error: 'Không tìm thấy album trong thư viện.' };
+    if (!folderPath || !fs.existsSync(folderPath)) return { success: false, error: 'Thư mục CHECK không tồn tại.' };
+
+    const imageFiles = (await fs.promises.readdir(folderPath)).filter(file => /\.(jpe?g|png|webp)$/i.test(file));
+    if (!imageFiles.length) return { success: false, error: 'Thư mục CHECK không có ảnh hợp lệ.' };
+
+    try {
+        uploadInProgress = true;
+        mainWindow.webContents.send('check-upload-progress', { progress: 0, currentFile: 'Đang kết nối Google Drive…' });
+        const auth = await authenticateCasi(true);
+        const drive = google.drive({ version: 'v3', auth });
+        let checkFolderId = album.checkFolderId || null;
+
+        if (!checkFolderId) {
+            const existing = await drive.files.list({
+                q: `'${folderId}' in parents and name = 'CHECK' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+                fields: 'files(id, name)', pageSize: 10
+            });
+            checkFolderId = existing.data.files?.[0]?.id || null;
+        }
+        if (!checkFolderId) {
+            const created = await drive.files.create({
+                resource: { name: 'CHECK', mimeType: 'application/vnd.google-apps.folder', parents: [folderId] },
+                fields: 'id'
+            });
+            checkFolderId = created.data.id;
+        }
+
+        const existingFiles = await drive.files.list({
+            q: `'${checkFolderId}' in parents and trashed = false`,
+            fields: 'files(name)', pageSize: 1000
+        });
+        const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
+        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        let completed = imageFiles.length - filesToUpload.length;
+        let nextIndex = 0;
+        let uploadError = null;
+
+        const uploadWorker = async () => {
+            while (!uploadError) {
+                const index = nextIndex++;
+                if (index >= filesToUpload.length) return;
+                const fileName = filesToUpload[index];
+                try {
+                    const ext = path.extname(fileName).toLowerCase();
+                    const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+                    await drive.files.create({
+                        resource: { name: fileName, parents: [checkFolderId] },
+                        media: { mimeType, body: fs.createReadStream(path.join(folderPath, fileName)) },
+                        fields: 'id'
+                    });
+                    completed++;
+                    mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})` });
+                } catch (error) { uploadError = error; }
+            }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, Math.max(1, filesToUpload.length)) }, uploadWorker));
+        if (uploadError) throw uploadError;
+        try { await drive.permissions.create({ fileId: checkFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
+
+        await postServerJson(`/api/album/${folderId}/check`, { checkFolderId, checkImageCount: imageFiles.length }, serverAuthHeaders());
+        const index = history.findIndex(item => item.id === folderId);
+        const checkData = { checkFolderId, checkLocalPath: folderPath, checkImageCount: imageFiles.length, checkStatus: 'ready', checkUpdatedAt: new Date().toISOString(), status: 'Ảnh đã chỉnh sửa · chờ khách kiểm tra' };
+        if (index !== -1) {
+            Object.assign(history[index], checkData);
+            fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
+            if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update(checkData).catch(error => console.log(error));
+        }
+        mainWindow.webContents.send('check-upload-progress', { progress: 100, currentFile: 'Đã hoàn tất thư mục CHECK.' });
+        return { success: true, count: imageFiles.length, checkFolderId };
+    } catch (error) {
+        logDriveDiagnostic('upload-check-to-drive', error);
+        return { success: false, error: friendlyDriveError(error) };
+    } finally { uploadInProgress = false; }
+});
+
 ipcMain.handle('auto-sync-raw', async (event, { folderId, likedList }) => {
     if (!likedList || Object.keys(likedList).length === 0) return { success: false, msg: "Khách chưa chọn ảnh nào." };
     const history = getAlbumHistory();

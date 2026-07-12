@@ -37,6 +37,7 @@ const DB_PATH = path.join(__dirname, 'database.json');
 
 let likedImagesDatabase = {};
 let albumCacheDatabase = {}; 
+let albumCheckCacheDatabase = {};
 let albumSettingsDatabase = {}; 
 let bannedAlbums = [];
 let finalizedDatabase = {}; 
@@ -296,9 +297,27 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false },
         isFinalized: !!finalizedDatabase[folderId]
     });
+});
+
+app.post('/api/album/:folderId/check', async (req, res) => {
+    await loadPersistentState();
+    const { folderId } = req.params;
+    const checkFolderId = typeof req.body?.checkFolderId === 'string' ? req.body.checkFolderId.trim() : '';
+    if (!checkFolderId) return res.status(400).json({ success: false, error: 'Thiếu mã thư mục CHECK.' });
+    const current = albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 };
+    albumSettingsDatabase[folderId] = {
+        ...current,
+        checkFolderId,
+        checkReady: true,
+        checkUpdatedAt: new Date().toISOString(),
+        checkImageCount: Number(req.body?.checkImageCount) || 0
+    };
+    delete albumCheckCacheDatabase[folderId];
+    await persistState();
+    res.json({ success: true, checkReady: true, checkFolderId });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
@@ -314,6 +333,7 @@ app.delete('/api/album/:folderId', async (req, res) => {
     const { folderId } = req.params;
     if (!bannedAlbums.includes(folderId)) bannedAlbums.push(folderId);
     delete albumCacheDatabase[folderId];
+    delete albumCheckCacheDatabase[folderId];
     delete likedImagesDatabase[folderId];
     delete albumSettingsDatabase[folderId];
     delete finalizedDatabase[folderId];
@@ -322,7 +342,7 @@ app.delete('/api/album/:folderId', async (req, res) => {
 });
 
 app.delete('/api/album/flush-all/data', async (req, res) => {
-    albumCacheDatabase = {}; likedImagesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
+    albumCacheDatabase = {}; albumCheckCacheDatabase = {}; likedImagesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
     await persistState();
     res.json({ success: true, message: "All data cleared" });
 });
@@ -334,11 +354,12 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0 };
+        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false };
         const isFinalized = !!finalizedDatabase[folderId];
+        const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 
-        if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0) {
-            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+        if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
+            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
         }
 
         const albumOAuth = await getAlbumDriveAuth(folderId);
@@ -355,17 +376,10 @@ app.get('/api/album/:folderId', async (req, res) => {
             drive = google.drive({ version: 'v3', auth: oauth2Client });
         }
 
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and trashed = false`,
-            includeItemsFromAllDrives: true, supportsAllDrives: true,
-            fields: 'files(id, name, webContentLink, thumbnailLink)',
-            pageSize: 500
-        });
-
         // Drive tạo thumbnail theo kích thước được yêu cầu, nên trang khách chỉ tải
         // đúng số pixel cần hiển thị thay vì tải ảnh gốc dung lượng lớn.
         const driveThumbnail = (fileId, width) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w${width}`;
-        const files = (response.data.files || []).map(file => {
+        const toClientFile = file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
             return {
                 id: file.id,
@@ -376,10 +390,24 @@ app.get('/api/album/:folderId', async (req, res) => {
                 lightbox: driveThumbnail(file.id, 2200),
                 originalUrl: file.webContentLink
             };
-        });
+        };
+        const listDriveImages = async parentId => {
+            const response = await drive.files.list({
+                q: `'${parentId}' in parents and trashed = false`,
+                includeItemsFromAllDrives: true, supportsAllDrives: true,
+                fields: 'files(id, name, webContentLink, thumbnailLink)',
+                pageSize: 500
+            });
+            return (response.data.files || [])
+                .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
+                .map(toClientFile);
+        };
+        const files = await listDriveImages(folderId);
+        const checkFiles = hasCheckFolder ? await listDriveImages(currentSettings.checkFolderId) : [];
 
         albumCacheDatabase[folderId] = files;
-        res.json({ success: true, folderId, files, liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+        if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
+        res.json({ success: true, folderId, files, checkFiles, liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
