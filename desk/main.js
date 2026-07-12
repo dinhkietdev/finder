@@ -138,14 +138,15 @@ ipcMain.handle('auth-drive-token-status', async () => {
     } catch (error) { return { success: true, found: false, error: error.message }; }
 });
 ipcMain.handle('auth-ensure-drive-access', async () => {
-    const check = async forceReauth => {
-        const auth = await authenticateCasi(true, forceReauth);
+    // This IPC action is invoked only by the explicit "Đăng nhập lại Google"
+    // button. Automatic folder browsing/upload never reaches OAuth here.
+    const check = async () => {
+        const auth = await authenticateCasi(true, true);
         const drive = google.drive({ version: 'v3', auth });
         await drive.files.list({ q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false", fields: 'files(id)', pageSize: 1 });
     };
     try {
-        try { await check(false); }
-        catch (error) { if (!isGoogleTokenError(error)) throw error; await check(true); }
+        await check();
         return { success: true };
     } catch (error) { return { success: false, error: error.message }; }
 });
@@ -551,6 +552,13 @@ function isGoogleTokenError(error) {
     return /invalid_(request|grant|client)|unauthorized_client|invalid credentials|unauthenticated|401/i.test(String(error?.message || error));
 }
 
+function friendlyDriveError(error) {
+    if (String(error?.message || error) === 'DRIVE_REAUTH_REQUIRED') {
+        return 'Phiên Google Drive đã hết hạn. Hãy bấm “Đăng nhập lại Google Drive” rồi thử lại.';
+    }
+    return error?.message || String(error);
+}
+
 // Local fallback for testing: the legacy desktop OAuth flow is kept out of
 // packaged builds, but lets us verify the folder picker without depending on
 // the Vercel token session. The credentials file is intentionally ignored by
@@ -647,7 +655,14 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
             server.on('error', error => reject(new Error(`Không thể mở cổng xác thực Google (cổng ${PORT}): ${error.message}`)));
             server.listen(PORT);
         };
-        useStoredToken().then(reused => { if (reused) return resolve(oauth2Client); return getServerJson('/api/auth/drive-token', serverAuthHeaders()); }).then(session => {
+        useStoredToken().then(reused => {
+            if (reused) return resolve(oauth2Client);
+            // A token file means this is an existing machine. Do not open a
+            // browser automatically when its refresh fails; require the user
+            // to press the explicit reconnect button instead.
+            if (fs.existsSync(LOCAL_TOKEN_PATH) && !forceReauth) throw new Error('DRIVE_REAUTH_REQUIRED');
+            return getServerJson('/api/auth/drive-token', serverAuthHeaders());
+        }).then(session => {
             if (!forceReauth && session.tokens && session.clientId) {
                 const grantedScopes = (session.tokens.scope || '').split(' ');
                 if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
@@ -659,7 +674,10 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                 }
             }
             connect().catch(reject);
-        }).catch(() => connect().catch(reject));
+        }).catch(error => {
+            if (error?.message === 'DRIVE_REAUTH_REQUIRED') return reject(error);
+            connect().catch(reject);
+        });
     }).finally(() => { driveAuthPromise = null; });
     return driveAuthPromise;
 }
@@ -677,15 +695,10 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
                 supportsAllDrives: true, includeItemsFromAllDrives: true
             });
         };
-        let response;
-        try { response = await loadFolders(false); }
-        catch (error) {
-            if (!isGoogleTokenError(error)) throw error;
-            response = await loadFolders(true);
-        }
+        const response = await loadFolders(false);
         return { success: true, folders: response.data.files || [] };
     } catch (error) {
-        return { success: false, error: error.message };
+        return { success: false, error: friendlyDriveError(error) };
     }
 });
 
@@ -793,7 +806,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         });
 
         return { success: true, folderLink: publicLink };
-    } catch (error) { return { success: false, error: error.message, resumeData: resumableUpload }; }
+    } catch (error) { return { success: false, error: friendlyDriveError(error), resumeData: resumableUpload }; }
     finally { uploadInProgress = false; }
 });
 
