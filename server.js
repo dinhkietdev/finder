@@ -36,6 +36,7 @@ const TOKEN_PATH = path.join(__dirname, 'session-token.json');
 const DB_PATH = path.join(__dirname, 'database.json'); 
 
 let likedImagesDatabase = {};
+let checkNotesDatabase = {};
 let albumCacheDatabase = {}; 
 let albumCheckCacheDatabase = {};
 let albumSettingsDatabase = {}; 
@@ -64,6 +65,7 @@ if (fs.existsSync(DB_PATH)) {
     try { 
         const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); 
         likedImagesDatabase = db.likedImagesDatabase || {};
+        checkNotesDatabase = db.checkNotesDatabase || {};
         albumSettingsDatabase = db.albumSettingsDatabase || {};
         bannedAlbums = db.bannedAlbums || [];
         finalizedDatabase = db.finalizedDatabase || {};
@@ -71,7 +73,7 @@ if (fs.existsSync(DB_PATH)) {
 }
 
 function saveDB() {
-    try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
+    try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, checkNotesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
 }
 
 async function loadPersistentState() {
@@ -80,6 +82,7 @@ async function loadPersistentState() {
     const state = snapshot.val();
     if (!state) return;
     likedImagesDatabase = deserializeLikedImages(state.likedImagesDatabase || {});
+    checkNotesDatabase = deserializeLikedImages(state.checkNotesDatabase || {});
     albumSettingsDatabase = state.albumSettingsDatabase || {};
     bannedAlbums = state.bannedAlbums || [];
     finalizedDatabase = state.finalizedDatabase || {};
@@ -116,6 +119,7 @@ async function persistState() {
     if (firebaseDb) {
         await firebaseDb.ref('finderPictureState').set({
             likedImagesDatabase: serializeLikedImages(likedImagesDatabase),
+            checkNotesDatabase: serializeLikedImages(checkNotesDatabase),
             albumSettingsDatabase,
             bannedAlbums,
             finalizedDatabase
@@ -192,6 +196,30 @@ app.get('/client.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'client.html'));
 });
 
+// Link chia sẻ ngắn gọn, giữ nguyên URL cũ để các album đã gửi trước đây không
+// bị hỏng. Client sẽ tự resolve slug thành folderId mà không làm lộ mã Drive trên
+// thanh địa chỉ.
+function slugifyAlbumName(value = '') {
+    return String(value)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/đ/g, 'd')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64) || 'album';
+}
+
+app.get('/api/album-by-slug/:slug', async (req, res) => {
+    await loadPersistentState();
+    const requested = slugifyAlbumName(req.params.slug);
+    const match = Object.entries(albumSettingsDatabase).find(([, settings]) => settings?.publicSlug === requested);
+    if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
+    res.json({ success: true, folderId: match[0], settings: match[1] });
+});
+
+app.get('/a/:slug', (req, res) => {
+    res.sendFile(path.join(__dirname, 'client.html'));
+});
+
 app.post('/api/auth/drive-exchange', async (req, res) => {
     const { code, state } = req.body || {};
     if (!code || !driveOAuthStates.has(state) || driveOAuthStates.get(state) < Date.now()) return res.status(400).json({ error: 'Yêu cầu OAuth không hợp lệ hoặc đã hết hạn.' });
@@ -265,7 +293,7 @@ app.post('/api/auth/save-token', (req, res) => {
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    const { isEnabled, text, maxSelections, reopenSelection } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, studioName, studioLogo, accentColor } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
     const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
@@ -274,12 +302,22 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         albumSettingsDatabase[folderId] = { 
             isEnabled: isEnabled !== undefined ? isEnabled : true, 
             text: text || "FINDERPICTURE STUDIO", 
-            maxSelections: nextLimit
+            maxSelections: nextLimit,
+            publicSlug: publicSlug || `album-${String(folderId).slice(-6).toLowerCase()}`,
+            clientName: clientName || text || 'Album khách hàng',
+            studioName: studioName || 'Finder',
+            studioLogo: studioLogo || '',
+            accentColor: accentColor || '#7c8cff'
         };
     } else {
         if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
+        if (publicSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
+        if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
+        if (studioName !== undefined) albumSettingsDatabase[folderId].studioName = studioName;
+        if (studioLogo !== undefined) albumSettingsDatabase[folderId].studioLogo = studioLogo;
+        if (accentColor !== undefined) albumSettingsDatabase[folderId].accentColor = accentColor;
     }
     // Khi admin thay đổi hạn mức, khách cần được mở lại album để bổ sung
     // lựa chọn. Dữ liệu likedImagesDatabase vẫn giữ nguyên, chỉ bỏ trạng thái
@@ -289,7 +327,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // reopenSelection) reopen the album. Startup/background sync must not.
     if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) delete finalizedDatabase[folderId];
     await persistState();
-    res.json({ success: true });
+    res.json({ success: true, settings: albumSettingsDatabase[folderId] });
 });
 
 app.get('/api/album/:folderId/settings', async (req, res) => {
@@ -297,7 +335,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
         isFinalized: !!finalizedDatabase[folderId]
     });
 });
@@ -335,6 +373,7 @@ app.delete('/api/album/:folderId', async (req, res) => {
     delete albumCacheDatabase[folderId];
     delete albumCheckCacheDatabase[folderId];
     delete likedImagesDatabase[folderId];
+    delete checkNotesDatabase[folderId];
     delete albumSettingsDatabase[folderId];
     delete finalizedDatabase[folderId];
     await persistState();
@@ -342,7 +381,7 @@ app.delete('/api/album/:folderId', async (req, res) => {
 });
 
 app.delete('/api/album/flush-all/data', async (req, res) => {
-    albumCacheDatabase = {}; albumCheckCacheDatabase = {}; likedImagesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
+    albumCacheDatabase = {}; albumCheckCacheDatabase = {}; likedImagesDatabase = {}; checkNotesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
     await persistState();
     res.json({ success: true, message: "All data cleared" });
 });
@@ -354,12 +393,12 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false };
+        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
         const isFinalized = !!finalizedDatabase[folderId];
         const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
-            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
         }
 
         const albumOAuth = await getAlbumDriveAuth(folderId);
@@ -387,7 +426,9 @@ app.get('/api/album/:folderId', async (req, res) => {
                 shortName: nameWithoutExt,
                 thumbnail: driveThumbnail(file.id, 320),
                 preview: driveThumbnail(file.id, 1440),
-                lightbox: driveThumbnail(file.id, 2200),
+                // Lightbox dùng thumbnail lớn của Drive để cân bằng độ nét và
+                // tốc độ tải. Không tải file gốc dung lượng lớn khi khách mở ảnh.
+                lightbox: driveThumbnail(file.id, 2000),
                 originalUrl: file.webContentLink
             };
         };
@@ -407,7 +448,7 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
-        res.json({ success: true, folderId, files, checkFiles, liked_list: currentAlbumLikes, settings: currentSettings, isFinalized });
+        res.json({ success: true, folderId, files, checkFiles, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -443,6 +484,19 @@ app.post('/api/album/:folderId/toggle-like', async (req, res) => {
     likedImagesDatabase[folderId][fileName] = { isLiked, note: note || "" };
     await persistState();
     res.json({ success: true });
+});
+
+// Ghi chú hậu kỳ được tách khỏi thao tác chọn ảnh, vì album đã chốt vẫn phải
+// cho khách gửi yêu cầu chỉnh sửa thêm mà không mở lại danh sách lựa chọn.
+app.post('/api/album/:folderId/check-note', async (req, res) => {
+    await loadPersistentState();
+    const { folderId } = req.params;
+    const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim() : '';
+    if (!fileName) return res.status(400).json({ success: false, error: 'Tên ảnh không hợp lệ.' });
+    if (!checkNotesDatabase[folderId]) checkNotesDatabase[folderId] = {};
+    checkNotesDatabase[folderId][fileName] = String(req.body?.note || '').trim();
+    await persistState();
+    res.json({ success: true, note: checkNotesDatabase[folderId][fileName] });
 });
 
 app.get('/api/album/:folderId/liked/all', async (req, res) => {

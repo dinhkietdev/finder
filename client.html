@@ -87,7 +87,17 @@
         .lightbox-image { max-width:100%; max-height:100%; object-fit:contain; transform-origin:center; transition:transform .16s ease-out; will-change:transform; }
         .lightbox-image.zoomed { cursor:grab; }
         .lightbox-image.panning { cursor:grabbing; transition:none; }
-        .lightbox-toolbar { position:absolute; top:16px; right:16px; display:flex; gap:8px; z-index:2; }
+        .compare-stage { display:none; position:relative; width:min(96vw,1400px); height:min(86vh,900px); overflow:hidden; background:#05070b; touch-action:none; }
+        .compare-stage.visible { display:block; }
+        .compare-image { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; }
+        .compare-clip { position:absolute; inset:0 auto 0 0; width:50%; overflow:hidden; }
+        .compare-clip .compare-image { width:var(--compare-stage-width,100%); height:var(--compare-stage-height,100%); min-width:var(--compare-stage-width,100%); max-width:none; }
+        .compare-divider { position:absolute; top:0; bottom:0; left:50%; width:2px; background:#fff; box-shadow:0 0 0 1px rgba(0,0,0,.35),0 0 18px rgba(255,255,255,.65); pointer-events:none; }
+        .compare-divider span { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:34px; height:34px; display:grid; place-items:center; border-radius:50%; background:#fff; color:#111827; font-weight:900; box-shadow:0 4px 15px rgba(0,0,0,.35); }
+        .compare-range { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:ew-resize; z-index:3; margin:0; }
+        .compare-label { position:absolute; top:14px; padding:6px 9px; border-radius:999px; background:rgba(4,8,15,.68); color:#fff; font-size:11px; font-weight:800; pointer-events:none; }
+        .compare-label-original { left:14px; } .compare-label-check { right:14px; }
+        .lightbox-toolbar { position:absolute; bottom:max(18px,env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); display:flex; gap:8px; z-index:4; }
         .lightbox-toolbar button { min-width:42px; height:42px; padding:0 12px; border:1px solid rgba(255,255,255,.35); border-radius:999px; background:rgba(15,23,42,.75); color:#fff; font-size:14px; font-weight:700; cursor:pointer; }
         .zoom-tip { position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(15,23,42,.78); color:#e2e8f0; border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
         .quick-note-modal { display:none; position:fixed; inset:0; z-index:1100; background:rgba(0,0,0,.72); padding:20px; align-items:center; justify-content:center; }
@@ -100,7 +110,15 @@
         .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
         .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
         .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
-        .robot-button img { width:100%; height:100%; object-fit:contain; border-radius:50%; image-rendering:auto; display:block; }
+        .robot-button { animation:robotFloat 3.6s ease-in-out infinite, robotGlow 2.8s ease-in-out infinite; }
+        .robot-avatar { width:100%; height:100%; display:block; padding:10px; }
+        .robot-avatar .robot-body { transform-origin:50% 80%; animation:robotWave 2.8s ease-in-out infinite; }
+        .robot-message { animation:robotMessageIn .28s ease-out both; }
+        @keyframes robotFloat { 0%,100% { transform:translateY(0) rotate(-1deg); } 50% { transform:translateY(-7px) rotate(1deg); } }
+        @keyframes robotGlow { 0%,100% { box-shadow:0 10px 24px rgba(37,99,235,.35); } 50% { box-shadow:0 14px 34px rgba(124,140,255,.65); } }
+        @keyframes robotWave { 0%,72%,100% { transform:rotate(0); } 78% { transform:rotate(-4deg); } 84% { transform:rotate(4deg); } 90% { transform:rotate(-2deg); } }
+        @keyframes robotMessageIn { from { opacity:0; transform:translateY(7px) scale(.96); } to { opacity:1; transform:translateY(0) scale(1); } }
+        @media (prefers-reduced-motion:reduce) { .robot-button, .robot-avatar .robot-body, .robot-message { animation:none; } }
 
         /* Finder client visual system — quiet, editorial, touch-first */
         :root { --bg-dark:#070b14; --bg-card:rgba(16,22,35,.88); --bg-soft:#182235; --text-main:#f7f9fc; --text-muted:#9aa9c0; --accent:#7c8cff; --accent-2:#3bd9a0; --border:rgba(181,198,224,.14); --surface:rgba(255,255,255,.055); }
@@ -152,7 +170,7 @@
         .thumb-btn.active { border-color:#9da8ff; box-shadow:0 0 0 3px rgba(124,140,255,.22); }
         .thumb-btn.selected::after { top:6px; right:6px; margin:0; box-shadow:0 2px 8px rgba(0,0,0,.3); }
         .image-lightbox { background:rgba(3,6,12,.97); }
-        .lightbox-toolbar { top:max(14px,env(safe-area-inset-top)); right:14px; }
+        .lightbox-toolbar { bottom:max(18px,env(safe-area-inset-bottom)); }
         .lightbox-toolbar button { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); border-color:rgba(255,255,255,.18); }
         .zoom-tip { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); }
 
@@ -191,6 +209,7 @@
             .photo-name { max-width:58vw; }
             .hint { font-size:12px; }
             .action-row { position:sticky; bottom:8px; z-index:8; padding:9px; margin:8px -2px 0; border:1px solid var(--border); border-radius:16px; background:rgba(10,15,26,.88); backdrop-filter:blur(15px); }
+            .action-row { justify-content:center; }
             .action-row .btn { min-width:0; }
             .note-box { min-height:82px; }
             .gallery-panel { padding:13px 10px 16px; }
@@ -209,6 +228,10 @@
         .gallery-panel { overflow:hidden; }
         .gallery-heading { position:sticky; top:0; z-index:3; padding:5px 2px 12px; background:linear-gradient(var(--bg-card) 72%,transparent); }
         .gallery-heading span { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
+        .gallery-filters { display:flex; gap:7px; overflow:auto; padding:0 2px 10px; scrollbar-width:none; }
+        .gallery-filters::-webkit-scrollbar { display:none; }
+        .gallery-filter-btn { flex:none; min-height:34px; padding:7px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-muted); font-size:11px; font-weight:800; cursor:pointer; }
+        .gallery-filter-btn.active { background:rgba(124,140,255,.18); color:#dbe5ff; border-color:rgba(124,140,255,.65); }
         .thumb-btn { content-visibility:auto; contain-intrinsic-size:92px; }
         .thumb-btn img { opacity:0; transition:opacity .22s ease, transform .3s ease; }
         .thumb-btn img.is-ready { opacity:1; }
@@ -234,8 +257,35 @@
             .thumb-btn { min-height:0; contain-intrinsic-size:74px; }
             .selection-list { scroll-snap-type:y proximity; }
             .selection-item { scroll-snap-align:start; }
-            .lightbox-toolbar { left:12px; right:12px; justify-content:flex-end; }
+            .lightbox-toolbar { left:50%; right:auto; justify-content:center; }
             .lightbox-toolbar button { min-width:44px; min-height:44px; }
+        }
+
+        /* Album landing/branding layer */
+        .brand-identity { display:flex; align-items:center; gap:12px; min-width:0; }
+        .brand-logo { width:48px; height:48px; border-radius:15px; display:grid; place-items:center; overflow:hidden; background:linear-gradient(135deg,#7c8cff,#3bd9a0); color:#fff; font-weight:900; font-size:20px; box-shadow:0 8px 22px rgba(59,217,160,.18); }
+        .brand-logo img { width:100%; height:100%; object-fit:cover; display:block; }
+        .brand-studio { color:var(--text-muted); font-size:11px; letter-spacing:.08em; text-transform:uppercase; font-weight:800; }
+        .header-tools { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+        .share-actions { display:flex; gap:7px; }
+        .share-actions button { min-height:34px; padding:7px 10px; border-radius:10px; border:1px solid var(--border); color:var(--text-main); background:var(--surface); cursor:pointer; font-size:12px; font-weight:750; }
+        .share-actions button:hover { border-color:var(--accent); }
+        .album-status-pill { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; background:rgba(59,217,160,.12); color:#9bf2d1; border:1px solid rgba(59,217,160,.25); font-size:11px; font-weight:800; }
+        .qr-modal { display:none; position:fixed; inset:0; z-index:1200; background:rgba(0,0,0,.7); align-items:center; justify-content:center; padding:20px; }
+        .qr-modal.open { display:flex; }
+        .qr-card { width:min(330px,100%); padding:22px; border-radius:20px; text-align:center; background:#fff; color:#0f172a; box-shadow:0 22px 70px rgba(0,0,0,.4); }
+        .qr-card img { width:210px; height:210px; margin:14px auto; display:block; border-radius:12px; }
+        .qr-card button { min-height:42px; padding:9px 18px; border:0; border-radius:11px; background:#0f172a; color:#fff; font-weight:800; cursor:pointer; }
+        .download-selected { width:100%; margin-top:2px; }
+        @media (max-width:700px) {
+            .header-panel { grid-template-columns:1fr; gap:12px; }
+            .brand-identity { justify-self:start; }
+            .intro { order:-1; }
+            .header-tools { align-items:stretch; }
+            .share-actions { justify-content:stretch; }
+            .share-actions button { flex:1; }
+            .stats { justify-self:stretch; }
+            .stat-chip { flex:1; }
         }
     </style>
 </head>
@@ -251,20 +301,18 @@
         <div class="panel header-panel">
             <div></div>
             <div class="intro">
-                <div class="brand-title">FINDER</div>
-                <div class="subtext">👆 Vuốt xem ảnh &nbsp;•&nbsp; ✅ Chọn ảnh &nbsp;•&nbsp; 📝 Ghi chú &nbsp;•&nbsp; 🔒 Chốt lựa chọn</div>
+                <div class="brand-title" id="brandTitle">Finder</div>
             </div>
-            <div class="stats">
-                <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại">
-                    <strong id="photoIndexLabel">0/0</strong>
-                    <span>Ảnh hiện tại</span>
-                </button>
-                <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn">
-                    <strong id="selectedCountLabel">0</strong>
-                    <span>Đã chọn</span>
-                </button>
+            <div class="header-tools">
+                <div class="share-actions"><button id="copyShareBtn" type="button">🔗 Sao chép link</button><button id="showQrBtn" type="button">▦ QR chia sẻ</button></div>
+                <div class="album-status-pill" id="albumStatusPill">● Đang mở lựa chọn</div>
+                <div class="stats">
+                    <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại"><strong id="photoIndexLabel">0/0</strong><span>Ảnh hiện tại</span></button>
+                    <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn"><strong id="selectedCountLabel">0</strong><span>Đã chọn</span></button>
+                </div>
             </div>
         </div>
+
 
         <div class="content-grid">
             <div class="panel viewer-panel" id="currentImageSection" tabindex="-1">
@@ -310,16 +358,31 @@
 
         <div class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
+            <div id="galleryFilters" class="gallery-filters" aria-label="Lọc thư viện ảnh">
+                <button class="gallery-filter-btn active" type="button" data-filter="all">Tất cả</button>
+                <button class="gallery-filter-btn" type="button" data-filter="unseen">Chưa chọn</button>
+                <button class="gallery-filter-btn" type="button" data-filter="selected">Đã chọn</button>
+                <button class="gallery-filter-btn" type="button" data-filter="notes">Có ghi chú</button>
+                <button class="gallery-filter-btn" type="button" data-filter="ai">AI đề xuất</button>
+            </div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
 
     <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
         <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
+        <div id="compareStage" class="compare-stage" aria-label="So sánh ảnh gốc và ảnh chỉnh sửa">
+            <img id="compareOriginalImage" class="compare-image" alt="Ảnh gốc">
+            <div id="compareClip" class="compare-clip"><img id="compareCheckImage" class="compare-image" alt="Ảnh đã chỉnh sửa"></div>
+            <div class="compare-divider" id="compareDivider"><span>↔</span></div>
+            <input id="compareRange" class="compare-range" type="range" min="0" max="100" value="50" aria-label="Kéo để so sánh ảnh">
+            <div class="compare-label compare-label-original">Ảnh gốc</div><div class="compare-label compare-label-check">Ảnh chỉnh sửa</div>
+        </div>
         <div id="lightboxLoading" class="lightbox-loading">Đang tải ảnh chất lượng cao…</div>
-        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
+        <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="lightboxDownloadBtn" style="display:none" aria-label="Tải ảnh chỉnh sửa">⬇️ Tải ảnh</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
         <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
     </div>
+    <div id="qrModal" class="qr-modal" aria-hidden="true"><div class="qr-card"><h3>Chia sẻ album</h3><img id="qrImage" alt="QR code album"><p id="qrLinkText" style="font-size:12px;word-break:break-all;color:#475569;"></p><button id="closeQrBtn" type="button">Đóng</button></div></div>
     <div id="quickNoteModal" class="quick-note-modal" aria-hidden="true">
         <div class="quick-note-card">
             <h3>📝 Ghi chú cho ảnh này</h3>
@@ -329,13 +392,26 @@
     </div>
     <div id="helpRobot" class="help-robot visible">
         <div class="robot-message">👋 Có thắc mắc gì thì cứ tìm em nha &lt;3</div>
-        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ"><img src="help-robot.png" alt="Robot trợ lý"></button>
+        <button id="robotButton" class="robot-button" aria-label="Trợ lý hỗ trợ">
+            <svg class="robot-avatar" viewBox="0 0 100 100" role="img" aria-label="Finder Assistant">
+                <g class="robot-body">
+                    <rect x="22" y="29" width="56" height="48" rx="18" fill="#6575f5"/>
+                    <rect x="29" y="39" width="42" height="27" rx="10" fill="#111827"/>
+                    <circle cx="42" cy="52" r="4" fill="#a5f3fc"/><circle cx="58" cy="52" r="4" fill="#a5f3fc"/>
+                    <path d="M43 59h14" stroke="#a5f3fc" stroke-width="3" stroke-linecap="round"/>
+                    <path d="M50 29V20" stroke="#6475f5" stroke-width="4" stroke-linecap="round"/><circle cx="50" cy="16" r="4" fill="#3bd9a0"/>
+                    <path d="M22 48H14M78 48h8" stroke="#6575f5" stroke-width="6" stroke-linecap="round"/>
+                    <rect x="35" y="75" width="30" height="10" rx="5" fill="#3bd9a0"/>
+                </g>
+            </svg>
+        </button>
     </div>
 
     <script>
         const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
         const urlParams = new URLSearchParams(window.location.search);
-        const folderId = urlParams.get('id');
+        let folderId = urlParams.get('id');
+        const albumSlug = window.location.pathname.match(/^\/a\/([^/]+)/)?.[1] || '';
 
         const state = {
             images: [],
@@ -349,7 +425,10 @@
             checkReady: false,
             checkFolderId: null,
             checkUpdatedAt: null,
-            aiGroups: []
+            aiGroups: [],
+            publicSlug: albumSlug,
+            studioName: 'Finder',
+            galleryFilter: 'all'
         };
 
         const elements = {
@@ -392,12 +471,19 @@
             robotButton: document.getElementById('robotButton'),
             robotMessage: document.querySelector('#helpRobot .robot-message'),
             noteSection: document.getElementById('noteSection'),
-            galleryCount: document.getElementById('galleryCount')
-            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription')
+            galleryCount: document.getElementById('galleryCount'), galleryFilters: document.getElementById('galleryFilters')
+            ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
+            brandTitle: document.getElementById('brandTitle'),
+            albumStatusPill: document.getElementById('albumStatusPill'),
+            copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
+            compareStage: document.getElementById('compareStage'), compareOriginalImage: document.getElementById('compareOriginalImage'), compareCheckImage: document.getElementById('compareCheckImage'), compareClip: document.getElementById('compareClip'), compareDivider: document.getElementById('compareDivider'), compareRange: document.getElementById('compareRange'), lightboxDownloadBtn: document.getElementById('lightboxDownloadBtn'),
+            qrModal: document.getElementById('qrModal'), qrImage: document.getElementById('qrImage'), qrLinkText: document.getElementById('qrLinkText'), closeQrBtn: document.getElementById('closeQrBtn')
         };
         let zoomScale = 1;
         let robotMessageTimeout = null;
         let robotMessageInterval = null;
+        let robotIdleTimer = null;
+        let robotPromptIndex = 0;
         let pinchStartDistance = 0;
         let pinchStartScale = 1;
         let panX = 0;
@@ -477,6 +563,30 @@
 
         function getCurrentImage() {
             return state.images[state.currentIndex] || null;
+        }
+
+        function getShareUrl() {
+            return state.publicSlug ? `${ONLINE_SERVER}/a/${encodeURIComponent(state.publicSlug)}` : `${ONLINE_SERVER}/client.html?id=${encodeURIComponent(folderId || '')}`;
+        }
+
+        function downloadCheckImage() {
+            if (state.viewMode !== 'check') return;
+            const current = getCurrentImage();
+            if (!current?.id) return;
+            const url = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(current.id)}`;
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.download = current.fullName || 'finder-check-image';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        function renderBranding() {
+            elements.brandTitle.textContent = state.studioName || 'Finder';
+            elements.albumStatusPill.textContent = state.checkReady ? '● Ảnh chỉnh sửa đã sẵn sàng' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
         }
 
         function selectedCount() {
@@ -560,6 +670,16 @@
             return false;
         }
 
+        function galleryFilterMatches(image) {
+            if (state.galleryFilter === 'selected') return !!image.selected;
+            if (state.galleryFilter === 'unseen') return !image.selected;
+            if (state.galleryFilter === 'notes') return Boolean(String(image.note || '').trim());
+            if (state.galleryFilter === 'ai') {
+                return state.aiGroups.some(group => group.some(item => item.image === image));
+            }
+            return true;
+        }
+
         function render() {
             if (!state.images.length) {
                 elements.mainImage.src = '';
@@ -573,8 +693,11 @@
             }
 
             const current = getCurrentImage();
+            current.viewed = true;
+            renderBranding();
             const isCheckView = state.viewMode === 'check';
             const canEditSelection = !isCheckView && !state.isFinalized;
+            const canEditNote = isCheckView || canEditSelection;
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
             if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
                 elements.viewerShell.classList.add('loading');
@@ -582,6 +705,8 @@
                 elements.mainImage.src = imgUrl || '';
             }
             elements.mainImage.decoding = 'async';
+            elements.mainImage.loading = 'eager';
+            elements.mainImage.fetchPriority = 'high';
             elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
             elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
             elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
@@ -592,11 +717,13 @@
             elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
-            elements.galleryCount.textContent = `${state.images.length} ảnh`;
+            const galleryEntries = state.images.map((img, index) => ({ img, index })).filter(({ img }) => galleryFilterMatches(img));
+            elements.galleryCount.textContent = state.galleryFilter === 'all' ? `${state.images.length} ảnh` : `${galleryEntries.length}/${state.images.length} ảnh`;
             elements.reviewModeBar.classList.toggle('visible', state.checkReady);
             elements.checkModeBtn.classList.toggle('active', isCheckView);
             elements.originalModeBtn.classList.toggle('active', !isCheckView);
             elements.checkReadyBanner.classList.toggle('visible', state.checkReady && isCheckView);
+            elements.finalizedBanner.style.display = state.isFinalized && !isCheckView ? 'block' : 'none';
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
             elements.selectBtn.classList.toggle('btn-outline', !current.selected);
@@ -604,19 +731,23 @@
             elements.lightboxSelectBtn.textContent = current.selected ? '✓ Đã chọn' : '✓ Chọn';
             elements.lightboxSelectBtn.style.background = current.selected ? 'rgba(22,163,74,.92)' : 'rgba(15,23,42,.75)';
             elements.noteInput.value = current.note || '';
-            [elements.selectBtn, elements.saveNoteBtn, elements.confirmAllBtn, elements.noteInput]
+            [elements.selectBtn, elements.confirmAllBtn]
                 .forEach(element => { element.disabled = !canEditSelection; });
-            elements.noteSection.style.display = canEditSelection ? 'block' : 'none';
-            elements.imageActionRow.style.display = canEditSelection ? '' : 'none';
-            elements.saveNoteBtn.style.display = canEditSelection ? '' : 'none';
+            [elements.saveNoteBtn, elements.noteInput]
+                .forEach(element => { element.disabled = !canEditNote; });
+            elements.noteSection.style.display = canEditNote ? 'block' : 'none';
+            elements.imageActionRow.style.display = (canEditSelection || isCheckView) ? '' : 'none';
+            elements.selectBtn.style.display = canEditSelection ? '' : 'none';
+            elements.saveNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.confirmAllBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxSelectBtn.disabled = !canEditSelection;
-            elements.lightboxNoteBtn.disabled = !canEditSelection;
+            elements.lightboxNoteBtn.disabled = !canEditNote;
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
-            elements.lightboxNoteBtn.style.display = canEditSelection ? '' : 'none';
+            elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
+            elements.lightboxDownloadBtn.style.display = isCheckView ? '' : 'none';
 
             elements.thumbStrip.innerHTML = '';
-            state.images.map((img, index) => ({ img, index }))
+            galleryEntries
                 .sort((a, b) => Number(b.img.selected) - Number(a.img.selected))
                 .forEach(({ img, index }) => {
                 const thumbBtn = document.createElement('button');
@@ -648,12 +779,16 @@
                 const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
                 if (!image?.preview) return;
                 const preload = new Image();
+                preload.decoding = 'async';
+                preload.fetchPriority = offset === 1 ? 'high' : 'low';
                 preload.src = image.preview;
             });
         }
 
         function renderSelectionList() {
-            const selectedImages = state.originalImages.filter(item => item.selected);
+            const selectedNames = new Set(state.originalImages.filter(item => item.selected).map(item => item.fullName));
+            const selectedImages = (state.viewMode === 'check' ? state.checkImages : state.originalImages)
+                .filter(item => selectedNames.has(item.fullName));
             elements.selectionList.innerHTML = '';
 
             if (!selectedImages.length) {
@@ -671,7 +806,7 @@
                 info.innerHTML = `<strong>${escapeHtml(item.shortName || item.fullName || 'Ảnh')}</strong><span>${escapeHtml(item.note || 'Không có ghi chú')}</span>`;
                 card.append(thumb, info);
                 card.addEventListener('click', () => {
-                    setViewMode('original', item.fullName);
+                    setViewMode(state.viewMode, item.fullName);
                     openLightbox();
                 });
                 elements.selectionList.appendChild(card);
@@ -682,12 +817,14 @@
             if (!state.images.length) return;
             state.currentIndex = (state.currentIndex + 1) % state.images.length;
             render();
+            if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
         }
 
         function prevImage() {
             if (!state.images.length) return;
             state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
             render();
+            if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
         }
 
         function applyZoom() {
@@ -715,20 +852,45 @@
             elements.lightboxImage.style.transformOrigin = 'center';
         }
 
-        function openLightbox() {
+        function updateCompareSlider() {
+            const value = Number(elements.compareRange.value || 50);
+            elements.compareClip.style.width = `${value}%`;
+            elements.compareDivider.style.left = `${value}%`;
+        }
+
+        function updateLightboxContent() {
             const current = getCurrentImage();
             if (!current) return;
-            // Chỉ khi khách mở ảnh lớn mới tải bản 2200px; màn hình chính dùng bản 1440px.
-            const highResolutionUrl = current.lightbox || `https://drive.google.com/thumbnail?id=${encodeURIComponent(current.id)}&sz=w2200`;
-            elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
-            elements.lightboxImage.src = highResolutionUrl;
+            const highResolutionUrl = current.lightbox || current.originalUrl || current.preview || current.thumbnail || '';
+            const compareOriginal = state.viewMode === 'check' ? state.originalImages.find(item => item.fullName === current.fullName) : null;
+            const canCompare = Boolean(compareOriginal && (compareOriginal.lightbox || compareOriginal.originalUrl));
+            elements.compareStage.classList.toggle('visible', canCompare);
+            elements.lightboxImage.style.display = canCompare ? 'none' : '';
+            if (canCompare) {
+                const compareRect = elements.compareStage.getBoundingClientRect();
+                elements.compareStage.style.setProperty('--compare-stage-width', `${compareRect.width}px`);
+                elements.compareStage.style.setProperty('--compare-stage-height', `${compareRect.height}px`);
+                elements.compareOriginalImage.src = compareOriginal.lightbox || compareOriginal.originalUrl;
+                elements.compareCheckImage.src = highResolutionUrl;
+                elements.compareRange.value = '50';
+                updateCompareSlider();
+            } else {
+                elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
+                elements.lightboxImage.src = highResolutionUrl;
+            }
             elements.lightboxLoading.classList.remove('hidden');
+            elements.lightboxLoading.textContent = canCompare ? 'Đang tải ảnh gốc và ảnh chỉnh sửa chất lượng cao…' : 'Đang tải ảnh chất lượng cao…';
             zoomScale = 1;
             panX = 0; panY = 0; panPointer = null;
             elements.lightboxImage.style.transformOrigin = 'center';
             applyZoom();
+        }
+
+        function openLightbox() {
+            if (!getCurrentImage()) return;
             elements.imageLightbox.classList.add('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'false');
+            updateLightboxContent();
         }
 
         function closeLightbox() {
@@ -749,6 +911,26 @@
             flash();
             if (repeat) robotMessageInterval = window.setInterval(flash, 10000);
         }
+
+        function robotContextGreeting() {
+            if (state.checkReady) return '✨ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể kéo thanh giữa hai ảnh để so sánh nhé.';
+            if (state.isFinalized) return '💙 Mình đã nhận lựa chọn của bạn. Studio sẽ xử lý ảnh sớm nhé.';
+            return '👋 Xin chào! Bạn có thể chạm vào ảnh để xem lớn, chọn ảnh và gửi ghi chú chỉnh sửa.';
+        }
+
+        function scheduleRobotAssistant() {
+            window.clearTimeout(robotIdleTimer);
+            robotIdleTimer = window.setTimeout(() => {
+                if (elements.imageLightbox.classList.contains('open')) { scheduleRobotAssistant(); return; }
+                const prompts = state.checkReady
+                    ? ['Bạn muốn xem ảnh gốc đã chọn không?', 'Bạn có thể kéo thanh ↔ để kiểm tra trước và sau khi chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.']
+                    : ['Bạn đang tìm một khoảnh khắc ưng ý nào đó à?', 'Chạm vào ảnh để xem rõ hơn, rồi bấm Chọn ảnh nếu bạn thích nhé.', 'Bạn có thể ghi chú yêu cầu chỉnh sửa riêng cho từng ảnh.'];
+                showRobotStatus(prompts[robotPromptIndex++ % prompts.length]);
+                scheduleRobotAssistant();
+            }, 22000);
+        }
+
+        function resetRobotAssistant() { scheduleRobotAssistant(); }
 
         function attachSwipe() {
             let startX = 0;
@@ -774,6 +956,11 @@
             if (fallback && elements.lightboxImage.src !== fallback) elements.lightboxImage.src = fallback;
         });
         elements.lightboxImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
+        elements.compareOriginalImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
+        elements.compareCheckImage.addEventListener('load', () => elements.lightboxLoading.classList.add('hidden'));
+        elements.compareRange.addEventListener('input', updateCompareSlider);
+        elements.compareRange.addEventListener('pointerdown', event => event.stopPropagation());
+        elements.lightboxDownloadBtn.addEventListener('click', downloadCheckImage);
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
         elements.imageLightbox.addEventListener('click', event => { if (event.target === elements.imageLightbox && Date.now() - lastLightboxSwipeAt >= 350) closeLightbox(); });
         elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
@@ -856,6 +1043,7 @@
             current.selected = !current.selected;
             render();
             setMessage(current.selected ? '✅ Đã chọn ảnh này.' : '🗑️ Đã bỏ chọn ảnh này.', 'success');
+            showRobotStatus(current.selected ? '✅ Mình đã ghi nhận ảnh này vào danh sách của bạn.' : 'Đã bỏ ảnh khỏi danh sách lựa chọn.');
             try {
                 await saveCurrentSelection();
             } catch (error) {
@@ -864,6 +1052,22 @@
                 setMessage(`❌ ${error.message}`, 'error');
             }
         });
+        elements.copyShareBtn.addEventListener('click', async () => {
+            const shareUrl = getShareUrl();
+            try { await navigator.clipboard.writeText(shareUrl); }
+            catch (_) { const input = document.createElement('input'); input.value = shareUrl; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); }
+            elements.copyShareBtn.textContent = 'Đã sao chép ✓';
+            window.setTimeout(() => { elements.copyShareBtn.textContent = '🔗 Sao chép link'; }, 1800);
+        });
+        elements.showQrBtn.addEventListener('click', () => {
+            const shareUrl = getShareUrl();
+            elements.qrImage.src = `https://quickchart.io/qr?size=220&text=${encodeURIComponent(shareUrl)}`;
+            elements.qrLinkText.textContent = shareUrl;
+            elements.qrModal.classList.add('open'); elements.qrModal.setAttribute('aria-hidden', 'false');
+        });
+        function closeQr() { elements.qrModal.classList.remove('open'); elements.qrModal.setAttribute('aria-hidden', 'true'); }
+        elements.closeQrBtn.addEventListener('click', closeQr);
+        elements.qrModal.addEventListener('click', event => { if (event.target === elements.qrModal) closeQr(); });
         elements.lightboxNoteBtn.addEventListener('click', () => {
             const current = getCurrentImage();
             if (!current) return;
@@ -882,10 +1086,12 @@
                 elements.quickNoteModal.classList.remove('open');
                 render();
                 setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+                showRobotStatus('📝 Mình đã gửi ghi chú này cho studio.');
             } catch (error) { setMessage(`❌ ${error.message}`, 'error'); }
         });
         elements.quickNoteModal.addEventListener('click', event => { if (event.target === elements.quickNoteModal) elements.quickNoteModal.classList.remove('open'); });
-        elements.robotButton.addEventListener('click', () => elements.helpRobot.classList.toggle('visible'));
+        elements.robotButton.addEventListener('click', () => { elements.helpRobot.classList.toggle('visible'); resetRobotAssistant(); });
+        ['pointerdown', 'touchstart', 'keydown'].forEach(type => document.addEventListener(type, resetRobotAssistant, { passive: true }));
         window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 6000);
 
         async function saveCurrentSelection(noteOverride) {
@@ -893,7 +1099,16 @@
             if (!current) return;
 
             current.note = noteOverride === undefined ? elements.noteInput.value.trim() : String(noteOverride).trim();
-            const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
+            if (state.viewMode === 'check') {
+                const checkResponse = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/check-note`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fileName: current.fullName, note: current.note })
+                });
+                const checkData = await checkResponse.json().catch(() => ({}));
+                if (!checkResponse.ok || !checkData.success) throw new Error(checkData.error || `Máy chủ trả về lỗi ${checkResponse.status}.`);
+                return checkData;
+            }
+            const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -915,11 +1130,31 @@
             return data;
         }
 
-        async function loadAlbum() {
-            if (!folderId) {
-                setMessage('❌ ID Album không hợp lệ.', 'error');
-                return;
+        async function fetchWithRetry(url, options, attempts = 2) {
+            let lastError;
+            for (let attempt = 0; attempt < attempts; attempt++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status < 500 || attempt === attempts - 1) return response;
+                } catch (error) {
+                    lastError = error;
+                    if (attempt === attempts - 1) throw error;
+                }
+                await new Promise(resolve => window.setTimeout(resolve, 180 * (attempt + 1)));
             }
+            throw lastError || new Error('Không thể kết nối máy chủ.');
+        }
+
+        async function loadAlbum() {
+            if (!folderId && albumSlug) {
+                try {
+                    const resolveResponse = await fetch(`${ONLINE_SERVER}/api/album-by-slug/${encodeURIComponent(albumSlug)}`, { cache: 'no-store' });
+                    const resolved = await readApiJson(resolveResponse, 'Không thể tìm album theo đường dẫn');
+                    folderId = resolved.folderId;
+                    state.publicSlug = resolved.settings?.publicSlug || albumSlug;
+                } catch (error) { setMessage(`❌ ${error.message}`, 'error'); return; }
+            }
+            if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
 
             try {
                 const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' });
@@ -928,7 +1163,7 @@
                 state.isFinalized = !!data.isFinalized;
                 if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
                 else elements.finalizedBanner.style.display = 'none';
-                if (state.isFinalized) showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
+                showRobotStatus(robotContextGreeting(), state.isFinalized);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
                 const mapImage = file => ({
                     ...file,
@@ -942,14 +1177,18 @@
                 state.checkFolderId = data.settings?.checkFolderId || null;
                 state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
+                state.publicSlug = data.settings?.publicSlug || state.publicSlug;
+                state.studioName = data.settings?.studioName && data.settings.studioName !== 'Finder Studio' ? data.settings.studioName : 'Finder';
 
                 const likedList = data.liked_list || {};
+                const checkNotes = data.check_notes || {};
                 [...state.originalImages, ...state.checkImages].forEach(item => {
                     const savedData = likedList[item.fullName];
                     if (savedData && typeof savedData === 'object') {
                         item.selected = !!savedData.isLiked;
                         item.note = savedData.note || '';
                     }
+                    if (state.checkImages.includes(item) && checkNotes[item.fullName] !== undefined) item.note = checkNotes[item.fullName] || '';
                 });
 
                 state.viewMode = state.checkReady ? 'check' : 'original';
@@ -959,6 +1198,7 @@
                 if (state.viewMode === 'check') state.aiGroups = [];
                 render();
                 runAiFaceScoring();
+                scheduleRobotAssistant();
                 setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
                 setMessage(`❌ ${error.message || 'Không thể kết nối tới Server.'}`, 'error');
@@ -1027,6 +1267,7 @@
             try {
                 await saveCurrentSelection();
                 setMessage('📝 Đã lưu ghi chú cho ảnh này.', 'success');
+                showRobotStatus('📝 Mình đã gửi ghi chú này cho studio.');
             } catch (error) {
                 current.note = previousNote;
                 render();
@@ -1080,6 +1321,14 @@
         }
         elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
         elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
+        elements.galleryFilters.addEventListener('click', event => {
+            const button = event.target.closest('[data-filter]');
+            if (!button) return;
+            state.galleryFilter = button.dataset.filter || 'all';
+            elements.galleryFilters.querySelectorAll('[data-filter]').forEach(item => item.classList.toggle('active', item === button));
+            render();
+            resetRobotAssistant();
+        });
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();

@@ -60,6 +60,16 @@
         .album-info-box { padding: 17px; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
         .album-title-text { font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .album-date-text { font-size: 12px; color: #64748b; margin-bottom: 12px; }
+        .album-flow { display:flex; align-items:center; gap:0; margin:10px 0 12px; padding:9px 8px; border:1px solid #eef0f5; border-radius:10px; background:#fafbff; overflow:hidden; }
+        .album-flow-step { display:flex; align-items:center; gap:4px; color:#94a3b8; font-size:10px; font-weight:700; white-space:nowrap; }
+        .album-flow-step::after { content:'›'; margin:0 5px; color:#cbd5e1; font-size:14px; }
+        .album-flow-step:last-child::after { display:none; }
+        .album-flow-step.active { color:#2563eb; }
+        .album-flow-step.done { color:#059669; }
+        .album-flow-dot { width:17px; height:17px; border-radius:50%; display:grid; place-items:center; background:#e2e8f0; color:#64748b; font-size:9px; }
+        .album-flow-step.active .album-flow-dot { background:#dbeafe; color:#2563eb; box-shadow:0 0 0 3px #eff6ff; }
+        .album-flow-step.done .album-flow-dot { background:#d1fae5; color:#047857; }
+        @media (max-width:520px) { .album-flow { overflow-x:auto; } .album-flow-step { font-size:9px; } }
         
         .album-btn-row { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #f1f5f9; padding-top: 12px; }
         .album-btn-row button { margin: 0; padding: 6px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; }
@@ -252,6 +262,10 @@
                 <div class="input-group">
                     <label>Tên thư mục trên Drive (Tên khách hàng):</label>
                     <input type="text" id="folder-name-input" placeholder="Ví dụ: Anh_Cuoi_Tuan_Ngoc">
+                </div>
+                <div class="input-group">
+                    <label>Tên thương hiệu hiển thị cho khách <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label>
+                    <input type="text" id="studio-name-input" placeholder="Mặc định: Finder">
                 </div>
                 <!-- Tạm ẩn phần bản quyền, giữ nguyên để tiếp tục phát triển sau. -->
                 <div class="input-group" style="display:none; margin-bottom: 12px; background: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; max-width: 450px;">
@@ -944,6 +958,7 @@
             const watermarkToggle = document.getElementById('watermark-toggle-input').checked;
             const watermarkText = document.getElementById('watermark-text-input').value.trim();
             const maxSelections = document.getElementById('max-selections-input').value.trim(); 
+            const studioName = document.getElementById('studio-name-input').value.trim() || 'Finder';
 
             document.getElementById('progress-container').style.display = "block";
             document.getElementById('upload-status').innerText = "Đang thiết lập cổng kết nối bảo mật...";
@@ -957,6 +972,7 @@
                 watermarkToggle, 
                 watermarkText,
                 maxSelections,
+                studioName,
                 driveParentId: selectedDriveFolder.id,
                 driveParentPath: selectedDriveFolder.path
             }); } catch (error) {
@@ -1032,6 +1048,7 @@
                 const badgeClass = album.status.includes('Đã xong') ? 'album-badge done' : 'album-badge waiting';
                 const card = document.createElement('div');
                 card.className = 'album-card';
+                card.dataset.rawSynced = album.rawSynced ? '1' : '0';
                 
                 const limitText = album.maxSelections ? `${album.maxSelections} ảnh` : `Không`;
 
@@ -1043,17 +1060,23 @@
                     </div>
                     <div class="album-info-box">
                         <div>
-                            <div class="album-title-text" title="${album.name}">${album.name}</div>
+                            <div class="album-title-text" title="${escapeHtml(album.name || '')}">${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
                             <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">
+                                <span class="album-flow-step active"><i class="album-flow-dot">1</i>Chọn</span>
+                                <span class="album-flow-step"><i class="album-flow-dot">2</i>Chốt</span>
+                                <span class="album-flow-step"><i class="album-flow-dot">3</i>RAW</span>
+                                <span class="album-flow-step"><i class="album-flow-dot">4</i>CHECK</span>
+                            </div>
                             <div class="album-date-text" title="${escapeHtml(album.localPath || '')}" style="overflow-wrap:anywhere;">📁 Máy: ${escapeHtml(album.localPath || 'Không còn đường dẫn')}</div>
                             <div class="album-date-text" title="${escapeHtml(album.drivePath || '')}" style="overflow-wrap:anywhere;">☁️ Drive: ${escapeHtml(album.drivePath || 'Drive của tôi')}</div>
                         </div>
                         <div class="album-btn-row">
                             <button class="btn-check" id="check-btn-${album.id}" onclick="checkProgress('${album.id}', this)">📊 Kiểm tra</button>
-                            <button class="btn-danger btn-sync" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
+                            <button class="btn-danger btn-sync" data-action="raw" style="display:none;" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
-                            <button class="btn-success btn-check-upload" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
+                            <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
                     </div>
@@ -1092,6 +1115,30 @@
             } finally {
                 isAlbumSyncing = false;
             }
+        }
+
+        function renderAlbumTimeline(folderId, isFinalized, checkReady) {
+            const flow = document.getElementById(`flow-${folderId}`);
+            if (!flow) return;
+            const card = flow.closest('.album-card');
+            const rawSynced = card?.dataset.rawSynced === '1';
+            const stage = checkReady ? 4 : rawSynced ? 3 : isFinalized ? 2 : 1;
+            flow.querySelectorAll('.album-flow-step').forEach((step, index) => {
+                step.classList.toggle('done', index + 1 < stage || (stage === 4 && index < 4));
+                step.classList.toggle('active', index + 1 === stage);
+            });
+        }
+
+        function updateAlbumActionVisibility(folderId, isFinalized, checkReady) {
+            const card = document.querySelector(`#check-btn-${folderId}`)?.closest('.album-card');
+            if (!card) return;
+            const rawButton = card.querySelector('[data-action="raw"]');
+            const checkButton = card.querySelector('[data-action="check"]');
+            const rawSynced = card.dataset.rawSynced === '1';
+            // Luồng thao tác bắt buộc: khách chốt → Gom RAW → Upload CHECK.
+            if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
+            if (checkButton) checkButton.style.display = rawSynced && !checkReady ? '' : 'none';
+            renderAlbumTimeline(folderId, isFinalized, checkReady);
         }
 
         document.getElementById('btn-choose-drive-folder').addEventListener('click', async () => {
@@ -1192,6 +1239,7 @@
                 if(data.success) { 
                     const count = Object.keys(data.liked_files).length;
                     const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
+                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReady);
                     if (checkReady) {
                         btn.innerHTML = `✅ CHECK sẵn sàng · ${count} ảnh đã chọn`;
                         btn.style.background = "#0ea5e9";
@@ -1258,6 +1306,8 @@
                     
                     if(result.success) {
                         btn.className = "btn-success"; btn.innerText = "✔️ Xong";
+                        const card = btn.closest('.album-card');
+                        if (card) { card.dataset.rawSynced = '1'; updateAlbumActionVisibility(folderId, true, false); }
                         document.getElementById('sync-progress-bar').style.width = '100%';
                         document.getElementById('sync-progress-text').innerText = '100%';
                         document.getElementById('sync-global-status').style.color = '#10b981';

@@ -58,6 +58,15 @@ const qualityCache = new Map();
 // Packaged clients reuse LOCAL_TOKEN_PATH and server refresh before OAuth.
 const signatureCache = new Map();
 
+function slugifyAlbumName(value = '') {
+    return String(value)
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase().replace(/đ/g, 'd')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 56) || 'album';
+}
+
 const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
@@ -285,7 +294,12 @@ function syncDataToServer() {
             const payload = JSON.stringify({ 
                 isEnabled: album.watermarkToggle !== false, 
                 text: album.watermarkText || "FINDERPICTURE STUDIO", 
-                maxSelections: album.maxSelections || 0 
+                maxSelections: album.maxSelections || 0,
+                publicSlug: album.publicSlug,
+                clientName: album.clientName || album.name,
+                studioName: album.studioName && album.studioName !== 'Finder Studio' ? album.studioName : 'Finder',
+                studioLogo: album.studioLogo || '',
+                accentColor: album.accentColor || '#7c8cff'
             });
             const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'X-Finder-Background-Sync': '1', ...serverAuthHeaders() } });
             req.write(payload); req.end();
@@ -356,6 +370,9 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
 
     if (index !== -1) {
         history[index].maxSelections = nextLimit;
+        history[index].rawSynced = false;
+        delete history[index].rawSyncedAt;
+        history[index].checkStatus = undefined;
         // Đổi giới hạn đồng nghĩa mở lại luồng chọn ảnh. Giữ nguyên các ảnh
         // khách đã chọn nhưng đưa album về trạng thái chờ để họ có thể bổ sung.
         history[index].status = 'Đang chờ khách chọn';
@@ -783,10 +800,10 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {
-    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, driveParentId, driveParentPath, resumeData } = payload;
+    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath, resumeData } = payload;
     let resumableUpload = resumeData || null;
     try {
-        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, driveParentId, driveParentPath } = resumeData);
+        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath } = resumeData);
         uploadInProgress = true;
         mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: "Đang kiểm tra bảo mật..." });
         // Uploading into a user-selected folder requires the full Drive scope.
@@ -816,7 +833,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                 }
             } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
-        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
+        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
 
         const existingFiles = await drive.files.list({
             q: `'${googleDriveFolderId}' in parents and trashed = false`,
@@ -860,14 +877,24 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
         await drive.permissions.create({ fileId: googleDriveFolderId, requestBody: { role: 'reader', type: 'anyone' } });
         
-        const wmPayload = JSON.stringify({ isEnabled: watermarkToggle, text: watermarkText, maxSelections: maxSelections });
+        const publicSlug = `${slugifyAlbumName(folderNameOnDrive)}-${String(googleDriveFolderId).slice(-6).toLowerCase()}`;
+        const wmPayload = JSON.stringify({
+            isEnabled: watermarkToggle,
+            text: watermarkText,
+            maxSelections: maxSelections,
+            publicSlug,
+            clientName: folderNameOnDrive,
+            studioName: studioName || 'Finder',
+            studioLogo: studioLogo || '',
+            accentColor: accentColor || '#7c8cff'
+        });
         const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders() } };
         await new Promise((resolve) => {
             const wmReq = https.request(wmOptions, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
             wmReq.on('error', resolve); wmReq.write(wmPayload); wmReq.end();
         });
 
-        const publicLink = `https://${ONLINE_DOMAIN}/client.html?id=${googleDriveFolderId}`;
+        const publicLink = `https://${ONLINE_DOMAIN}/a/${publicSlug}`;
         
         // HÀM NÀY BÂY GIỜ SẼ LƯU VÀO CẢ MÁY TÍNH VÀ FIREBASE
         saveAlbumToHistory({ 
@@ -875,6 +902,11 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             name: folderNameOnDrive, 
             date: new Date().toLocaleString('vi-VN'), 
             link: publicLink, 
+            publicSlug,
+            clientName: folderNameOnDrive,
+            studioName: studioName || 'Finder',
+            studioLogo: studioLogo || '',
+            accentColor: accentColor || '#7c8cff',
             status: "Đang chờ khách chọn", 
             localPath: folderPath, 
             driveParentId: driveParentId || null,
@@ -1046,6 +1078,13 @@ ipcMain.handle('auto-sync-raw', async (event, { folderId, likedList }) => {
     }
     fs.writeFileSync(path.join(targetFolder, 'Yêu_Cầu_Chỉnh_Sửa.txt'), txtContent, 'utf8');
     shell.openPath(targetFolder);
+    const historyIndex = history.findIndex(item => item.id === folderId);
+    const rawSyncData = { rawSynced: true, rawSyncedAt: new Date().toISOString() };
+    if (historyIndex !== -1) {
+        Object.assign(history[historyIndex], rawSyncData);
+        fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
+        if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update(rawSyncData).catch(error => console.log(error));
+    }
     return { success: true, msg: `Đã bốc thành công ${copiedCount} file RAW!` };
 });
 
