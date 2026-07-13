@@ -73,6 +73,14 @@ function uploadTiming(completed, total, startedAt) {
     return { rate, etaSeconds };
 }
 
+function resolveImagePath(folderPath, fileName) {
+    const root = path.resolve(String(folderPath || ''));
+    const safeName = path.basename(String(fileName || ''));
+    const target = path.resolve(root, safeName);
+    if (!safeName || (target !== root && !target.startsWith(`${root}${path.sep}`))) throw new Error('Tên tệp ảnh không hợp lệ.');
+    return target;
+}
+
 async function uploadDriveFileWithRetry(drive, { fileName, parentId, localPath, mimeType }) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -165,6 +173,11 @@ function getServerJson(pathname, headers = {}) {
 
 function postServerJson(pathname, payload, headers = {}) {
     return postJson(`${ONLINE_SERVER}${pathname}`, payload, headers);
+}
+
+function albumManagementHeaders(folderId) {
+    const album = getAlbumHistory().find(item => String(item.id) === String(folderId));
+    return album?.managementToken ? { 'x-finder-management-token': album.managementToken } : {};
 }
 
 function loadAuthSession() {
@@ -329,7 +342,8 @@ function saveAlbumToHistory(albumData) {
 
     // Đẩy lên Firebase để đồng bộ với Server Vercel
     if (db && currentAuthSession?.uid) {
-        db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${albumData.id}`).set(albumData).catch(e => console.log(e));
+        const { managementToken, ...syncAlbum } = albumData;
+        db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${albumData.id}`).set(syncAlbum).catch(e => console.log(e));
     }
 }
 
@@ -359,13 +373,6 @@ function updateAlbumStatus(folderId, newStatus) {
 // ---------------------------------------------------------
 function syncDataToServer() {
     try {
-        if (fs.existsSync(LOCAL_TOKEN_PATH)) {
-            const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
-            const postData = JSON.stringify({ tokens });
-            const reqToServer = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: '/api/auth/save-token', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData), ...serverAuthHeaders() } }); 
-            reqToServer.write(postData); reqToServer.end();
-        }
-        
         const history = getAlbumHistory();
         history.forEach(album => {
             const payload = JSON.stringify({ 
@@ -379,7 +386,7 @@ function syncDataToServer() {
                 studioLogo: album.studioLogo || '',
                 accentColor: album.accentColor || '#7c8cff'
             });
-            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'X-Finder-Background-Sync': '1', ...serverAuthHeaders() } });
+            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'X-Finder-Background-Sync': '1', ...serverAuthHeaders(), ...albumManagementHeaders(album.id) } });
             req.write(payload); req.end();
         });
     } catch(e) {}
@@ -446,7 +453,7 @@ ipcMain.handle('update-payment-status', (event, { id, paymentStatus, paymentTota
     history[index].paymentUpdatedAt = new Date().toISOString();
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
     if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${id}`).update({ paymentStatus: history[index].paymentStatus, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote, paymentUpdatedAt: history[index].paymentUpdatedAt }).catch(() => {});
-    postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: total, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote }, serverAuthHeaders()).catch(() => {});
+    postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: total, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote }, { ...serverAuthHeaders(), ...albumManagementHeaders(id) }).catch(() => {});
     return { success: true, paymentStatus: history[index].paymentStatus, paymentBalance: history[index].paymentBalance };
 });
 ipcMain.handle('open-external-link', (event, url) => { shell.openExternal(url); });
@@ -462,7 +469,7 @@ ipcMain.handle('delete-album', async (event, folderId) => {
 
     try {
         await new Promise((resolve) => {
-            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${folderId}`, method: 'DELETE' }, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
+            const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${folderId}`, method: 'DELETE', headers: albumManagementHeaders(folderId) }, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
             req.on('error', resolve); req.end();
         });
     } catch (e) {}
@@ -488,7 +495,7 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
                 hostname: ONLINE_DOMAIN, port: 443, 
                 path: `/api/album/${folderId}/settings`, 
                 method: 'POST', 
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } 
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...serverAuthHeaders(), ...albumManagementHeaders(folderId) }
             }, (res) => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => { if (res.statusCode >= 400) return resolve({ success: false }); try { resolve({ success: JSON.parse(body || '{}').success !== false }); } catch (_) { resolve({ success: false }); } }); });
             req.on('error', resolve); req.write(payload); req.end();
         });
@@ -525,8 +532,10 @@ ipcMain.handle('get-album-thumbnail', async (event, localPath) => {
         const firstImg = files.find(f => ['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(f).toLowerCase()));
         if (firstImg) {
             const fullImgPath = path.join(localPath, firstImg);
-            const bitmap = fs.readFileSync(fullImgPath);
-            return `data:image/${path.extname(firstImg).substring(1)};base64,${bitmap.toString('base64')}`;
+            // Chỉ dùng thumbnail nhỏ cho thư viện desktop; đọc nguyên ảnh
+            // gốc vào Base64 làm tăng RAM rất mạnh với ảnh máy ảnh hiện đại.
+            const bitmap = await sharp(fullImgPath).rotate().resize({ width: 480, height: 320, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer();
+            return `data:image/jpeg;base64,${bitmap.toString('base64')}`;
         }
     } catch (e) {}
     return null;
@@ -536,7 +545,12 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150, height: 760,
         title: "Finder",
-        webPreferences: { nodeIntegration: true, contextIsolation: false }
+        webPreferences: {
+            preload: path.join(__dirname, 'preload.js'),
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true
+        }
     });
     mainWindow.loadFile('index.html');
     mainWindow.on('close', (event) => {
@@ -553,8 +567,6 @@ function createWindow() {
         if (choice === 1) { allowWindowClose = true; mainWindow.close(); }
     });
 }
-
-app.commandLine.appendSwitch('ignore-certificate-errors');
 
 app.whenReady().then(() => {
     createWindow();
@@ -588,7 +600,7 @@ function getPercentile(values, percentile) {
 }
 
 async function inspectImageQuality(folderPath, file) {
-    const input = path.join(folderPath, file);
+    const input = resolveImagePath(folderPath, file);
     const fileStat = await fs.promises.stat(input);
     const cacheKey = `${input}:${fileStat.size}:${fileStat.mtimeMs}`;
     const cached = qualityCache.get(cacheKey);
@@ -639,7 +651,7 @@ async function inspectImageQuality(folderPath, file) {
 }
 
 async function imageSignature(folderPath, file) {
-    const input = path.join(folderPath, file);
+    const input = resolveImagePath(folderPath, file);
     const stat = await fs.promises.stat(input);
     const key = `${input}:${stat.size}:${stat.mtimeMs}`;
     if (signatureCache.has(key)) return signatureCache.get(key);
@@ -971,7 +983,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-                    await uploadDriveFileWithRetry(drive, { fileName, parentId: driveParentId, localPath: path.join(folderPath, fileName), mimeType });
+                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: driveParentId, localPath: resolveImagePath(folderPath, fileName), mimeType });
                     completed++;
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
@@ -986,10 +998,10 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: driveParentId, galleryName, sectionName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
         const tokenPath = LOCAL_TOKEN_PATH;
         if (fs.existsSync(tokenPath)) {
-            try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
+            try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }, metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {}); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
         }
         const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
-        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: galleryName, studioName, galleryType: 'party', gallerySections: [{ id: driveParentId, name: sectionName, driveFolderId: driveParentId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: payload.driveParentPath || 'Drive của tôi' });
+        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: galleryName, studioName, galleryType: 'party', managementToken: metadata.managementToken || null, gallerySections: [{ id: driveParentId, name: sectionName, driveFolderId: driveParentId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: payload.driveParentPath || 'Drive của tôi' });
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: 'Đã hoàn tất gallery tiệc.', completed: imageFiles.length, total: imageFiles.length, failed: 0 });
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
     } catch (error) {
@@ -1024,7 +1036,7 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-                    await uploadDriveFileWithRetry(drive, { fileName, parentId: sectionFolderId, localPath: path.join(folderPath, fileName), mimeType });
+                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType });
                     completed++;
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${sectionName}/${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
@@ -1034,7 +1046,7 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, imageFiles.length) }, worker));
         if (uploadError) throw uploadError;
         try { await drive.permissions.create({ fileId: sectionFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
-        const response = await postServerJson(`/api/party-gallery/${album.id}/sections`, { driveFolderId: sectionFolderId, sectionName }, serverAuthHeaders());
+        const response = await postServerJson(`/api/party-gallery/${album.id}/sections`, { driveFolderId: sectionFolderId, sectionName }, { ...serverAuthHeaders(), ...albumManagementHeaders(album.id) });
         const index = history.findIndex(item => item.id === album.id);
         const sections = Array.isArray(history[index].gallerySections) ? history[index].gallerySections : [];
         sections.push({ id: sectionFolderId, name: sectionName, driveFolderId: sectionFolderId, createdAt: new Date().toISOString() });
@@ -1084,7 +1096,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             try {
                 if (fs.existsSync(LOCAL_TOKEN_PATH)) {
                     const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
-                    await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens });
+                    await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens }, albumManagementHeaders(googleDriveFolderId));
                 }
             } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
@@ -1122,9 +1134,9 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                 const fileName = filesToUpload[index];
                 try {
                     await uploadDriveFileWithRetry(drive, {
-                        fileName,
+                        fileName: path.basename(fileName),
                         parentId: originalFolderId,
-                        localPath: path.join(folderPath, fileName),
+                        localPath: resolveImagePath(folderPath, fileName),
                         mimeType: 'image/jpeg'
                     });
                     completedFiles++;
@@ -1167,8 +1179,10 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             accentColor: accentColor || '#7c8cff'
         });
         const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders() } };
+        let settingsResult = {};
         await new Promise((resolve) => {
-            const wmReq = https.request(wmOptions, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
+            let body = '';
+            const wmReq = https.request(wmOptions, (res) => { res.on('data', chunk => body += chunk); res.on('end', () => { try { settingsResult = JSON.parse(body || '{}'); } catch (_) {} resolve(); }); });
             wmReq.on('error', resolve); wmReq.write(wmPayload); wmReq.end();
         });
 
@@ -1197,6 +1211,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             maxSelections: parseInt(maxSelections) || 0, 
             watermarkToggle: watermarkToggle,
             watermarkText: watermarkText
+            , managementToken: settingsResult.managementToken || settingsResult.settings?.managementToken || null
             , dueDate: dueDate || null
         });
 
@@ -1291,9 +1306,9 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
                     await uploadDriveFileWithRetry(drive, {
-                        fileName,
+                        fileName: path.basename(fileName),
                         parentId: checkFolderId,
-                        localPath: path.join(folderPath, fileName),
+                        localPath: resolveImagePath(folderPath, fileName),
                         mimeType
                     });
                     completed++;

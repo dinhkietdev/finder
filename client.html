@@ -1568,9 +1568,22 @@
         attachSwipe();
         loadAlbum();
         expiryTimer = window.setInterval(updateCheckBannerVisibility, 60000);
-        // Cài đặt giới hạn rất nhẹ (chỉ một JSON nhỏ), kiểm tra ngắn để khách
-        // được mở lựa chọn mới gần như ngay sau khi admin lưu thay đổi.
-        window.setInterval(refreshAlbumLimit, 3000);
+        // Đồng bộ trạng thái thưa hơn để không tạo hàng loạt request Vercel /
+        // Firebase. Khi khách quay lại tab, kiểm tra ngay một lần.
+        let albumSyncTimer = null;
+        const scheduleAlbumSync = (delay = 30000) => {
+            window.clearTimeout(albumSyncTimer);
+            if (document.hidden) return;
+            albumSyncTimer = window.setTimeout(async () => {
+                await refreshAlbumLimit();
+                scheduleAlbumSync(30000);
+            }, delay);
+        };
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) window.clearTimeout(albumSyncTimer);
+            else { refreshAlbumLimit().finally(() => scheduleAlbumSync(30000)); }
+        });
+        scheduleAlbumSync(5000);
     </script>
 </body>
 </html>

@@ -171,16 +171,6 @@
         .calendar-date { display:block; color:#667085; font-size:11px; font-weight:700; }
         .calendar-event { display:block; margin-top:4px; padding:2px 4px; border-radius:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:#f0efff; color:#5148d9; font-size:10px; font-weight:700; }
         .calendar-event.done { background:#e5f8ed; color:#087443; }
-        .auth-overlay { display:none !important; }
-        .auth-card { width:min(420px, 100%); padding:30px; border:1px solid rgba(255,255,255,.14); border-radius:20px; background:rgba(255,255,255,.96); box-shadow:0 30px 70px rgba(0,0,0,.32); }
-        .auth-logo { display:flex; align-items:center; gap:10px; font-size:23px; font-weight:800; color:var(--ink); }
-        .auth-logo::before { content:'F'; display:grid; place-items:center; width:32px; height:32px; border-radius:10px; background:var(--brand); color:#fff; font-size:15px; }
-        .auth-subtitle { margin:10px 0 22px; color:var(--muted); font-size:13px; line-height:1.5; }
-        .auth-card input { width:100%; margin:6px 0; padding:12px; border:1px solid #d9dee8; border-radius:9px; outline:0; }
-        .auth-card input:focus { border-color:#8b84ff; box-shadow:0 0 0 3px rgba(99,91,255,.12); }
-        .auth-card button { width:100%; justify-content:center; margin-top:10px; }
-        .auth-message { min-height:20px; margin-top:12px; color:#b42318; font-size:12px; text-align:center; }
-        .auth-switch { color:#5b54da; cursor:pointer; font-weight:700; }
         .update-overlay { display:none; position:fixed; inset:0; z-index:21000; place-items:center; padding:24px; background:rgba(11,16,32,.78); backdrop-filter:blur(8px); }
         .update-card { width:min(390px, 100%); padding:28px; border-radius:18px; background:#fff; box-shadow:0 25px 60px rgba(0,0,0,.28); text-align:center; }
         .update-card h3 { margin-bottom:9px; color:var(--ink); font-size:19px; }
@@ -211,18 +201,6 @@
     </style>
 </head>
 <body>
-    <div id="auth-overlay" class="auth-overlay">
-        <form id="auth-form" class="auth-card">
-            <div class="auth-logo">Finder</div>
-            <p id="auth-subtitle" class="auth-subtitle">Đăng nhập để truy cập không gian làm việc của studio.</p>
-            <input id="auth-studio-name" type="text" placeholder="Tên studio" style="display:none;" autocomplete="organization">
-            <input id="auth-email" type="email" placeholder="Email studio" required autocomplete="email">
-            <input id="auth-password" type="password" placeholder="Mật khẩu" required minlength="6" autocomplete="current-password">
-            <button id="auth-submit" class="btn-success" type="submit">Đăng nhập</button>
-            <p id="auth-message" class="auth-message"></p>
-            <p style="margin-top:14px; text-align:center; font-size:12px; color:#667085;"><span id="auth-switch" class="auth-switch">Đăng ký studio mới</span></p>
-        </form>
-    </div>
     <div id="update-overlay" class="update-overlay">
         <div class="update-card">
             <h3>Cần cập nhật Finder</h3>
@@ -529,12 +507,14 @@
         </div>
     </div>
     <script>
-        const { ipcRenderer } = require('electron');
+        const ipcRenderer = window.finderAPI;
+        // Giữ tên biến cũ để các handler inline hiện tại tiếp tục hoạt động
+        // trong khi renderer đã chạy dưới contextIsolation/sandbox.
+        window.ipcRenderer = ipcRenderer;
         // Phải trùng với server tạo link cho khách để desktop và trang khách đọc cùng dữ liệu.
         const ONLINE_SERVER = 'https://finder-swart-pi.vercel.app';
-        let authSession = null;
-        let authStudio = null;
-        let authIsRegister = false;
+        // Finder desktop dùng OAuth Drive theo máy; không còn màn hình đăng
+        // nhập Finder tập trung.
         let updateReadyToInstall = false;
         let manualUpdateUrl = '';
         let currentFolder = ""; let scannedImages = []; let filteredImages = []; let cullingResults = []; let syncSourceFolder = "";
@@ -553,31 +533,6 @@
         let libraryTypeFilter = 'selection';
         let dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
         let dashboardAlbums = [];
-
-        function setAuthMode(isRegister) {
-            authIsRegister = isRegister;
-            document.getElementById('auth-studio-name').style.display = isRegister ? 'block' : 'none';
-            document.getElementById('auth-submit').textContent = isRegister ? 'Gửi yêu cầu đăng ký' : 'Đăng nhập';
-            document.getElementById('auth-subtitle').textContent = isRegister ? 'Studio mới sẽ cần được quản trị viên xét duyệt trước khi dùng Finder.' : 'Đăng nhập để truy cập không gian làm việc của studio.';
-            document.getElementById('auth-switch').textContent = isRegister ? 'Đã có tài khoản? Đăng nhập' : 'Đăng ký studio mới';
-            document.getElementById('auth-message').textContent = '';
-        }
-
-        async function checkStudioAccess(session, studioName = '') {
-            const response = await fetch(`${ONLINE_SERVER}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.idToken}` }, body: JSON.stringify({ studioName }) });
-            const body = await response.text();
-            let data;
-            try { data = JSON.parse(body); }
-            catch (error) { throw new Error(`Máy chủ xác thực đang gặp lỗi (${response.status}). Vui lòng kiểm tra Vercel Logs.`); }
-            if (!response.ok || !data.success) throw new Error(data.error || 'Không thể kiểm tra quyền truy cập.');
-            if (data.studio.status !== 'active') throw new Error(data.studio.status === 'rejected' ? 'Yêu cầu đăng ký đã bị từ chối. Vui lòng liên hệ quản trị viên.' : 'Tài khoản đã đăng ký và đang chờ quản trị viên xét duyệt.');
-            authSession = session;
-            authStudio = data.studio;
-            document.getElementById('auth-overlay').style.display = 'none';
-            loadDashboard();
-            checkDriveAccessAfterLogin();
-            ipcRenderer.invoke('check-for-updates');
-        }
 
         async function checkDriveAccessAfterLogin() {
             const status = await ipcRenderer.invoke('auth-drive-token-status');
@@ -652,36 +607,6 @@
             if (data.status === 'manual-available') { manualUpdateUrl = data.url; showUpdateOverlay(`Đã có Finder ${data.version}. Tải bản DMG mới để cập nhật trên Mac.`, 'Mở trang tải bản cập nhật'); }
             if (data.status === 'error') showUpdateOverlay(`Không thể kiểm tra/cập nhật: ${data.message}`, 'Thử lại', false, /signature|chữ ký|code signature/i.test(data.message || ''));
         });
-
-        document.getElementById('auth-form').addEventListener('submit', async event => {
-            event.preventDefault();
-            const submit = document.getElementById('auth-submit'); const message = document.getElementById('auth-message');
-            const email = document.getElementById('auth-email').value.trim(); const password = document.getElementById('auth-password').value;
-            const studioName = document.getElementById('auth-studio-name').value.trim();
-            if (authIsRegister && !studioName) { message.textContent = 'Vui lòng nhập tên studio.'; return; }
-            submit.disabled = true; message.style.color = '#667085'; message.textContent = 'Đang xử lý...';
-            const result = await ipcRenderer.invoke('auth-sign-in', { email, password, isRegister: authIsRegister });
-            try {
-                if (!result.success) throw new Error(result.error);
-                await checkStudioAccess(result.session, studioName);
-            } catch (error) {
-                if (authIsRegister && String(error.message).includes('EMAIL_EXISTS')) {
-                    setAuthMode(false);
-                    document.getElementById('auth-email').value = email;
-                    document.getElementById('auth-message').style.color = '#667085';
-                    document.getElementById('auth-message').textContent = 'Email này đã đăng ký. Hãy nhập mật khẩu để đăng nhập.';
-                } else {
-                    message.style.color = '#b42318';
-                    message.textContent = String(error.message).includes('USER_DISABLED')
-                        ? 'Tài khoản này đang bị vô hiệu hóa. Vui lòng liên hệ quản trị viên để bật lại quyền đăng nhập.'
-                        : error.message;
-                }
-            }
-            finally { submit.disabled = false; }
-        });
-        document.getElementById('auth-switch').addEventListener('click', () => setAuthMode(!authIsRegister));
-        // Finder desktop chạy local OAuth trực tiếp; không gọi API đăng nhập
-        // tập trung để tránh phụ thuộc /api/auth/session trên server online.
 
         function escapeHtml(value = '') {
             return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
@@ -961,39 +886,6 @@
             }
         }
 
-        async function loadStudioApprovals() {
-            const panel = document.getElementById('dashboard-approvals');
-            const list = document.getElementById('dashboard-approval-list');
-            if (authStudio?.role !== 'admin' || !authSession?.idToken) { panel.style.display = 'none'; return; }
-            panel.style.display = 'block'; list.innerHTML = '<div class="dashboard-empty">Đang tải yêu cầu...</div>';
-            try {
-                const response = await fetch(`${ONLINE_SERVER}/api/admin/studios`, { headers: { Authorization: `Bearer ${authSession.idToken}` } });
-                const data = await response.json();
-                if (!data.success) throw new Error(data.error);
-                const pending = (data.studios || []).filter(studio => studio.status === 'pending');
-                list.innerHTML = '';
-                if (!pending.length) { list.innerHTML = '<div class="dashboard-empty">Không có studio nào đang chờ duyệt.</div>'; return; }
-                pending.forEach(studio => {
-                    const row = document.createElement('div'); row.className = 'dashboard-album';
-                    const info = document.createElement('div');
-                    const name = document.createElement('span'); name.className = 'dashboard-album-name'; name.textContent = studio.name || 'Studio chưa đặt tên';
-                    const email = document.createElement('span'); email.className = 'dashboard-album-meta'; email.textContent = studio.email || '';
-                    info.append(name, email);
-                    const actions = document.createElement('div'); actions.style.cssText = 'display:flex; gap:6px;';
-                    [['Duyệt', 'active', 'btn-success'], ['Từ chối', 'rejected', 'btn-danger']].forEach(([label, status, className]) => {
-                        const button = document.createElement('button'); button.type = 'button'; button.className = className; button.style.cssText = 'margin:0; padding:6px 9px; font-size:11px;'; button.textContent = label;
-                        button.addEventListener('click', async () => {
-                            button.disabled = true;
-                            await fetch(`${ONLINE_SERVER}/api/admin/studios/${studio.id}/approval`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authSession.idToken}` }, body: JSON.stringify({ status }) });
-                            loadStudioApprovals();
-                        });
-                        actions.appendChild(button);
-                    });
-                    row.append(info, actions); list.appendChild(row);
-                });
-            } catch (error) { list.innerHTML = '<div class="dashboard-empty">Không thể tải yêu cầu xét duyệt.</div>'; }
-        }
-
         function albumDueDate(album) {
             const explicit = parseDashboardDate(album.dueDate || album.deadline || album.deliveryDate);
             if (explicit) return explicit;
@@ -1070,7 +962,6 @@
             renderWorkList('dashboard-client-list', waitingClients, 'Không có album đang chờ khách.', album => album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : 'Chờ khách chọn');
             renderWorkList('dashboard-overdue-list', overdue, 'Không có album quá hạn.', album => `Hạn ${albumDueDate(album).toLocaleDateString('vi-VN')}`, 'overdue');
             renderDashboardCalendar();
-            loadStudioApprovals();
         }
 
         async function loadDashboard() {
@@ -1356,7 +1247,7 @@
                 document.getElementById('upload-status').innerHTML = '🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b>';
                 showUploadSuccess(result.folderLink);
             } else { 
-                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`; 
+                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${escapeHtml(result.error || 'Lỗi không xác định')}</span>`;
                 document.getElementById('btn-upload').disabled = false; 
                 pendingResumeData = result.resumeData || null;
                 document.getElementById('resume-upload-box').style.display = pendingResumeData ? 'block' : 'none';
@@ -1379,7 +1270,7 @@
                 showUploadSuccess(result.folderLink);
             } else {
                 pendingResumeData = result.resumeData || pendingResumeData;
-                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${result.error}</span>`;
+                document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${escapeHtml(result.error || 'Lỗi không xác định')}</span>`;
             }
         });
 
@@ -1438,7 +1329,9 @@
             gridContainer.innerHTML = '';
             if (!visibleHistory.length) gridContainer.innerHTML = '<p style="text-align:center;grid-column:1/-1;padding:30px;color:#64748b;">Không có album phù hợp bộ lọc.</p>';
             visibleHistory.forEach(album => {
-                const badgeClass = album.status.includes('Đã xong') ? 'album-badge done' : 'album-badge waiting';
+                const albumStatus = String(album.status || 'Đang xử lý');
+                const albumDate = String(album.date || '');
+                const badgeClass = albumStatus.includes('Đã xong') ? 'album-badge done' : 'album-badge waiting';
                 const card = document.createElement('div');
                 card.className = 'album-card';
                 card.dataset.rawSynced = album.rawSynced ? '1' : '0';
@@ -1450,12 +1343,12 @@
                     <div class="album-thumb-wrapper">
                         <span class="album-thumb-placeholder" id="placeholder-${album.id}">📸</span>
                         <img id="thumb-img-${album.id}" src="" onerror="this.style.display='none';" style="display:none;">
-                        <span class="album-badge ${badgeClass}" id="status-${album.id}" onclick="toggleStatus('${album.id}')" style="cursor:pointer;" title="Click đổi trạng thái nhanh">${album.status}</span>
+                        <span class="album-badge ${badgeClass}" id="status-${album.id}" onclick="toggleStatus('${album.id}')" style="cursor:pointer;" title="Click đổi trạng thái nhanh">${escapeHtml(albumStatus)}</span>
                     </div>
                     <div class="album-info-box">
                         <div>
                             <div class="album-title-text" title="${escapeHtml(album.name || '')}">${album.galleryType === 'party' ? '🎉 ' : ''}${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
-                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-date-text">📅 ${escapeHtml(albumDate.split(' ')[1] || albumDate)} | 🔢 Giới hạn: ${escapeHtml(limitText)}</div>
                             <div class="album-payment-summary">💳 ${paymentSummary(album)}</div>
                             <div class="album-status-history" id="status-history-${album.id}" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
                             <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">

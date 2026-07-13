@@ -4,13 +4,37 @@ const bodyParser = require('body-parser');
 const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
 
 const app = express();
+app.disable('x-powered-by');
 const driveOAuthStates = new Map();
-app.use(cors());
-app.use(bodyParser.json());
+const allowedOrigins = String(process.env.FINDER_ALLOWED_ORIGINS || 'https://finder-swart-pi.vercel.app,http://localhost:5000,http://localhost:3000')
+    .split(',').map(origin => origin.trim()).filter(Boolean);
+app.use(cors({ origin(origin, callback) {
+    // Native desktop requests do not include Origin; keep them working.
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origin không được phép.'));
+} }));
+app.use(bodyParser.json({ limit: process.env.FINDER_JSON_LIMIT || '256kb' }));
+
+// Lightweight per-instance rate limiting. Vercel instances are ephemeral, so
+// this is not a replacement for an edge/WAF limit, but it prevents accidental
+// request storms and repeated OAuth attempts on a single instance.
+const requestBuckets = new Map();
+app.use('/api/', (req, res, next) => {
+    const key = `${req.ip || 'unknown'}:${req.path.startsWith('/auth/') ? 'auth' : 'api'}`;
+    const now = Date.now();
+    const bucket = requestBuckets.get(key) || { start: now, count: 0 };
+    if (now - bucket.start > 60_000) { bucket.start = now; bucket.count = 0; }
+    bucket.count += 1;
+    requestBuckets.set(key, bucket);
+    if (bucket.count > (key.endsWith(':auth') ? 30 : 240)) return res.status(429).json({ success: false, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
+    if (requestBuckets.size > 5000) for (const [entry, value] of requestBuckets) if (now - value.start > 120_000) requestBuckets.delete(entry);
+    next();
+});
 
 // Credential/session files are only for local development. Keep them out of
 // the public static file handler even if a local deployment directory contains
@@ -43,6 +67,89 @@ let albumSettingsDatabase = {};
 let bannedAlbums = [];
 let finalizedDatabase = {}; 
 let firebaseDb = null;
+let firebaseMigrationPromise = null;
+
+function createManagementToken() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function hasAlbumManagementAccess(req, folderId) {
+    const settings = albumSettingsDatabase[folderId];
+    // Legacy albums created before management tokens remain compatible. New
+    // albums receive a token on their first desktop settings write.
+    if (!settings?.managementToken) return true;
+    const supplied = String(req.get('x-finder-management-token') || req.body?.managementToken || '');
+    return supplied.length === settings.managementToken.length
+        && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(settings.managementToken));
+}
+
+function requireAlbumManagement(req, res, folderId) {
+    if (hasAlbumManagementAccess(req, folderId)) return true;
+    res.status(403).json({ success: false, error: 'Không có quyền quản lý album này.' });
+    return false;
+}
+
+function publicAlbumSettings(settings = {}) {
+    const { managementToken, ...safeSettings } = settings;
+    return safeSettings;
+}
+
+function firebaseAlbumKey(folderId) {
+    return Buffer.from(String(folderId), 'utf8').toString('base64url');
+}
+
+function buildAlbumPartition(folderId) {
+    return {
+        likedImages: serializeLikedImages({ [folderId]: likedImagesDatabase[folderId] || {} })[folderId] || {},
+        checkNotes: serializeLikedImages({ [folderId]: checkNotesDatabase[folderId] || {} })[folderId] || {},
+        settings: albumSettingsDatabase[folderId] || null,
+        finalized: Boolean(finalizedDatabase[folderId]),
+        banned: bannedAlbums.includes(folderId),
+        updatedAt: new Date().toISOString()
+    };
+}
+
+async function ensureFirebaseMigration() {
+    if (!firebaseDb) return;
+    if (firebaseMigrationPromise) return firebaseMigrationPromise;
+    firebaseMigrationPromise = (async () => {
+        const markerRef = firebaseDb.ref('finderPictureStateMigration/v1');
+        const markerSnapshot = await markerRef.once('value');
+        if (markerSnapshot.exists() && markerSnapshot.val()?.status === 'completed') return;
+        const aggregateSnapshot = await firebaseDb.ref('finderPictureState').once('value');
+        const aggregate = aggregateSnapshot.val() || {};
+        const ids = new Set([
+            ...Object.keys(aggregate.likedImagesDatabase || {}),
+            ...Object.keys(aggregate.checkNotesDatabase || {}),
+            ...Object.keys(aggregate.albumSettingsDatabase || {}),
+            ...Object.keys(aggregate.finalizedDatabase || {}),
+            ...(Array.isArray(aggregate.bannedAlbums) ? aggregate.bannedAlbums : [])
+        ]);
+        const backupId = new Date().toISOString().replace(/[:.]/g, '-');
+        await firebaseDb.ref(`finderPictureStateBackups/${backupId}`).set({ createdAt: new Date().toISOString(), source: 'finderPictureState', data: aggregate });
+        const updates = {};
+        for (const folderId of ids) {
+            const liked = (aggregate.likedImagesDatabase || {})[folderId] || {};
+            const notes = (aggregate.checkNotesDatabase || {})[folderId] || {};
+            updates[`finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`] = {
+                folderId,
+                likedImages: liked,
+                checkNotes: notes,
+                settings: (aggregate.albumSettingsDatabase || {})[folderId] || null,
+                finalized: Boolean((aggregate.finalizedDatabase || {})[folderId]),
+                banned: Array.isArray(aggregate.bannedAlbums) && aggregate.bannedAlbums.includes(folderId),
+                updatedAt: new Date().toISOString()
+            };
+        }
+        if (Object.keys(updates).length) await firebaseDb.ref().update(updates);
+        await markerRef.set({ status: 'completed', version: 1, backupId, migratedAlbums: ids.size, completedAt: new Date().toISOString() });
+    })().catch(error => {
+        firebaseMigrationPromise = null;
+        console.error('Firebase migration failed:', error.message);
+        throw error;
+    });
+    return firebaseMigrationPromise;
+}
 
 // Vercel không giữ được file giữa các lần chạy. Khi cấu hình Firebase, toàn bộ
 // trạng thái album sẽ được lưu bền vững; máy local vẫn có thể dùng database.json.
@@ -78,6 +185,29 @@ function saveDB() {
 
 async function loadPersistentState() {
     if (!firebaseDb) return;
+    await ensureFirebaseMigration();
+    // Read album partitions first. The old aggregate node is retained as a
+    // migration/rollback source and only used for legacy fallback.
+    const partitionsSnapshot = await firebaseDb.ref('finderPictureStateByAlbum').once('value');
+    const partitions = partitionsSnapshot.val();
+    if (partitions && Object.keys(partitions).length) {
+        const liked = {}, notes = {}, settings = {}, finalized = {}, banned = [];
+        for (const partition of Object.values(partitions)) {
+            const folderId = String(partition?.folderId || '');
+            if (!folderId) continue;
+            liked[folderId] = deserializeLikedImages({ [folderId]: partition.likedImages || {} })[folderId] || {};
+            notes[folderId] = deserializeLikedImages({ [folderId]: partition.checkNotes || {} })[folderId] || {};
+            if (partition.settings) settings[folderId] = partition.settings;
+            if (partition.finalized) finalized[folderId] = true;
+            if (partition.banned) banned.push(folderId);
+        }
+        likedImagesDatabase = liked;
+        checkNotesDatabase = notes;
+        albumSettingsDatabase = settings;
+        finalizedDatabase = finalized;
+        bannedAlbums = banned;
+        return;
+    }
     const snapshot = await firebaseDb.ref('finderPictureState').once('value');
     const state = snapshot.val();
     if (!state) return;
@@ -114,16 +244,20 @@ function deserializeLikedImages(likedImages) {
     ]));
 }
 
-async function persistState() {
+async function persistState(changedFolderId = null, options = {}) {
     saveDB();
     if (firebaseDb) {
-        await firebaseDb.ref('finderPictureState').set({
-            likedImagesDatabase: serializeLikedImages(likedImagesDatabase),
-            checkNotesDatabase: serializeLikedImages(checkNotesDatabase),
-            albumSettingsDatabase,
-            bannedAlbums,
-            finalizedDatabase
-        });
+        // Keep the aggregate node immutable as a migration/rollback snapshot.
+        // All normal writes go to one album partition, preventing unrelated
+        // albums from rewriting a large Firebase node.
+        const updates = { 'finderPictureStateMeta/bannedAlbums': bannedAlbums };
+        if (changedFolderId) {
+            const key = `finderPictureStateByAlbum/${firebaseAlbumKey(changedFolderId)}`;
+            updates[key] = options.deletePartition ? null : buildAlbumPartition(changedFolderId);
+        } else if (options.clearAll) {
+            updates.finderPictureStateByAlbum = null;
+        }
+        await firebaseDb.ref().update(updates);
     }
 }
 
@@ -188,7 +322,11 @@ app.get('/api/auth/drive-token', (req, res) => {
         const client = getOAuth2Client();
         if (!client) return res.status(503).json({ error: 'Server chưa cấu hình OAuth.' });
         const tokens = getStoredTokens();
-        res.json({ success: true, clientId: client._clientId, tokens: tokens || null });
+        // Không phát refresh/access token dùng chung cho mọi máy. Desktop mới
+        // sẽ tự OAuth theo máy; chỉ bật cơ chế cũ trong môi trường thử nghiệm
+        // khi explicitly đặt biến môi trường.
+        const allowSharedToken = process.env.FINDER_ALLOW_SHARED_TOKEN_API === '1';
+        res.json({ success: true, clientId: client._clientId, tokens: allowSharedToken ? (tokens || null) : null, tokenAvailable: Boolean(tokens) });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
@@ -213,7 +351,7 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
     const requested = slugifyAlbumName(req.params.slug);
     const match = Object.entries(albumSettingsDatabase).find(([, settings]) => settings?.publicSlug === requested);
     if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
-    res.json({ success: true, folderId: match[0], settings: match[1] });
+    res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(match[1]) });
 });
 
 app.get('/a/:slug', (req, res) => {
@@ -283,16 +421,10 @@ function getStoredTokens() {
     return null;
 }
 
-app.post('/api/auth/save-token', (req, res) => {
-    const { tokens } = req.body;
-    if (!tokens) return res.status(400).json({ error: "Thiếu Token" });
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens));
-    res.json({ success: true });
-});
-
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!requireAlbumManagement(req, res, folderId)) return;
     const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
@@ -312,7 +444,9 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
         };
+        albumSettingsDatabase[folderId].managementToken = createManagementToken();
     } else {
+        if (!albumSettingsDatabase[folderId].managementToken) albumSettingsDatabase[folderId].managementToken = createManagementToken();
         if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
@@ -342,8 +476,8 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         delete finalizedDatabase[folderId];
         albumSettingsDatabase[folderId].selectionReopenedAt = new Date().toISOString();
     }
-    await persistState();
-    res.json({ success: true, settings: albumSettingsDatabase[folderId] });
+    await persistState(folderId);
+    res.json({ success: true, settings: albumSettingsDatabase[folderId], managementToken: albumSettingsDatabase[folderId].managementToken });
 });
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
@@ -361,6 +495,7 @@ app.post('/api/party-gallery', async (req, res) => {
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
     const sectionName = String(req.body?.sectionName || 'Ngày 1').trim() || 'Ngày 1';
+    const managementToken = createManagementToken();
     albumSettingsDatabase[folderId] = {
         ...(albumSettingsDatabase[folderId] || {}),
         isEnabled: true,
@@ -381,11 +516,12 @@ app.post('/api/party-gallery', async (req, res) => {
         expiresAt,
         expiresDays,
         paymentStatus: req.body?.paymentStatus || 'unpaid',
-        paymentAmount: Number(req.body?.paymentAmount) || 0
+        paymentAmount: Number(req.body?.paymentAmount) || 0,
+        managementToken
     };
     finalizedDatabase[folderId] = true;
-    await persistState();
-    res.json({ success: true, folderId, driveFolderId, publicSlug, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlug}`, expiresAt, expiresDays });
+    await persistState(folderId);
+    res.json({ success: true, folderId, driveFolderId, publicSlug, managementToken, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlug}`, expiresAt, expiresDays });
 });
 
 // Thêm một ngày/đợt ảnh vào gallery tiệc hiện tại. Link publicSlug giữ nguyên;
@@ -395,13 +531,14 @@ app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
     const folderId = req.params.folderId;
     const settings = albumSettingsDatabase[folderId];
     if (!settings || settings.galleryType !== 'party') return res.status(404).json({ success: false, error: 'Không tìm thấy gallery tiệc.' });
+    if (!requireAlbumManagement(req, res, folderId)) return;
     const driveFolderId = String(req.body?.driveFolderId || '').trim();
     const name = String(req.body?.sectionName || '').trim();
     if (!driveFolderId || !name) return res.status(400).json({ success: false, error: 'Thiếu tên ngày hoặc thư mục Drive.' });
     const sections = Array.isArray(settings.gallerySections) ? settings.gallerySections : [{ id: settings.originalFolderId || folderId, name: 'Ngày 1', driveFolderId: settings.originalFolderId || folderId }];
     if (!sections.some(section => section.driveFolderId === driveFolderId)) sections.push({ id: driveFolderId, name, driveFolderId, createdAt: new Date().toISOString() });
     settings.gallerySections = sections;
-    await persistState();
+    await persistState(folderId);
     res.json({ success: true, gallerySections: sections, publicSlug: settings.publicSlug });
 });
 
@@ -410,7 +547,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', displayName: 'Finder', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
+        settings: publicAlbumSettings(albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', displayName: 'Finder', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' }),
         isFinalized: !!finalizedDatabase[folderId]
     });
 });
@@ -418,6 +555,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
 app.post('/api/album/:folderId/check', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!requireAlbumManagement(req, res, folderId)) return;
     const checkFolderId = typeof req.body?.checkFolderId === 'string' ? req.body.checkFolderId.trim() : '';
     if (!checkFolderId) return res.status(400).json({ success: false, error: 'Thiếu mã thư mục CHECK.' });
     const current = albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 };
@@ -437,7 +575,7 @@ app.post('/api/album/:folderId/check', async (req, res) => {
         checkImageCount: Number(req.body?.checkImageCount) || 0
     };
     delete albumCheckCacheDatabase[folderId];
-    await persistState();
+    await persistState(folderId);
     res.json({ success: true, checkReady: true, checkFolderId });
 });
 
@@ -451,21 +589,27 @@ app.post('/api/album/:folderId/check/confirm', async (req, res) => {
     settings.expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
     settings.workflowStatus = 'completed';
     albumSettingsDatabase[folderId] = settings;
-    await persistState();
+    await persistState(folderId);
     res.json({ success: true, completedAt: settings.checkAcceptedAt, expiresAt: settings.expiresAt, checkVersion: settings.checkVersion || 1 });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    const settings = albumSettingsDatabase[folderId] || {};
     finalizedDatabase[folderId] = true;
-    await persistState();
-    res.json({ success: true });
+    settings.workflowStatus = 'completed';
+    settings.finalizedAt = settings.finalizedAt || new Date().toISOString();
+    settings.expiresAt = settings.expiresAt || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    albumSettingsDatabase[folderId] = settings;
+    await persistState(folderId);
+    res.json({ success: true, workflowStatus: settings.workflowStatus, finalizedAt: settings.finalizedAt, expiresAt: settings.expiresAt });
 });
 
 app.delete('/api/album/:folderId', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!requireAlbumManagement(req, res, folderId)) return;
     if (!bannedAlbums.includes(folderId)) bannedAlbums.push(folderId);
     delete albumCacheDatabase[folderId];
     delete albumCheckCacheDatabase[folderId];
@@ -473,14 +617,79 @@ app.delete('/api/album/:folderId', async (req, res) => {
     delete checkNotesDatabase[folderId];
     delete albumSettingsDatabase[folderId];
     delete finalizedDatabase[folderId];
-    await persistState();
+    await persistState(folderId, { deletePartition: true });
     res.json({ success: true, message: "Album đã bị hủy!" });
 });
 
 app.delete('/api/album/flush-all/data', async (req, res) => {
-    albumCacheDatabase = {}; albumCheckCacheDatabase = {}; likedImagesDatabase = {}; checkNotesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {};
-    await persistState();
+    if (process.env.FINDER_ENABLE_DANGER_ZONE !== '1') return res.status(403).json({ success: false, error: 'Tính năng xóa toàn bộ dữ liệu đang bị khóa.' });
+    albumCacheDatabase = {}; albumCheckCacheDatabase = {}; likedImagesDatabase = {}; checkNotesDatabase = {}; albumSettingsDatabase = {}; finalizedDatabase = {}; bannedAlbums = [];
+    await persistState(null, { clearAll: true });
     res.json({ success: true, message: "All data cleared" });
+});
+
+// Rollback is intentionally disabled in normal deployments. Enable only for
+// a controlled maintenance window with FINDER_ENABLE_DANGER_ZONE=1 and pass
+// the backupId returned by the migration marker/logs.
+app.get('/api/internal/firebase-migration/status', async (req, res) => {
+    if (process.env.FINDER_ENABLE_DANGER_ZONE !== '1') {
+        return res.status(403).json({ success: false, error: 'Migration status đang bị khóa.' });
+    }
+    if (!firebaseDb) return res.status(503).json({ success: false, error: 'Firebase chưa được cấu hình.' });
+    try {
+        const snapshot = await firebaseDb.ref('finderPictureStateMigration/v1').once('value');
+        res.json({ success: true, migration: snapshot.val() || null });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Không thể đọc trạng thái migration.' });
+    }
+});
+
+app.post('/api/internal/firebase-migration/rollback', async (req, res) => {
+    if (process.env.FINDER_ENABLE_DANGER_ZONE !== '1') {
+        return res.status(403).json({ success: false, error: 'Rollback đang bị khóa.' });
+    }
+    if (!firebaseDb) return res.status(503).json({ success: false, error: 'Firebase chưa được cấu hình.' });
+    const backupId = String(req.body?.backupId || '').trim();
+    if (!/^[A-Za-z0-9_-]+$/.test(backupId)) {
+        return res.status(400).json({ success: false, error: 'backupId không hợp lệ.' });
+    }
+    try {
+        const snapshot = await firebaseDb.ref(`finderPictureStateBackups/${backupId}`).once('value');
+        const aggregate = snapshot.val()?.data;
+        if (!aggregate) return res.status(404).json({ success: false, error: 'Không tìm thấy bản sao lưu.' });
+        const updates = {
+            finderPictureState: aggregate,
+            'finderPictureStateMeta/bannedAlbums': aggregate.bannedAlbums || []
+        };
+        const ids = new Set([
+            ...Object.keys(aggregate.likedImagesDatabase || {}),
+            ...Object.keys(aggregate.checkNotesDatabase || {}),
+            ...Object.keys(aggregate.albumSettingsDatabase || {}),
+            ...Object.keys(aggregate.finalizedDatabase || {}),
+            ...(aggregate.bannedAlbums || [])
+        ]);
+        for (const folderId of ids) {
+            updates[`finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`] = {
+                folderId,
+                likedImages: (aggregate.likedImagesDatabase || {})[folderId] || {},
+                checkNotes: (aggregate.checkNotesDatabase || {})[folderId] || {},
+                settings: (aggregate.albumSettingsDatabase || {})[folderId] || null,
+                finalized: Boolean((aggregate.finalizedDatabase || {})[folderId]),
+                banned: Array.isArray(aggregate.bannedAlbums) && aggregate.bannedAlbums.includes(folderId),
+                updatedAt: new Date().toISOString()
+            };
+        }
+        // Clear partitions not present in the selected backup before writing
+        // restored album partitions; avoid overlapping Firebase update paths.
+        await firebaseDb.ref('finderPictureStateByAlbum').remove();
+        await firebaseDb.ref().update(updates);
+        await firebaseDb.ref('finderPictureStateMigration/v1').update({ status: 'completed', version: 1, restoredBackupId: backupId, restoredAt: new Date().toISOString() });
+        firebaseMigrationPromise = null;
+        res.json({ success: true, backupId, restoredAlbums: ids.size });
+    } catch (error) {
+        console.error('Firebase rollback failed:', error.message);
+        res.status(500).json({ success: false, error: 'Không thể rollback Firebase.' });
+    }
 });
 
 app.get('/api/album/:folderId', async (req, res) => {
@@ -497,7 +706,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
-            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
+            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
         }
 
         const albumOAuth = await getAlbumDriveAuth(folderId);
@@ -532,15 +741,19 @@ app.get('/api/album/:folderId', async (req, res) => {
             };
         };
         const listDriveImages = async parentId => {
-            const response = await drive.files.list({
-                q: `'${parentId}' in parents and trashed = false`,
-                includeItemsFromAllDrives: true, supportsAllDrives: true,
-                fields: 'files(id, name, webContentLink, thumbnailLink)',
-                pageSize: 500
-            });
-            return (response.data.files || [])
-                .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
-                .map(toClientFile);
+            const files = [];
+            let pageToken;
+            do {
+                const response = await drive.files.list({
+                    q: `'${parentId}' in parents and trashed = false`,
+                    includeItemsFromAllDrives: true, supportsAllDrives: true,
+                    fields: 'nextPageToken,files(id, name, webContentLink, thumbnailLink)',
+                    pageSize: 1000, pageToken
+                });
+                files.push(...(response.data.files || []));
+                pageToken = response.data.nextPageToken || undefined;
+            } while (pageToken);
+            return files.filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || '')).map(toClientFile);
         };
         // Album mới lưu ảnh gốc trong ORIGINAL; album cũ vẫn đọc ảnh ở root.
         const sections = currentSettings.galleryType === 'party' && Array.isArray(currentSettings.gallerySections) && currentSettings.gallerySections.length
@@ -552,11 +765,12 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
-        res.json({ success: true, folderId, files, checkFiles, gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
+        res.json({ success: true, folderId, files, checkFiles, gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
+    if (!requireAlbumManagement(req, res, req.params.folderId)) return;
     if (!firebaseDb || !req.body?.tokens) return res.status(503).json({ error: 'Firebase chưa cấu hình hoặc thiếu token.' });
     await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set(req.body.tokens);
     res.json({ success: true });
@@ -586,7 +800,7 @@ app.post('/api/album/:folderId/toggle-like', async (req, res) => {
         }
     }
     likedImagesDatabase[folderId][fileName] = { isLiked, note: note || "" };
-    await persistState();
+    await persistState(folderId);
     res.json({ success: true });
 });
 
@@ -606,7 +820,7 @@ app.post('/api/album/:folderId/check-note', async (req, res) => {
         settings.workflowStatus = 'revision_requested';
         albumSettingsDatabase[folderId] = settings;
     }
-    await persistState();
+    await persistState(folderId);
     res.json({ success: true, note: checkNotesDatabase[folderId][fileName] });
 });
 
@@ -632,7 +846,7 @@ app.use((error, req, res, next) => {
     console.error('API error:', error);
     res.status(error.status || 500).json({
         success: false,
-        error: error.message || 'Máy chủ không thể lưu dữ liệu.'
+        error: process.env.NODE_ENV === 'production' ? 'Máy chủ không thể xử lý yêu cầu.' : (error.message || 'Máy chủ không thể lưu dữ liệu.')
     });
 });
 
