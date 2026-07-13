@@ -73,7 +73,19 @@
         .album-flow-step.active .album-flow-dot { background:#dbeafe; color:#2563eb; box-shadow:0 0 0 3px #eff6ff; }
         .album-flow-step.done .album-flow-dot { background:#d1fae5; color:#047857; }
         .album-payment-summary { margin-top:4px; color:#475569; font-size:12px; font-weight:650; }
+        .library-filter-panel { margin:0 0 16px; padding:18px 20px; border:1px solid #d9dcff; border-radius:16px; background:linear-gradient(135deg,#ffffff,#f6f7ff); box-shadow:0 10px 26px rgba(79,70,229,.08); }
+        .library-filter-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+        .library-filter-title strong { color:#312e81; font-size:14px; }
+        .library-filter-row { display:flex; gap:9px; flex-wrap:wrap; align-items:center; }
+        .library-filter-row input, .library-filter-row select { min-height:38px; padding:8px 11px; border:1px solid #d9dee8; border-radius:9px; background:#fff; color:#334155; font-size:12px; outline:none; }
+        .library-filter-row input { flex:1 1 220px; max-width:280px; }
+        .library-filter-row select { min-width:175px; }
+        .library-filter-chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; min-height:22px; }
+        .library-filter-chip { display:inline-flex; align-items:center; gap:5px; padding:4px 9px; border-radius:999px; color:#3730a3; background:#eef2ff; font-size:11px; font-weight:750; }
+        .library-filter-empty { color:#94a3b8; font-size:11px; }
+        .library-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 14px; }
         @media (max-width:520px) { .album-flow { overflow-x:auto; } .album-flow-step { font-size:9px; } }
+        @media (max-width:520px) { .library-filter-panel { padding:14px; } .library-filter-title { align-items:flex-start; } .library-filter-row input, .library-filter-row select { flex:1 1 100%; max-width:none; width:100%; } .library-tabs { overflow-x:auto; flex-wrap:nowrap; padding-bottom:2px; } .library-tabs button { white-space:nowrap; } }
         
         .album-btn-row { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #f1f5f9; padding-top: 12px; }
         .album-btn-row button { margin: 0; padding: 6px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; }
@@ -270,7 +282,7 @@
             </div>
             <div id="standard-upload-flow">
             <div class="box" id="standard-folder-section">
-                <h3>01 — Chọn thư mục ảnh</h3>
+                <h3>Chọn thư mục ảnh</h3>
                 <button id="btn-select">Chọn thư mục & quét ảnh</button>
                 <p id="selected-path" style="color: #10b981; font-weight: bold; margin-top: 10px; font-size: 13px;"></p>
                 <p id="scan-result" style="margin-top: 10px; font-size: 13px;"></p>
@@ -293,7 +305,7 @@
             </div>
 
             <div class="box" id="upload-section">
-                <h3>02 — Cấu hình album</h3>
+                <h3>Cấu hình album</h3>
                 <div class="input-group">
                     <label>Tên thư mục trên Drive (Tên khách hàng):</label>
                     <input type="text" id="folder-name-input" placeholder="Ví dụ: Anh_Cuoi_Tuan_Ngoc">
@@ -344,7 +356,7 @@
             </div>
 
         <div class="box" id="party-upload-section" style="display:none;">
-            <h3>03 — Upload gallery tiệc / PSC</h3>
+            <h3>Upload gallery tiệc / PSC</h3>
             <p style="margin-top:-4px;color:#64748b;font-size:13px;max-width:720px;">Upload trực tiếp vào thư mục Google Drive đã chọn. Luồng này không chạy AI culling và không tạo thư mục con.</p>
             <div class="input-group">
                 <label>Thư mục ảnh tiệc trên máy:</label>
@@ -365,13 +377,18 @@
 
         <div id="view-history" class="view-section">
             <h2>Thư viện album</h2>
-            <div class="upload-mode-switch" style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;">
+            <div class="library-filter-panel">
+                <div class="library-filter-title"><strong>🔎 Lọc & sắp xếp thư viện</strong><button id="library-clear-filters" type="button" class="btn-outline" style="margin:0;padding:7px 10px;font-size:11px;">Xóa bộ lọc</button></div>
+                <div class="library-filter-row">
+                    <input id="library-studio-filter" type="search" placeholder="Studio hoặc cá nhân…">
+                    <select id="library-payment-filter"><option value="">Tất cả thanh toán</option><option value="unpaid">Chưa thanh toán</option><option value="deposit">Đã đặt cọc</option><option value="paid">Đã thanh toán đủ</option></select>
+                    <select id="library-sort-filter"><option value="newest">Mới cập nhật trước</option><option value="oldest">Cũ nhất trước</option><option value="name">Tên A → Z</option><option value="balance">Còn nợ nhiều nhất</option></select>
+                </div>
+                <div id="library-filter-chips" class="library-filter-chips"><span class="library-filter-empty">Đang hiển thị toàn bộ loại album hiện tại</span></div>
+            </div>
+            <div class="library-tabs">
                 <button id="library-tab-selection" type="button" class="btn-success">📸 Album khách chọn ảnh</button>
                 <button id="library-tab-party" type="button" class="btn-outline">🎉 Gallery tiệc / PSC</button>
-            </div>
-            <div class="box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px 18px;">
-                <input id="library-studio-filter" type="search" placeholder="Lọc theo Studio…" style="max-width:260px;">
-                <select id="library-payment-filter" style="max-width:220px;"><option value="">Tất cả thanh toán</option><option value="unpaid">Chưa thanh toán</option><option value="deposit">Đã đặt cọc</option><option value="paid">Đã thanh toán đủ</option></select>
             </div>
             <div class="album-grid" id="history-grid-container"></div>
             <div class="box" id="sync-progress-box-wrapper" style="margin-top: 30px; display: none;">
@@ -710,8 +727,30 @@
             document.getElementById('library-tab-party').className = libraryTypeFilter === 'party' ? 'btn-success' : 'btn-outline';
             loadAlbumHistory();
         }
+        function renderLibraryFilterState(history = []) {
+            const selectionCount = history.filter(album => album.galleryType !== 'party').length;
+            const partyCount = history.filter(album => album.galleryType === 'party').length;
+            document.getElementById('library-tab-selection').textContent = `📸 Album khách chọn ảnh (${selectionCount})`;
+            document.getElementById('library-tab-party').textContent = `🎉 Gallery tiệc / PSC (${partyCount})`;
+            const chips = document.getElementById('library-filter-chips');
+            const studio = (document.getElementById('library-studio-filter')?.value || '').trim();
+            const payment = document.getElementById('library-payment-filter')?.value || '';
+            const sort = document.getElementById('library-sort-filter')?.value || 'newest';
+            const labels = { unpaid: 'Chưa thanh toán', deposit: 'Đã đặt cọc', paid: 'Đã thanh toán đủ', newest: 'Mới cập nhật trước', oldest: 'Cũ nhất trước', name: 'Tên A → Z', balance: 'Còn nợ nhiều nhất' };
+            const values = [];
+            if (studio) values.push(`Studio: ${escapeHtml(studio)}`);
+            if (payment) values.push(`Thanh toán: ${labels[payment]}`);
+            if (sort !== 'newest') values.push(`Sắp xếp: ${labels[sort]}`);
+            chips.innerHTML = values.length ? values.map(value => `<span class="library-filter-chip">${value}</span>`).join('') : '<span class="library-filter-empty">Đang hiển thị toàn bộ theo tab hiện tại</span>';
+        }
         document.getElementById('library-tab-selection').addEventListener('click', () => setLibraryTypeFilter('selection'));
         document.getElementById('library-tab-party').addEventListener('click', () => setLibraryTypeFilter('party'));
+        document.getElementById('library-clear-filters').addEventListener('click', () => {
+            document.getElementById('library-studio-filter').value = '';
+            document.getElementById('library-payment-filter').value = '';
+            document.getElementById('library-sort-filter').value = 'newest';
+            loadAlbumHistory();
+        });
 
         async function restoreLastDriveFolder() {
             const lastFolder = await ipcRenderer.invoke('get-last-drive-folder');
@@ -1381,11 +1420,20 @@
 
             const studioFilter = (document.getElementById('library-studio-filter')?.value || '').trim().toLowerCase();
             const paymentFilter = document.getElementById('library-payment-filter')?.value || '';
+            const sortFilter = document.getElementById('library-sort-filter')?.value || 'newest';
+            renderLibraryFilterState(history);
             const visibleHistory = history.filter(album =>
                 (libraryTypeFilter === 'party' ? album.galleryType === 'party' : album.galleryType !== 'party') &&
                 (!studioFilter || String(album.studioName || 'Finder').toLowerCase().includes(studioFilter)) &&
                 (!paymentFilter || (album.paymentStatus || 'unpaid') === paymentFilter)
             );
+            visibleHistory.sort((a, b) => {
+                if (sortFilter === 'name') return String(a.name || '').localeCompare(String(b.name || ''), 'vi', { sensitivity: 'base', numeric: true });
+                if (sortFilter === 'balance') return (Number(b.paymentBalance) || 0) - (Number(a.paymentBalance) || 0);
+                const dateA = Date.parse(a.statusUpdatedAt || a.date || '') || 0;
+                const dateB = Date.parse(b.statusUpdatedAt || b.date || '') || 0;
+                return sortFilter === 'oldest' ? dateA - dateB : dateB - dateA;
+            });
 
             gridContainer.innerHTML = '';
             if (!visibleHistory.length) gridContainer.innerHTML = '<p style="text-align:center;grid-column:1/-1;padding:30px;color:#64748b;">Không có album phù hợp bộ lọc.</p>';
@@ -1442,6 +1490,12 @@
                     appendButton.className = 'btn-success'; appendButton.textContent = '➕ Thêm ngày/ảnh';
                     appendButton.addEventListener('click', () => appendPartyGallery(album.id));
                     card.querySelector('.album-btn-row')?.prepend(appendButton);
+                    if (Array.isArray(album.gallerySections) && album.gallerySections.length) {
+                        const sectionInfo = document.createElement('div');
+                        sectionInfo.className = 'album-date-text';
+                        sectionInfo.textContent = '🗓️ ' + album.gallerySections.map(section => section.name || 'Ngày').join(' · ');
+                        card.querySelector('.album-payment-summary')?.before(sectionInfo);
+                    }
                 }
                 const timelineEl = document.getElementById(`status-history-${album.id}`);
                 if (timelineEl) {
@@ -1530,6 +1584,7 @@
         ['payment-total-input', 'payment-deposit-input', 'payment-paid-input'].forEach(id => document.getElementById(id).addEventListener('input', updatePaymentBalancePreview));
         document.getElementById('library-studio-filter').addEventListener('input', () => loadAlbumHistory());
         document.getElementById('library-payment-filter').addEventListener('change', () => loadAlbumHistory());
+        document.getElementById('library-sort-filter').addEventListener('change', () => loadAlbumHistory());
 
         function renderAlbumTimeline(folderId, isFinalized, checkReady, completed = false) {
             const flow = document.getElementById(`flow-${folderId}`);
