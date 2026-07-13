@@ -81,7 +81,8 @@
         .thumb-btn.active { border-color: var(--accent); }
         .thumb-btn.selected::after { content: '✓'; position: absolute; color: #fff; background: rgba(34,197,94,0.95); padding: 4px 6px; border-radius: 999px; font-size: 10px; margin: 6px; }
 
-        .finalized-banner { display: none; padding: 12px 16px; border-radius: 12px; background: linear-gradient(90deg, #7c3aed, #6d28d9); color: white; text-align: center; font-weight: 700; }
+        .finalized-banner { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:30; width:min(620px,calc(100vw - 28px)); padding:12px 16px; border:1px solid rgba(196,181,253,.42); border-radius:14px; background:rgba(76,29,149,.95); box-shadow:0 12px 32px rgba(0,0,0,.28); color:#f3e8ff; text-align:center; font-size:13px; font-weight:750; backdrop-filter:blur(16px); }
+        .finalized-banner.visible { display:block; animation:checkBannerIn .24s ease-out both; }
 
         .image-lightbox { display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.94); align-items:center; justify-content:center; touch-action:none; }
         .image-lightbox.open { display:flex; }
@@ -247,6 +248,7 @@
         .review-mode-btn { min-height:42px; padding:9px 14px; border:1px solid var(--border); border-radius:11px; background:transparent; color:var(--text-muted); font-weight:750; cursor:pointer; }
         .review-mode-btn.active { background:linear-gradient(135deg,#7c8cff,#5867e8); color:#fff; border-color:transparent; box-shadow:0 8px 18px rgba(88,103,232,.24); }
         .check-ready-banner { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:30; width:min(620px,calc(100vw - 28px)); padding:12px 16px; border:1px solid rgba(59,217,160,.38); border-radius:14px; background:rgba(11,42,39,.94); box-shadow:0 12px 32px rgba(0,0,0,.28); color:#b9f8dc; text-align:center; font-size:13px; font-weight:750; backdrop-filter:blur(16px); }
+        .finalized-banner.visible + .check-ready-banner.visible { bottom:max(76px,calc(env(safe-area-inset-bottom) + 62px)); }
         .check-ready-banner.visible { display:block; animation:checkBannerIn .24s ease-out both; }
         @keyframes checkBannerIn { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
         .selection-reopen-modal { display:none; position:fixed; inset:0; z-index:1150; align-items:center; justify-content:center; padding:20px; background:rgba(2,6,14,.72); backdrop-filter:blur(8px); }
@@ -264,7 +266,9 @@
             .selection-item { scroll-snap-align:start; }
             .lightbox-toolbar { left:50%; right:auto; justify-content:center; }
             .lightbox-toolbar button { min-width:44px; min-height:44px; }
+            .finalized-banner { bottom:max(10px,env(safe-area-inset-bottom)); width:calc(100vw - 20px); font-size:12px; }
             .check-ready-banner { bottom:max(10px,env(safe-area-inset-bottom)); width:calc(100vw - 20px); font-size:12px; }
+            .finalized-banner.visible + .check-ready-banner.visible { bottom:max(68px,calc(env(safe-area-inset-bottom) + 58px)); }
         }
 
         /* Album landing/branding layer */
@@ -302,6 +306,7 @@
         <div id="reviewModeBar" class="review-mode-bar">
             <button id="checkModeBtn" type="button" class="review-mode-btn">✨ Ảnh đã chỉnh sửa</button>
             <button id="originalModeBtn" type="button" class="review-mode-btn">🖼️ Ảnh gốc đã chọn</button>
+            <button id="checkAcceptBtn" type="button" class="review-mode-btn" style="background:#16a34a;color:#fff;">✅ Xác nhận ảnh cuối</button>
         </div>
 
         <div class="panel header-panel">
@@ -431,6 +436,8 @@
             checkReady: false,
             checkFolderId: null,
             checkUpdatedAt: null,
+            checkVersion: 0,
+            checkNeedsRevision: false,
             aiGroups: [],
             publicSlug: albumSlug,
             studioName: 'Finder',
@@ -466,6 +473,7 @@
             reviewModeBar: document.getElementById('reviewModeBar'),
             checkModeBtn: document.getElementById('checkModeBtn'),
             originalModeBtn: document.getElementById('originalModeBtn'),
+            checkAcceptBtn: document.getElementById('checkAcceptBtn'),
             imageLightbox: document.getElementById('imageLightbox'),
             lightboxImage: document.getElementById('lightboxImage'),
             lightboxLoading: document.getElementById('lightboxLoading'),
@@ -563,7 +571,10 @@
 
         function renderBranding() {
             elements.brandTitle.textContent = state.studioName || 'Finder';
-            elements.albumStatusPill.textContent = state.checkReady ? '● Ảnh chỉnh sửa đã sẵn sàng' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
+            elements.albumStatusPill.textContent = state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
+            elements.checkReadyBanner.textContent = state.checkNeedsRevision
+                ? '🛠️ Studio đang chờ xử lý ghi chú sửa thêm của bạn.'
+                : '✅ Ảnh đã chỉnh sửa xong · CHECK ' + (state.checkVersion || 1) + '. Bạn đang xem bản mới nhất.';
         }
 
         function selectedCount() {
@@ -697,6 +708,7 @@
         function updateCheckBannerVisibility() {
             const lightboxOpen = elements.imageLightbox.classList.contains('open');
             elements.checkReadyBanner.classList.toggle('visible', state.checkReady && state.viewMode === 'check' && !lightboxOpen);
+            elements.finalizedBanner.classList.toggle('visible', state.isFinalized && !lightboxOpen);
         }
 
         function canSelect(image) {
@@ -746,13 +758,13 @@
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.reviewModeBar.classList.toggle('visible', state.checkReady);
+            elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision ? '' : 'none';
             elements.checkModeBtn.classList.toggle('active', isCheckView);
             elements.originalModeBtn.classList.toggle('active', !isCheckView);
             elements.contentGrid.classList.toggle('check-view', isCheckView);
             elements.selectedImagesSection.style.display = isCheckView ? 'none' : '';
             elements.jumpToSelected.style.display = isCheckView ? 'none' : '';
             updateCheckBannerVisibility();
-            elements.finalizedBanner.style.display = state.isFinalized && !isCheckView ? 'block' : 'none';
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
             elements.selectBtn.classList.toggle('btn-outline', !current.selected);
@@ -1194,6 +1206,7 @@
                 });
                 const checkData = await checkResponse.json().catch(() => ({}));
                 if (!checkResponse.ok || !checkData.success) throw new Error(checkData.error || `Máy chủ trả về lỗi ${checkResponse.status}.`);
+                if (current.note) { state.checkNeedsRevision = true; render(); }
                 return checkData;
             }
             const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
@@ -1249,8 +1262,7 @@
                 const data = await readApiJson(response, 'Không thể tải album');
 
                 state.isFinalized = !!data.isFinalized;
-                if (state.isFinalized) elements.finalizedBanner.style.display = 'block';
-                else elements.finalizedBanner.style.display = 'none';
+                elements.finalizedBanner.classList.toggle('visible', state.isFinalized);
                 showRobotStatus(robotContextGreeting(), state.isFinalized);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
                 const mapImage = file => ({
@@ -1266,6 +1278,8 @@
                 state.checkImages.sort(naturalImageCompare);
                 state.checkFolderId = data.settings?.checkFolderId || null;
                 state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
+                state.checkVersion = Number(data.settings?.checkVersion) || 1;
+                state.checkNeedsRevision = Boolean(data.settings?.checkNeedsRevision);
                 state.selectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
@@ -1304,16 +1318,21 @@
                 const nextCheckFolderId = data.settings?.checkFolderId || null;
                 const nextCheckReady = Boolean(data.settings?.checkReady && nextCheckFolderId);
                 const nextCheckUpdatedAt = data.settings?.checkUpdatedAt || null;
+                const nextCheckVersion = Number(data.settings?.checkVersion) || state.checkVersion || 1;
+                const nextCheckNeedsRevision = Boolean(data.settings?.checkNeedsRevision);
                 const nextSelectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 const limitChanged = nextLimit !== state.maxSelections;
                 const statusChanged = nextFinalized !== state.isFinalized;
                 const checkChanged = nextCheckReady && (!state.checkReady || nextCheckUpdatedAt !== state.checkUpdatedAt);
+                const revisionChanged = nextCheckNeedsRevision !== state.checkNeedsRevision;
+                state.checkVersion = nextCheckVersion;
+                state.checkNeedsRevision = nextCheckNeedsRevision;
                 const selectionWasReopened = Boolean(nextSelectionReopenedAt && state.selectionReopenedAt && nextSelectionReopenedAt !== state.selectionReopenedAt);
                 state.selectionReopenedAt = nextSelectionReopenedAt || state.selectionReopenedAt;
                 if (limitChanged || statusChanged) {
                     state.maxSelections = nextLimit;
                     state.isFinalized = nextFinalized;
-                    elements.finalizedBanner.style.display = nextFinalized ? 'block' : 'none';
+                    elements.finalizedBanner.classList.toggle('visible', nextFinalized);
                     render();
                     if (!nextFinalized && statusChanged) {
                         setMessage('🔓 Album đã mở lại. Các ảnh cũ vẫn được giữ nguyên, bạn có thể chọn thêm ảnh.', 'success');
@@ -1321,6 +1340,7 @@
                         setMessage(nextLimit > 0 ? `ℹ️ Giới hạn mới: ${nextLimit} ảnh. Các ảnh đã chọn vẫn được giữ nguyên.` : 'ℹ️ Album hiện không giới hạn số ảnh chọn.', 'success');
                     }
                 }
+                if (revisionChanged) render();
                 if (checkChanged) {
                     state.checkFolderId = nextCheckFolderId;
                     state.checkUpdatedAt = nextCheckUpdatedAt;
@@ -1416,7 +1436,7 @@
                     throw new Error(errorData.error || 'Không thể chốt album');
                 }
                 state.isFinalized = true;
-                elements.finalizedBanner.style.display = 'block';
+                elements.finalizedBanner.classList.add('visible');
                 render();
                 showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');
@@ -1428,6 +1448,22 @@
         elements.prevBtn.addEventListener('click', prevImage);
         elements.nextBtn.addEventListener('click', nextImage);
         elements.checkModeBtn.addEventListener('click', () => setViewMode('check'));
+        elements.checkAcceptBtn.addEventListener('click', async () => {
+            if (!state.checkReady || state.checkNeedsRevision) return;
+            if (!window.confirm('Xác nhận bạn đã hài lòng với phiên bản CHECK cuối cùng?')) return;
+            elements.checkAcceptBtn.disabled = true;
+            try {
+                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/check/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || !data.success) throw new Error(data.error || 'Không thể xác nhận phiên bản CHECK.');
+                state.checkNeedsRevision = false;
+                state.checkAcceptedAt = data.completedAt || new Date().toISOString();
+                render();
+                setMessage('✅ Đã xác nhận ảnh cuối cùng. Album đã hoàn thành.', 'success');
+                showRobotStatus('Cảm ơn bạn đã xác nhận. Album đã hoàn thành.', true);
+            } catch (error) { setMessage('❌ ' + error.message, 'error'); }
+            finally { elements.checkAcceptBtn.disabled = false; }
+        });
         elements.originalModeBtn.addEventListener('click', () => setViewMode('original'));
         function jumpToSection(section) {
             section.scrollIntoView({ behavior: 'smooth', block: 'start' });

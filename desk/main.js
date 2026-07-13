@@ -346,22 +346,6 @@ function updateAlbumStatus(folderId, newStatus) {
     }
 }
 
-function revertAlbumStatus(folderId) {
-    const history = getAlbumHistory();
-    const index = history.findIndex(a => a.id === folderId);
-    if (index === -1) return { success: false, error: 'Không tìm thấy album.' };
-    const timeline = Array.isArray(history[index].statusHistory) ? history[index].statusHistory : [];
-    if (timeline.length < 2) return { success: false, error: 'Album chưa có trạng thái trước đó.' };
-    timeline.pop();
-    const previous = timeline[timeline.length - 1].status;
-    createHistoryBackup('before-revert');
-    history[index].status = previous;
-    history[index].statusHistory = timeline;
-    fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ status: previous, statusHistory: timeline }).catch(e => console.log(e));
-    return { success: true, status: previous };
-}
-
 // ---------------------------------------------------------
 // 4. CÁC TÍNH NĂNG CỐT LÕI (GIỮ NGUYÊN)
 // ---------------------------------------------------------
@@ -436,7 +420,6 @@ ipcMain.handle('get-last-drive-folder', () => {
     return { id: latestAlbum.driveParentId, path: parentPath || 'Drive của tôi' };
 });
 ipcMain.handle('update-status', (event, { id, status }) => { updateAlbumStatus(id, status); return true; });
-ipcMain.handle('revert-album-status', (event, { id }) => revertAlbumStatus(id));
 ipcMain.handle('open-external-link', (event, url) => { shell.openExternal(url); });
 
 ipcMain.handle('delete-album', async (event, folderId) => {
@@ -1109,17 +1092,24 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         const auth = await authenticateCasi(true);
         const drive = google.drive({ version: 'v3', auth });
         let checkFolderId = album.checkFolderId || null;
+        const nextCheckVersion = album.checkVersion
+            ? Math.max(1, Number(album.checkVersion) + 1)
+            : (album.checkFolderId ? 2 : 1);
+        const nextCheckFolderName = nextCheckVersion === 1 ? 'CHECK' : `CHECK ${nextCheckVersion}`;
 
+        // Mỗi lần upload CHECK mới tạo một thư mục phiên bản mới; link album
+        // vẫn giữ nguyên vì server sẽ trỏ current checkFolderId sang phiên bản này.
+        checkFolderId = null;
         if (!checkFolderId) {
             const existing = await drive.files.list({
-                q: `'${folderId}' in parents and name = 'CHECK' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+                q: `'${folderId}' in parents and name = '${nextCheckFolderName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
                 fields: 'files(id, name)', pageSize: 10
             });
             checkFolderId = existing.data.files?.[0]?.id || null;
         }
         if (!checkFolderId) {
             const created = await drive.files.create({
-                resource: { name: 'CHECK', mimeType: 'application/vnd.google-apps.folder', parents: [folderId] },
+                resource: { name: nextCheckFolderName, mimeType: 'application/vnd.google-apps.folder', parents: [folderId] },
                 fields: 'id'
             });
             checkFolderId = created.data.id;
@@ -1159,9 +1149,9 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         if (uploadError) throw uploadError;
         try { await drive.permissions.create({ fileId: checkFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
 
-        await postServerJson(`/api/album/${folderId}/check`, { checkFolderId, checkImageCount: imageFiles.length }, serverAuthHeaders());
+        await postServerJson(`/api/album/${folderId}/check`, { checkFolderId, checkImageCount: imageFiles.length, version: nextCheckVersion }, serverAuthHeaders());
         const index = history.findIndex(item => item.id === folderId);
-        const checkData = { checkFolderId, checkLocalPath: folderPath, checkImageCount: imageFiles.length, checkStatus: 'ready', checkUpdatedAt: new Date().toISOString(), status: 'Ảnh đã chỉnh sửa · chờ khách kiểm tra' };
+        const checkData = { checkFolderId, checkVersion: nextCheckVersion, checkLocalPath: folderPath, checkImageCount: imageFiles.length, checkStatus: 'ready', checkUpdatedAt: new Date().toISOString(), status: `CHECK ${nextCheckVersion} · chờ khách kiểm tra` };
         if (index !== -1) {
             Object.assign(history[index], checkData);
             const previous = history[index].statusHistory?.at(-1)?.status;

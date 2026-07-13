@@ -338,7 +338,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
         isFinalized: !!finalizedDatabase[folderId]
     });
 });
@@ -349,16 +349,37 @@ app.post('/api/album/:folderId/check', async (req, res) => {
     const checkFolderId = typeof req.body?.checkFolderId === 'string' ? req.body.checkFolderId.trim() : '';
     if (!checkFolderId) return res.status(400).json({ success: false, error: 'Thiếu mã thư mục CHECK.' });
     const current = albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 };
+    const nextVersion = Math.max(1, Number(current.checkVersion || 0) + 1);
+    const version = Number(req.body?.version) || nextVersion;
+    const history = Array.isArray(current.checkHistory) ? current.checkHistory : [];
+    history.push({ version, checkFolderId, checkImageCount: Number(req.body?.checkImageCount) || 0, uploadedAt: new Date().toISOString() });
     albumSettingsDatabase[folderId] = {
         ...current,
         checkFolderId,
+        checkVersion: version,
+        checkHistory: history.slice(-30),
         checkReady: true,
+        checkNeedsRevision: false,
+        workflowStatus: 'check_pending',
         checkUpdatedAt: new Date().toISOString(),
         checkImageCount: Number(req.body?.checkImageCount) || 0
     };
     delete albumCheckCacheDatabase[folderId];
     await persistState();
     res.json({ success: true, checkReady: true, checkFolderId });
+});
+
+app.post('/api/album/:folderId/check/confirm', async (req, res) => {
+    await loadPersistentState();
+    const { folderId } = req.params;
+    const settings = albumSettingsDatabase[folderId] || {};
+    if (!settings.checkReady || !settings.checkFolderId) return res.status(400).json({ success: false, error: 'Album chưa có phiên bản CHECK để xác nhận.' });
+    settings.checkNeedsRevision = false;
+    settings.checkAcceptedAt = new Date().toISOString();
+    settings.workflowStatus = 'completed';
+    albumSettingsDatabase[folderId] = settings;
+    await persistState();
+    res.json({ success: true, completedAt: settings.checkAcceptedAt, checkVersion: settings.checkVersion || 1 });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
@@ -498,6 +519,13 @@ app.post('/api/album/:folderId/check-note', async (req, res) => {
     if (!fileName) return res.status(400).json({ success: false, error: 'Tên ảnh không hợp lệ.' });
     if (!checkNotesDatabase[folderId]) checkNotesDatabase[folderId] = {};
     checkNotesDatabase[folderId][fileName] = String(req.body?.note || '').trim();
+    if (checkNotesDatabase[folderId][fileName]) {
+        const settings = albumSettingsDatabase[folderId] || {};
+        settings.checkNeedsRevision = true;
+        settings.lastCheckNoteAt = new Date().toISOString();
+        settings.workflowStatus = 'revision_requested';
+        albumSettingsDatabase[folderId] = settings;
+    }
     await persistState();
     res.json({ success: true, note: checkNotesDatabase[folderId][fileName] });
 });

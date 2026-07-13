@@ -1199,7 +1199,6 @@
                             <button class="btn-danger btn-sync" data-action="raw" style="display:none;" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
-                            <button class="btn-outline btn-revert-status" onclick="revertAlbumStatus('${album.id}')" title="Quay lại trạng thái trước">↶ Trạng thái trước</button>
                             <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
@@ -1261,7 +1260,7 @@
             });
         }
 
-        function updateAlbumActionVisibility(folderId, isFinalized, checkReady) {
+        function updateAlbumActionVisibility(folderId, isFinalized, checkReady, checkNeedsRevision = false) {
             const card = document.querySelector(`#check-btn-${folderId}`)?.closest('.album-card');
             if (!card) return;
             const rawButton = card.querySelector('[data-action="raw"]');
@@ -1269,7 +1268,7 @@
             const rawSynced = card.dataset.rawSynced === '1';
             // Luồng thao tác bắt buộc: khách chốt → Gom RAW → Upload CHECK.
             if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
-            if (checkButton) checkButton.style.display = isFinalized && rawSynced && !checkReady ? '' : 'none';
+            if (checkButton) checkButton.style.display = isFinalized && rawSynced && (!checkReady || checkNeedsRevision) ? '' : 'none';
             renderAlbumTimeline(folderId, isFinalized, checkReady);
         }
 
@@ -1366,12 +1365,6 @@
             loadAlbumHistory();
         }
 
-        async function revertAlbumStatus(folderId) {
-            const result = await ipcRenderer.invoke('revert-album-status', { id: folderId });
-            if (!result.success) return alert(result.error || 'Không thể quay lại trạng thái trước.');
-            await loadAlbumHistory();
-        }
-
         async function checkProgress(folderId, btn, silent = false) {
             if (!silent) btn.innerText = "⏳...";
             try {
@@ -1384,8 +1377,10 @@
                 if(data.success) { 
                     const count = Object.keys(data.liked_files).length;
                     const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId);
+                    const checkNeedsRevision = Boolean(settingsData.settings?.checkNeedsRevision);
+                    const checkCompleted = settingsData.settings?.workflowStatus === 'completed';
                     const checkReadyForWorkflow = checkReady && !!data.isFinalized;
-                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow);
+                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow, checkNeedsRevision);
                     if (checkReady && !data.isFinalized) {
                         ipcRenderer.invoke('update-status', { id: folderId, status: 'Đang chờ khách chọn lại' });
                         btn.innerHTML = `🔓 Đang chờ khách chọn lại · ${count} ảnh cũ`;
@@ -1394,9 +1389,27 @@
                         btn.style.border = "none";
                         const status = document.getElementById(`status-${folderId}`);
                         if (status) { status.innerText = "Đang chờ khách chọn lại"; status.className = "album-badge waiting"; }
+                    } else if (checkCompleted) {
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Hoàn thành' });
+                        btn.innerHTML = '🏁 Hoàn thành · CHECK ' + (settingsData.settings?.checkVersion || 1);
+                        btn.style.background = '#16a34a';
+                        btn.style.color = '#fff';
+                        btn.style.border = 'none';
+                        const status = document.getElementById(`status-${folderId}`);
+                        if (status) { status.innerText = 'Hoàn thành'; status.className = 'album-badge done'; }
+                    } else if (checkReady && checkNeedsRevision) {
+                        const version = settingsData.settings?.checkVersion || 1;
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Khách yêu cầu sửa thêm · CHECK ' + version });
+                        btn.innerHTML = '🛠️ Khách yêu cầu sửa thêm · CHECK ' + version;
+                        btn.style.background = '#f59e0b';
+                        btn.style.color = '#fff';
+                        btn.style.border = 'none';
+                        const status = document.getElementById(`status-${folderId}`);
+                        if (status) { status.innerText = 'Khách yêu cầu sửa thêm'; status.className = 'album-badge waiting'; }
                     } else if (checkReady) {
-                        ipcRenderer.invoke('update-status', { id: folderId, status: 'Ảnh đã chỉnh sửa · chờ khách kiểm tra' });
-                        btn.innerHTML = `✅ CHECK sẵn sàng · ${count} ảnh đã chọn`;
+                        const version = settingsData.settings?.checkVersion || 1;
+                        ipcRenderer.invoke('update-status', { id: folderId, status: 'CHECK ' + version + ' · chờ khách kiểm tra' });
+                        btn.innerHTML = '✅ CHECK ' + version + ' · ' + count + ' ảnh đã chọn';
                         btn.style.background = "#0ea5e9";
                         btn.style.color = "#fff";
                         btn.style.border = "none";
