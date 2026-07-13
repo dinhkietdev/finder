@@ -66,6 +66,13 @@ function isRetryableDriveUploadError(error) {
     return status === 408 || status === 429 || status >= 500 || /ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|network/i.test(`${error?.code || ''} ${error?.message || ''}`);
 }
 
+function uploadTiming(completed, total, startedAt) {
+    const elapsedSeconds = Math.max(0.1, (Date.now() - startedAt) / 1000);
+    const rate = completed > 0 ? Math.round(completed / elapsedSeconds * 60) : 0;
+    const etaSeconds = completed > 0 && total > completed ? Math.max(0, Math.round((total - completed) / (completed / elapsedSeconds))) : 0;
+    return { rate, etaSeconds };
+}
+
 async function uploadDriveFileWithRetry(drive, { fileName, parentId, localPath, mimeType }) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -965,8 +972,9 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
                     await uploadDriveFileWithRetry(drive, { fileName, parentId: driveParentId, localPath: path.join(folderPath, fileName), mimeType });
                     completed++;
-                    mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: Math.round(completed / Math.max(1, (Date.now() - startedAt) / 1000) * 60) });
-                } catch (error) { failed++; uploadError = error; mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `Lỗi: ${fileName}`, completed, total: imageFiles.length, failed }); }
+                    const timing = uploadTiming(completed, imageFiles.length, startedAt);
+                    mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
+                } catch (error) { failed++; uploadError = error; const timing = uploadTiming(completed, imageFiles.length, startedAt); mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `Lỗi: ${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds }); }
             }
         };
         await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, Math.max(1, filesToUpload.length)) }, worker));
@@ -990,10 +998,10 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {
-    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, resumeData } = payload;
+    let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, resumeData } = payload;
     let resumableUpload = resumeData || null;
     try {
-        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath } = resumeData);
+        if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath } = resumeData);
         uploadInProgress = true;
         mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: "Đang kiểm tra bảo mật..." });
         // Uploading into a user-selected folder requires the full Drive scope.
@@ -1040,7 +1048,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             const originalFolder = await drive.files.create({ resource: { name: 'ORIGINAL', mimeType: 'application/vnd.google-apps.folder', parents: [googleDriveFolderId] }, fields: 'id' });
             originalFolderId = originalFolder.data.id;
         }
-        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId, originalFolderId };
+        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId, originalFolderId };
         try { fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
 
         const existingFiles = await drive.files.list({
@@ -1072,18 +1080,21 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                         mimeType: 'image/jpeg'
                     });
                     completedFiles++;
+                    const timing = uploadTiming(completedFiles, imageFiles.length, uploadStartedAt);
                     mainWindow.webContents.send('upload-progress', {
                         progress: Math.round((completedFiles / imageFiles.length) * 100),
                         currentFile: `${fileName} (${completedFiles}/${imageFiles.length})`,
                         completed: completedFiles,
                         total: imageFiles.length,
                         failed: failedFiles.length,
-                        rate: Math.round(completedFiles / Math.max(1, (Date.now() - uploadStartedAt) / 1000) * 60)
+                        rate: timing.rate,
+                        etaSeconds: timing.etaSeconds
                     });
                 } catch (error) {
                     failedFiles.push({ fileName, error: friendlyDriveError(error) });
                     uploadError = error;
-                    mainWindow.webContents.send('upload-progress', { progress: Math.round((completedFiles / imageFiles.length) * 100), currentFile: `Lỗi: ${fileName}`, completed: completedFiles, total: imageFiles.length, failed: failedFiles.length, rate: completedFiles ? Math.round(completedFiles / Math.max(1, (Date.now() - uploadStartedAt) / 1000) * 60) : 0 });
+                    const timing = uploadTiming(completedFiles, imageFiles.length, uploadStartedAt);
+                    mainWindow.webContents.send('upload-progress', { progress: Math.round((completedFiles / imageFiles.length) * 100), currentFile: `Lỗi: ${fileName}`, completed: completedFiles, total: imageFiles.length, failed: failedFiles.length, rate: timing.rate, etaSeconds: timing.etaSeconds });
                 }
             }
         }
@@ -1101,6 +1112,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             maxSelections: maxSelections,
             publicSlug,
             clientName: folderNameOnDrive,
+            displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId,
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
@@ -1122,6 +1134,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             link: publicLink, 
             publicSlug,
             clientName: folderNameOnDrive,
+            displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId,
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
@@ -1219,6 +1232,7 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         let nextIndex = 0;
         let uploadError = null;
         let failed = 0;
+        const uploadStartedAt = Date.now();
 
         const uploadWorker = async () => {
             while (!uploadError) {
@@ -1235,8 +1249,9 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
                         mimeType
                     });
                     completed++;
-                    mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed: 0 });
-                } catch (error) { failed++; uploadError = error; mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: 'Lỗi: ' + fileName, completed, total: imageFiles.length, failed }); }
+                    const timing = uploadTiming(completed, imageFiles.length, uploadStartedAt);
+                    mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed: 0, rate: timing.rate, etaSeconds: timing.etaSeconds });
+                } catch (error) { failed++; uploadError = error; const timing = uploadTiming(completed, imageFiles.length, uploadStartedAt); mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: 'Lỗi: ' + fileName, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds }); }
             }
         };
 

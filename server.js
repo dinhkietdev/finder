@@ -293,7 +293,7 @@ app.post('/api/auth/save-token', (req, res) => {
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
     const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
@@ -305,6 +305,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             maxSelections: nextLimit,
             publicSlug: publicSlug || `album-${String(folderId).slice(-6).toLowerCase()}`,
             clientName: clientName || text || 'Album khách hàng',
+            displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId: originalFolderId || null,
             paymentStatus: paymentStatus || 'unpaid', paymentAmount: Number(paymentAmount) || 0, paymentTotal: Number(paymentTotal ?? paymentAmount) || 0, paymentDeposit: Number(paymentDeposit) || 0, paymentPaid: Number(paymentPaid) || 0, paymentBalance: Number(paymentBalance) || 0, paymentPayer: paymentPayer || 'client', paymentNote: String(paymentNote || ''),
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
@@ -317,6 +318,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
         if (publicSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
+        if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
         if (originalFolderId !== undefined) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
         if (paymentStatus !== undefined) albumSettingsDatabase[folderId].paymentStatus = paymentStatus;
         if (paymentAmount !== undefined) albumSettingsDatabase[folderId].paymentAmount = Number(paymentAmount) || 0;
@@ -365,6 +367,7 @@ app.post('/api/party-gallery', async (req, res) => {
         maxSelections: 0,
         publicSlug,
         clientName: galleryName,
+        displayName: galleryName,
         originalFolderId: driveFolderId,
         studioName,
         galleryType: 'party',
@@ -388,7 +391,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', displayName: 'Finder', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
         isFinalized: !!finalizedDatabase[folderId]
     });
 });

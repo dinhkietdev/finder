@@ -445,6 +445,7 @@
             aiGroups: [],
             publicSlug: albumSlug,
             studioName: 'Finder',
+            displayName: 'Finder',
             compareEnabled: false,
             selectionReopenedAt: null
         };
@@ -576,7 +577,7 @@
         }
 
         function renderBranding() {
-            elements.brandTitle.textContent = state.studioName || 'Finder';
+            elements.brandTitle.textContent = state.displayName || state.studioName || 'Finder';
             elements.albumStatusPill.textContent = state.workflowStatus === 'completed' ? '● Hoàn thành' : state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
             elements.checkReadyBanner.textContent = state.workflowStatus === 'completed'
                 ? '✅ Ảnh đã chỉnh sửa xong, hãy lưu ảnh sớm nhé. Link ảnh sẽ tự hủy trong vòng 60 ngày.'
@@ -1323,6 +1324,7 @@
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
                 state.studioName = data.settings?.studioName && data.settings.studioName !== 'Finder Studio' ? data.settings.studioName : 'Finder';
+                state.displayName = String(data.settings?.displayName || state.studioName || 'Finder').trim() || 'Finder';
 
                 const likedList = data.liked_list || {};
                 const checkNotes = data.check_notes || {};

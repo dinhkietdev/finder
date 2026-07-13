@@ -303,6 +303,11 @@
                     <input type="text" id="studio-name-input" placeholder="Mặc định: Finder">
                 </div>
                 <div class="input-group">
+                    <label>Tên hiển thị album/gallery <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label>
+                    <input type="text" id="album-display-name-input" placeholder="Ví dụ: NGỌC & MINH · 12.10.2026">
+                    <small style="display:block;margin-top:5px;color:#64748b;">Nếu bỏ trống, gallery sẽ hiển thị tên thương hiệu hoặc FINDER.</small>
+                </div>
+                <div class="input-group">
                     <label>Ngày giao dự kiến <span style="font-weight:400;color:#64748b;">(tùy chọn, dùng cho dashboard)</span>:</label>
                     <input type="date" id="album-due-date-input">
                 </div>
@@ -438,9 +443,10 @@
             <div class="custom-modal-title">Thanh toán album</div>
             <p id="payment-modal-album" style="font-size:13px;color:#64748b;margin:0 0 14px;"></p>
             <input type="hidden" id="payment-album-id">
-            <label class="input-group">Tổng giá trị bộ ảnh<input type="number" id="payment-total-input" min="0" step="1000" placeholder="0"></label>
-            <label class="input-group">Khách đã cọc<input type="number" id="payment-deposit-input" min="0" step="1000" placeholder="0"></label>
-            <label class="input-group">Đã thanh toán thêm<input type="number" id="payment-paid-input" min="0" step="1000" placeholder="0"></label>
+            <p style="margin:0 0 12px;color:#64748b;font-size:12px;background:#eff6ff;padding:9px 11px;border-radius:9px;">Nhập theo đơn vị <b>100.000đ</b>: nhập <b>25</b> tương đương 2.500.000đ.</p>
+            <label class="input-group">Tổng giá trị bộ ảnh (đơn vị 100.000đ)<input type="number" id="payment-total-input" min="0" step="1" placeholder="Ví dụ: 25"></label>
+            <label class="input-group">Khách đã cọc (đơn vị 100.000đ)<input type="number" id="payment-deposit-input" min="0" step="1" placeholder="Ví dụ: 10"></label>
+            <label class="input-group">Đã thanh toán thêm (đơn vị 100.000đ)<input type="number" id="payment-paid-input" min="0" step="1" placeholder="Ví dụ: 15"></label>
             <label class="input-group">Người thanh toán<select id="payment-payer-input"><option value="client">Khách hàng</option><option value="studio">Studio</option><option value="personal">Cá nhân</option></select></label>
             <label class="input-group">Ghi chú<input type="text" id="payment-note-input" placeholder="Ví dụ: đã nhận chuyển khoản ngày…"></label>
             <p id="payment-balance-preview" style="font-weight:700;color:#2563eb;margin:10px 0;"></p>
@@ -1152,12 +1158,22 @@
             document.getElementById('ai-upload-progress-bar').style.width = percent + '%';
             document.getElementById('ai-upload-progress-percent').textContent = percent + '%';
         });
+        function formatUploadEta(seconds) {
+            const value = Number(seconds) || 0;
+            if (!value || !Number.isFinite(value)) return '';
+            if (value < 60) return `${Math.max(1, Math.round(value))} giây`;
+            const minutes = Math.floor(value / 60);
+            const remainingSeconds = Math.round(value % 60);
+            return `${minutes} phút${remainingSeconds ? ` ${remainingSeconds} giây` : ''}`;
+        }
+
         ipcRenderer.on('check-upload-progress', (event, data) => {
             const percent = Number(data.progress) || 0;
+            const eta = formatUploadEta(data.etaSeconds);
             document.getElementById('check-upload-progress-bar').style.width = percent + '%';
             document.getElementById('check-upload-progress-percent').textContent = percent + '%';
             document.getElementById('check-upload-progress-text').textContent = data.currentFile || 'Đang upload CHECK…';
-            document.getElementById('check-upload-stats').textContent = (data.completed != null ? `Đã upload ${data.completed}/${data.total || 0} ảnh` : 'Đang chuẩn bị…') + (data.failed ? ` · ${data.failed} lỗi` : '');
+            document.getElementById('check-upload-stats').textContent = (data.completed != null ? `Đã upload ${data.completed}/${data.total || 0} ảnh` : 'Đang chuẩn bị…') + (data.failed ? ` · ${data.failed} lỗi` : '') + (data.rate ? ` · ~${data.rate} ảnh/phút` : '') + (eta ? ` · Còn khoảng ${eta}` : '');
         });
         document.getElementById('check-upload-close').addEventListener('click', () => document.getElementById('check-upload-modal').classList.remove('open'));
 
@@ -1236,6 +1252,7 @@
             const watermarkText = document.getElementById('watermark-text-input').value.trim();
             const maxSelections = document.getElementById('max-selections-input').value.trim(); 
             const studioName = (document.getElementById('studio-name-input').value.trim() || 'Finder').toUpperCase();
+            const displayName = document.getElementById('album-display-name-input').value.trim() || studioName || 'Finder';
             const dueDate = document.getElementById('album-due-date-input').value || '';
 
             document.getElementById('progress-container').style.display = "block";
@@ -1256,6 +1273,7 @@
                 watermarkText,
                 maxSelections,
                 studioName,
+                displayName,
                 dueDate,
                 driveParentId: selectedDriveFolder.id,
                 driveParentPath: selectedDriveFolder.path
@@ -1297,9 +1315,10 @@
         });
 
         ipcRenderer.on('upload-progress', (event, data) => {
+            const eta = formatUploadEta(data.etaSeconds);
             document.getElementById('progress-bar').style.width = data.progress + "%";
             document.getElementById('progress-text').innerText = `${data.progress}%`;
-            const stats = `${data.completed || 0}/${data.total || 0} thành công · ${data.failed || 0} lỗi${data.rate ? ` · ~${data.rate} ảnh/phút` : ''}`;
+            const stats = `${data.completed || 0}/${data.total || 0} thành công · ${data.failed || 0} lỗi${data.rate ? ` · ~${data.rate} ảnh/phút` : ''}${eta ? ` · Còn khoảng ${eta}` : ''}`;
             document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile} · ${stats}`;
             if (partyUploadInProgress) document.getElementById('party-upload-status').textContent = `Đang upload: ${data.currentFile} · ${stats}`;
         });
@@ -1425,6 +1444,9 @@
             }
         }
         function formatMoney(value) { return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(Math.max(0, Number(value) || 0)); }
+        const PAYMENT_UNIT = 100000;
+        function paymentInputValue(value) { const amount = Number(value) || 0; return amount ? (amount / PAYMENT_UNIT).toLocaleString('en-US', { maximumFractionDigits: 2, useGrouping: false }) : ''; }
+        function paymentAmountValue(id) { return Math.max(0, (Number(document.getElementById(id).value) || 0) * PAYMENT_UNIT); }
         function paymentSummary(album) {
             const total = Number(album.paymentTotal ?? album.paymentAmount) || 0;
             const received = (Number(album.paymentDeposit) || 0) + (Number(album.paymentPaid) || 0);
@@ -1438,9 +1460,9 @@
             if (!album) return;
             document.getElementById('payment-album-id').value = folderId;
             document.getElementById('payment-modal-album').textContent = `${album.name || 'Album'} · ${album.studioName || 'Finder'}`;
-            document.getElementById('payment-total-input').value = Number(album.paymentTotal ?? album.paymentAmount) || '';
-            document.getElementById('payment-deposit-input').value = Number(album.paymentDeposit) || '';
-            document.getElementById('payment-paid-input').value = Number(album.paymentPaid) || '';
+            document.getElementById('payment-total-input').value = paymentInputValue(Number(album.paymentTotal ?? album.paymentAmount));
+            document.getElementById('payment-deposit-input').value = paymentInputValue(Number(album.paymentDeposit));
+            document.getElementById('payment-paid-input').value = paymentInputValue(Number(album.paymentPaid));
             document.getElementById('payment-payer-input').value = album.paymentPayer || 'client';
             document.getElementById('payment-note-input').value = album.paymentNote || '';
             updatePaymentBalancePreview();
@@ -1448,15 +1470,15 @@
         }
         function closePaymentModal() { document.getElementById('payment-modal').style.display = 'none'; }
         function updatePaymentBalancePreview() {
-            const total = Number(document.getElementById('payment-total-input').value) || 0;
-            const received = (Number(document.getElementById('payment-deposit-input').value) || 0) + (Number(document.getElementById('payment-paid-input').value) || 0);
+            const total = paymentAmountValue('payment-total-input');
+            const received = paymentAmountValue('payment-deposit-input') + paymentAmountValue('payment-paid-input');
             document.getElementById('payment-balance-preview').textContent = `Đã nhận: ${formatMoney(received)} · Còn lại: ${formatMoney(Math.max(0, total - received))}`;
         }
         async function savePaymentModal() {
             const id = document.getElementById('payment-album-id').value;
-            const total = Math.max(0, Number(document.getElementById('payment-total-input').value) || 0);
-            const deposit = Math.max(0, Number(document.getElementById('payment-deposit-input').value) || 0);
-            const paid = Math.max(0, Number(document.getElementById('payment-paid-input').value) || 0);
+            const total = paymentAmountValue('payment-total-input');
+            const deposit = paymentAmountValue('payment-deposit-input');
+            const paid = paymentAmountValue('payment-paid-input');
             const result = await ipcRenderer.invoke('update-payment-status', { id, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentPayer: document.getElementById('payment-payer-input').value, paymentNote: document.getElementById('payment-note-input').value });
             if (!result.success) return alert(result.error || 'Không thể lưu thanh toán.');
             closePaymentModal();
