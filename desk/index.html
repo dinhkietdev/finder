@@ -40,6 +40,9 @@
         #progress-container { display: none; margin-top: 15px; background: #e2e8f0; border-radius: 6px; height: 22px; width: 100%; max-width: 450px; position: relative; overflow: hidden;}
         #progress-bar { background: #10b981; width: 0%; height: 100%; transition: width 0.1s ease; }
         #progress-text { position: absolute; width: 100%; text-align: center; top: 0; font-size: 12px; line-height: 22px; color: #0f172a; font-weight: bold; }
+        .progress-container { background:#e2e8f0; border-radius:6px; height:22px; width:100%; overflow:hidden; position:relative; }
+        .progress-bar { background:#10b981; width:0%; height:100%; transition:width .15s ease; }
+        .progress-text { position:absolute; inset:0; text-align:center; font-size:12px; line-height:22px; color:#0f172a; font-weight:700; }
 
         .sync-tracker-container { display: none; margin-top: 20px; background: #e2e8f0; border-radius: 8px; height: 28px; width: 100%; position: relative; overflow: hidden; }
         .sync-tracker-bar { background: linear-gradient(90deg, #ef4444, #f43f5e); width: 0%; height: 100%; transition: width 0.2s ease; }
@@ -85,6 +88,12 @@
         .custom-modal-input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(99,91,255,.12); }
         @media (max-width: 720px) { .sidebar { width: 66px; padding: 18px 8px; } .sidebar-brand { font-size: 0; margin: 0 auto 35px; } .sidebar-brand::before { font-size: 15px; } .nav-item { font-size: 0; height: 42px; padding: 0; } .nav-item::after { content: '•'; font-size: 23px; display: block; text-align: center; line-height: 38px; } .main-content { padding: 28px 20px; } }
         .custom-modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+        .upload-progress-modal { display:none; position:fixed; inset:0; z-index:10000; align-items:center; justify-content:center; padding:20px; background:rgba(15,23,42,.62); backdrop-filter:blur(6px); }
+        .upload-progress-modal.open { display:flex; }
+        .upload-progress-card { width:min(460px,100%); padding:24px; border-radius:18px; background:#fff; box-shadow:0 24px 70px rgba(15,23,42,.28); }
+        .upload-progress-card h3 { margin:0 0 8px; color:#0f172a; }
+        .upload-progress-card p { margin:6px 0; color:#64748b; font-size:13px; line-height:1.5; }
+        .upload-progress-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
         .culling-panel { display: none; margin-top: 18px; padding: 14px; max-width: 900px; border: 1px solid #dddafe; border-radius: 13px; background: #f8f8ff; }
         .culling-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; font-size: 13px; color: #4b5563; }
         .culling-list { display: grid; gap: 8px; max-height: 320px; overflow-y: auto; padding-right: 2px; }
@@ -420,6 +429,24 @@
         </div>
     </div>
 
+    <div id="ai-upload-modal" class="upload-progress-modal" role="dialog" aria-modal="true">
+        <div class="upload-progress-card">
+            <h3>AI culling đang quét ảnh</h3>
+            <p id="ai-upload-progress-text">Đang phân tích tệp ảnh…</p>
+            <div class="progress-container" style="display:block; margin-top:14px;"><div id="ai-upload-progress-bar" class="progress-bar"></div><div id="ai-upload-progress-percent" class="progress-text">0%</div></div>
+            <div class="upload-progress-actions"><button id="ai-upload-wait" type="button" class="btn-outline">Đợi phân tích xong</button><button id="ai-upload-skip" type="button" class="btn-success">Bỏ qua AI và upload JPG</button></div>
+        </div>
+    </div>
+    <div id="check-upload-modal" class="upload-progress-modal" role="dialog" aria-modal="true">
+        <div class="upload-progress-card">
+            <h3>Đang upload ảnh CHECK</h3>
+            <p id="check-upload-progress-text">Đang chuẩn bị…</p>
+            <div class="progress-container" style="display:block; margin-top:14px;"><div id="check-upload-progress-bar" class="progress-bar"></div><div id="check-upload-progress-percent" class="progress-text">0%</div></div>
+            <p id="check-upload-stats"></p>
+            <div class="upload-progress-actions"><button id="check-upload-close" type="button" class="btn-outline">Đóng</button></div>
+        </div>
+    </div>
+
     <div id="upload-success-modal" class="upload-success-modal" role="dialog" aria-modal="true" aria-labelledby="upload-success-title">
         <div class="upload-success-card">
             <div class="upload-success-icon">✓</div>
@@ -439,6 +466,8 @@
         let updateReadyToInstall = false;
         let manualUpdateUrl = '';
         let currentFolder = ""; let scannedImages = []; let filteredImages = []; let cullingResults = []; let syncSourceFolder = "";
+        let cullingInProgress = false;
+        let cullingDecisionResolver = null;
         let folderIdBeingEdited = null; 
         let pendingResumeData = null;
         let albumSyncTimer = null;
@@ -983,7 +1012,21 @@
             document.getElementById('scan-result').innerHTML = `⏳ Đang quét thư mục: <b>${data.scanned}/${data.total}</b> tệp · tìm thấy <b>${data.found}</b> ảnh`;
         });
 
+        function askCullingUploadDecision() {
+            const modal = document.getElementById('ai-upload-modal');
+            document.getElementById('ai-upload-progress-bar').style.width = '0%';
+            document.getElementById('ai-upload-progress-percent').textContent = '0%';
+            document.getElementById('ai-upload-progress-text').textContent = 'Đang phân tích tệp ảnh…';
+            modal.classList.add('open');
+            return new Promise(resolve => { cullingDecisionResolver = resolve; });
+        }
+        function resolveCullingUploadDecision(skip) {
+            document.getElementById('ai-upload-modal').classList.remove('open');
+            if (cullingDecisionResolver) { const resolve = cullingDecisionResolver; cullingDecisionResolver = null; resolve(skip); }
+        }
+
         async function runCullingAnalysis() {
+            cullingInProgress = true;
             const button = document.getElementById('btn-cull');
             const panel = document.getElementById('culling-panel');
             button.disabled = true; panel.style.display = 'block';
@@ -992,6 +1035,7 @@
             const strictness = document.getElementById('ai-strictness-input')?.value || 'balanced';
             const result = await ipcRenderer.invoke('analyze-image-quality', { folderPath: currentFolder, imageFiles: scannedImages, strictness });
             button.disabled = false;
+            cullingInProgress = false;
             if (!result.success) {
                 document.getElementById('culling-summary-text').textContent = `Không thể phân tích: ${result.error}`;
                 return;
@@ -1003,12 +1047,26 @@
 
         ipcRenderer.on('culling-progress', (event, data) => {
             document.getElementById('culling-summary-text').textContent = `Đang phân tích ${data.completed}/${data.total} ảnh trên máy…`;
+            document.getElementById('ai-upload-progress-text').textContent = `Đã quét ${data.completed}/${data.total} tệp ảnh`;
+            const percent = data.total ? Math.round(data.completed / data.total * 100) : 0;
+            document.getElementById('ai-upload-progress-bar').style.width = percent + '%';
+            document.getElementById('ai-upload-progress-percent').textContent = percent + '%';
         });
+        ipcRenderer.on('check-upload-progress', (event, data) => {
+            const percent = Number(data.progress) || 0;
+            document.getElementById('check-upload-progress-bar').style.width = percent + '%';
+            document.getElementById('check-upload-progress-percent').textContent = percent + '%';
+            document.getElementById('check-upload-progress-text').textContent = data.currentFile || 'Đang upload CHECK…';
+            document.getElementById('check-upload-stats').textContent = (data.completed != null ? `Đã upload ${data.completed}/${data.total || 0} ảnh` : 'Đang chuẩn bị…') + (data.failed ? ` · ${data.failed} lỗi` : '');
+        });
+        document.getElementById('check-upload-close').addEventListener('click', () => document.getElementById('check-upload-modal').classList.remove('open'));
 
         document.getElementById('btn-cull').addEventListener('click', runCullingAnalysis);
         document.getElementById('ai-strictness-input').addEventListener('change', () => {
             if (currentFolder && scannedImages.length) runCullingAnalysis();
         });
+        document.getElementById('ai-upload-wait').addEventListener('click', () => resolveCullingUploadDecision(false));
+        document.getElementById('ai-upload-skip').addEventListener('click', () => resolveCullingUploadDecision(true));
 
         document.getElementById('btn-keep-all').addEventListener('click', () => {
             const shouldKeep = !cullingResults.every(item => item.keep);
@@ -1077,17 +1135,22 @@
             const watermarkToggle = document.getElementById('watermark-toggle-input').checked;
             const watermarkText = document.getElementById('watermark-text-input').value.trim();
             const maxSelections = document.getElementById('max-selections-input').value.trim(); 
-            const studioName = document.getElementById('studio-name-input').value.trim() || 'Finder';
+            const studioName = (document.getElementById('studio-name-input').value.trim() || 'Finder').toUpperCase();
             const dueDate = document.getElementById('album-due-date-input').value || '';
 
             document.getElementById('progress-container').style.display = "block";
             document.getElementById('upload-status').innerText = "Đang thiết lập cổng kết nối bảo mật...";
             document.getElementById('btn-upload').disabled = true;
 
+            let uploadImages = filteredImages;
+            if (cullingInProgress) {
+                const skipCulling = await askCullingUploadDecision();
+                if (skipCulling) uploadImages = scannedImages.filter(file => /\.jpe?g$/i.test(file));
+            }
             let result;
             try { result = await ipcRenderer.invoke('upload-to-drive', { 
                 folderPath: currentFolder, 
-                imageFiles: filteredImages, 
+                imageFiles: uploadImages,
                 customFolderName, 
                 watermarkToggle, 
                 watermarkText,
@@ -1112,6 +1175,7 @@
                 document.getElementById('resume-upload-box').style.display = pendingResumeData ? 'block' : 'none';
             }
         });
+        document.getElementById('studio-name-input').addEventListener('input', event => { event.target.value = event.target.value.toUpperCase(); });
 
         document.getElementById('btn-resume-upload').addEventListener('click', async () => {
             if (!pendingResumeData) return;
@@ -1198,6 +1262,7 @@
                             <button class="btn-check" id="check-btn-${album.id}" onclick="checkProgress('${album.id}', this)">📊 Kiểm tra</button>
                             <button class="btn-danger btn-sync" data-action="raw" style="display:none;" onclick="triggerAutoSync('${album.id}', this)">⚡ Gom RAW</button>
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
+                            <button class="btn-outline btn-drive-link" data-action="drive-link" style="display:none;" onclick="copyFinalDriveLink('${album.id}')">📋 Link Drive cuối</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
                             <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
@@ -1265,11 +1330,22 @@
             if (!card) return;
             const rawButton = card.querySelector('[data-action="raw"]');
             const checkButton = card.querySelector('[data-action="check"]');
+            const driveLinkButton = card.querySelector('[data-action="drive-link"]');
             const rawSynced = card.dataset.rawSynced === '1';
             // Luồng thao tác bắt buộc: khách chốt → Gom RAW → Upload CHECK.
             if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
             if (checkButton) checkButton.style.display = isFinalized && rawSynced && (!checkReady || checkNeedsRevision) ? '' : 'none';
+            if (driveLinkButton) driveLinkButton.style.display = 'none';
             renderAlbumTimeline(folderId, isFinalized, checkReady);
+        }
+
+        async function copyFinalDriveLink(folderId) {
+            const history = await ipcRenderer.invoke('get-history');
+            const album = history.find(item => item.id === folderId);
+            if (!album?.checkFolderId) return alert('Chưa có thư mục CHECK cuối cùng.');
+            const link = 'https://drive.google.com/drive/folders/' + album.checkFolderId;
+            try { await navigator.clipboard.writeText(link); alert('Đã sao chép link Google Drive cuối cùng.'); }
+            catch (_) { const input = document.createElement('input'); input.value = link; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); alert('Đã sao chép link Google Drive cuối cùng.'); }
         }
 
         document.getElementById('btn-choose-drive-folder').addEventListener('click', async () => {
@@ -1342,6 +1418,13 @@
             const originalText = button.textContent;
             button.disabled = true;
             button.textContent = '⏳ Đang tải CHECK…';
+            const checkModal = document.getElementById('check-upload-modal');
+            const checkClose = document.getElementById('check-upload-close');
+            checkModal.classList.add('open');
+            checkClose.disabled = true;
+            document.getElementById('check-upload-progress-bar').style.width = '0%';
+            document.getElementById('check-upload-progress-percent').textContent = '0%';
+            document.getElementById('check-upload-stats').textContent = '';
             let result = await ipcRenderer.invoke('upload-check-to-drive', { folderId, folderPath });
             if (result.requiresConfirmation && result.code === 'CHECK_COUNT_MISMATCH') {
                 const proceed = confirm(`${result.error}\n\nBạn vẫn muốn tiếp tục upload CHECK để kiểm tra không?`);
@@ -1351,11 +1434,15 @@
             }
             button.disabled = false;
             button.textContent = originalText;
+            checkClose.disabled = false;
             if (result.success) {
                 const compareText = result.selectedCount === null || result.countMatched ? 'Số lượng khớp với ảnh khách đã chọn.' : `Lưu ý: khách chọn ${result.selectedCount} ảnh, CHECK có ${result.count} ảnh.`;
+                document.getElementById('check-upload-progress-bar').style.width = '100%';
+                document.getElementById('check-upload-progress-percent').textContent = '100%';
+                document.getElementById('check-upload-progress-text').textContent = 'Đã upload hoàn thành.';
                 alert(`Đã tải ${result.count} ảnh CHECK. ${compareText}\nTrang khách sẽ tự chuyển sang ảnh đã chỉnh sửa.`);
                 loadAlbumHistory();
-            } else alert(`Không thể tải ảnh CHECK: ${result.error}`);
+            } else { document.getElementById('check-upload-progress-text').textContent = 'Upload chưa hoàn tất: ' + result.error; alert(`Không thể tải ảnh CHECK: ${result.error}`); }
         }
 
         async function toggleStatus(folderId) {
@@ -1397,6 +1484,9 @@
                         btn.style.border = 'none';
                         const status = document.getElementById(`status-${folderId}`);
                         if (status) { status.innerText = 'Hoàn thành'; status.className = 'album-badge done'; }
+                        const card = btn.closest('.album-card');
+                        const driveLinkButton = card?.querySelector('[data-action="drive-link"]');
+                        if (driveLinkButton) driveLinkButton.style.display = '';
                     } else if (checkReady && checkNeedsRevision) {
                         const version = settingsData.settings?.checkVersion || 1;
                         ipcRenderer.invoke('update-status', { id: folderId, status: 'Khách yêu cầu sửa thêm · CHECK ' + version });

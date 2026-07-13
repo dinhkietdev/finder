@@ -293,7 +293,7 @@ app.post('/api/auth/save-token', (req, res) => {
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, studioName, studioLogo, accentColor } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, originalFolderId, studioName, studioLogo, accentColor } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
     const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
@@ -305,7 +305,8 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             maxSelections: nextLimit,
             publicSlug: publicSlug || `album-${String(folderId).slice(-6).toLowerCase()}`,
             clientName: clientName || text || 'Album khách hàng',
-            studioName: studioName || 'Finder',
+            originalFolderId: originalFolderId || null,
+            studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
         };
@@ -315,7 +316,8 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
         if (publicSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
-        if (studioName !== undefined) albumSettingsDatabase[folderId].studioName = studioName;
+        if (originalFolderId !== undefined) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
+        if (studioName !== undefined) albumSettingsDatabase[folderId].studioName = String(studioName || 'Finder').trim().toUpperCase();
         if (studioLogo !== undefined) albumSettingsDatabase[folderId].studioLogo = studioLogo;
         if (accentColor !== undefined) albumSettingsDatabase[folderId].accentColor = accentColor;
     }
@@ -338,7 +340,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     const folderId = req.params.folderId;
     res.json({
         success: true,
-        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
+        settings: albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' },
         isFinalized: !!finalizedDatabase[folderId]
     });
 });
@@ -376,10 +378,11 @@ app.post('/api/album/:folderId/check/confirm', async (req, res) => {
     if (!settings.checkReady || !settings.checkFolderId) return res.status(400).json({ success: false, error: 'Album chưa có phiên bản CHECK để xác nhận.' });
     settings.checkNeedsRevision = false;
     settings.checkAcceptedAt = new Date().toISOString();
+    settings.expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
     settings.workflowStatus = 'completed';
     albumSettingsDatabase[folderId] = settings;
     await persistState();
-    res.json({ success: true, completedAt: settings.checkAcceptedAt, checkVersion: settings.checkVersion || 1 });
+    res.json({ success: true, completedAt: settings.checkAcceptedAt, expiresAt: settings.expiresAt, checkVersion: settings.checkVersion || 1 });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
@@ -417,7 +420,9 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, checkReady: false, selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
+        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
+        // expiresAt hiện chỉ là mốc tham khảo để hiển thị cho khách hàng.
+        // Không khóa link, không xóa album và không xóa file Google Drive tự động.
         const isFinalized = !!finalizedDatabase[folderId];
         const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 
@@ -467,7 +472,8 @@ app.get('/api/album/:folderId', async (req, res) => {
                 .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
                 .map(toClientFile);
         };
-        const files = await listDriveImages(folderId);
+        // Album mới lưu ảnh gốc trong ORIGINAL; album cũ vẫn đọc ảnh ở root.
+        const files = await listDriveImages(currentSettings.originalFolderId || folderId);
         const checkFiles = hasCheckFolder ? await listDriveImages(currentSettings.checkFolderId) : [];
 
         albumCacheDatabase[folderId] = files;

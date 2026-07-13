@@ -438,6 +438,8 @@
             checkUpdatedAt: null,
             checkVersion: 0,
             checkNeedsRevision: false,
+            workflowStatus: 'selection_open',
+            expiresAt: null,
             aiGroups: [],
             publicSlug: albumSlug,
             studioName: 'Finder',
@@ -571,8 +573,10 @@
 
         function renderBranding() {
             elements.brandTitle.textContent = state.studioName || 'Finder';
-            elements.albumStatusPill.textContent = state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
-            elements.checkReadyBanner.textContent = state.checkNeedsRevision
+            elements.albumStatusPill.textContent = state.workflowStatus === 'completed' ? '● Hoàn thành' : state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
+            elements.checkReadyBanner.textContent = state.workflowStatus === 'completed'
+                ? '✅ Ảnh đã chỉnh sửa xong, hãy lưu ảnh sớm nhé. Link ảnh sẽ tự hủy trong vòng 60 ngày.'
+                : state.checkNeedsRevision
                 ? '🛠️ Studio đang chờ xử lý ghi chú sửa thêm của bạn.'
                 : '✅ Ảnh đã chỉnh sửa xong · CHECK ' + (state.checkVersion || 1) + '. Bạn đang xem bản mới nhất.';
         }
@@ -735,7 +739,7 @@
             renderBranding();
             const isCheckView = state.viewMode === 'check';
             const canEditSelection = !isCheckView && !state.isFinalized;
-            const canEditNote = isCheckView || canEditSelection;
+            const canEditNote = !state.workflowStatus || state.workflowStatus !== 'completed' ? (isCheckView || canEditSelection) : false;
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
             if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
                 elements.viewerShell.classList.add('loading');
@@ -758,7 +762,7 @@
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.reviewModeBar.classList.toggle('visible', state.checkReady);
-            elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision ? '' : 'none';
+            elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision && state.workflowStatus !== 'completed' ? '' : 'none';
             elements.checkModeBtn.classList.toggle('active', isCheckView);
             elements.originalModeBtn.classList.toggle('active', !isCheckView);
             elements.contentGrid.classList.toggle('check-view', isCheckView);
@@ -1280,6 +1284,8 @@
                 state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
                 state.checkVersion = Number(data.settings?.checkVersion) || 1;
                 state.checkNeedsRevision = Boolean(data.settings?.checkNeedsRevision);
+                state.workflowStatus = data.settings?.workflowStatus || (state.checkReady ? 'check_pending' : 'selection_open');
+                state.expiresAt = data.settings?.expiresAt || null;
                 state.selectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
@@ -1299,9 +1305,10 @@
                 state.viewMode = state.checkReady ? 'check' : 'original';
                 state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
                 state.currentIndex = 0;
-                await buildAiGroups();
-                if (state.viewMode === 'check') state.aiGroups = [];
+                state.aiGroups = [];
                 render();
+                // Hiển thị gallery ngay lập tức; gom nhóm chạy nền sau đó.
+                if (state.viewMode === 'original') buildAiGroups().then(() => render()).catch(() => {});
                 scheduleRobotAssistant();
                 setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
             } catch (error) {
@@ -1320,6 +1327,8 @@
                 const nextCheckUpdatedAt = data.settings?.checkUpdatedAt || null;
                 const nextCheckVersion = Number(data.settings?.checkVersion) || state.checkVersion || 1;
                 const nextCheckNeedsRevision = Boolean(data.settings?.checkNeedsRevision);
+                const nextWorkflowStatus = data.settings?.workflowStatus || state.workflowStatus;
+                const nextExpiresAt = data.settings?.expiresAt || state.expiresAt;
                 const nextSelectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 const limitChanged = nextLimit !== state.maxSelections;
                 const statusChanged = nextFinalized !== state.isFinalized;
@@ -1327,6 +1336,8 @@
                 const revisionChanged = nextCheckNeedsRevision !== state.checkNeedsRevision;
                 state.checkVersion = nextCheckVersion;
                 state.checkNeedsRevision = nextCheckNeedsRevision;
+                state.workflowStatus = nextWorkflowStatus;
+                state.expiresAt = nextExpiresAt;
                 const selectionWasReopened = Boolean(nextSelectionReopenedAt && state.selectionReopenedAt && nextSelectionReopenedAt !== state.selectionReopenedAt);
                 state.selectionReopenedAt = nextSelectionReopenedAt || state.selectionReopenedAt;
                 if (limitChanged || statusChanged) {
@@ -1457,6 +1468,8 @@
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok || !data.success) throw new Error(data.error || 'Không thể xác nhận phiên bản CHECK.');
                 state.checkNeedsRevision = false;
+                state.workflowStatus = 'completed';
+                state.expiresAt = data.expiresAt || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
                 state.checkAcceptedAt = data.completedAt || new Date().toISOString();
                 render();
                 setMessage('✅ Đã xác nhận ảnh cuối cùng. Album đã hoàn thành.', 'success');

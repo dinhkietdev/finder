@@ -366,6 +366,7 @@ function syncDataToServer() {
                 maxSelections: album.maxSelections || 0,
                 publicSlug: album.publicSlug,
                 clientName: album.clientName || album.name,
+                originalFolderId: album.originalFolderId || null,
                 studioName: album.studioName && album.studioName !== 'Finder Studio' ? album.studioName : 'Finder',
                 studioLogo: album.studioLogo || '',
                 accentColor: album.accentColor || '#7c8cff'
@@ -931,9 +932,11 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
         let folderNameOnDrive;
         let googleDriveFolderId;
+        let originalFolderId;
         if (resumeData) {
             folderNameOnDrive = resumeData.folderNameOnDrive;
             googleDriveFolderId = resumeData.googleDriveFolderId;
+            originalFolderId = resumeData.originalFolderId || null;
         } else {
             mainWindow.webContents.send('upload-progress', { progress: 2, currentFile: "Đang khởi tạo Album..." });
             folderNameOnDrive = customFolderName ? customFolderName : ('FinderPicture_Album_' + Date.now());
@@ -950,11 +953,19 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                 }
             } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
-        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId };
+        if (!originalFolderId) {
+            const existingOriginal = await drive.files.list({ q: `'${googleDriveFolderId}' in parents and name = 'ORIGINAL' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id)', pageSize: 10 });
+            originalFolderId = existingOriginal.data.files?.[0]?.id || null;
+        }
+        if (!originalFolderId) {
+            const originalFolder = await drive.files.create({ resource: { name: 'ORIGINAL', mimeType: 'application/vnd.google-apps.folder', parents: [googleDriveFolderId] }, fields: 'id' });
+            originalFolderId = originalFolder.data.id;
+        }
+        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId, originalFolderId };
         try { fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
 
         const existingFiles = await drive.files.list({
-            q: `'${googleDriveFolderId}' in parents and trashed = false`,
+            q: `'${originalFolderId}' in parents and trashed = false`,
             fields: 'files(name)', pageSize: 1000
         });
         const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
@@ -977,7 +988,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                 try {
                     await uploadDriveFileWithRetry(drive, {
                         fileName,
-                        parentId: googleDriveFolderId,
+                        parentId: originalFolderId,
                         localPath: path.join(folderPath, fileName),
                         mimeType: 'image/jpeg'
                     });
@@ -1011,7 +1022,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             maxSelections: maxSelections,
             publicSlug,
             clientName: folderNameOnDrive,
-            studioName: studioName || 'Finder',
+            originalFolderId,
+            studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
         });
@@ -1031,7 +1043,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             link: publicLink, 
             publicSlug,
             clientName: folderNameOnDrive,
-            studioName: studioName || 'Finder',
+            originalFolderId,
+            studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff',
             status: "Đang chờ khách chọn", 
@@ -1124,6 +1137,7 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         let completed = imageFiles.length - filesToUpload.length;
         let nextIndex = 0;
         let uploadError = null;
+        let failed = 0;
 
         const uploadWorker = async () => {
             while (!uploadError) {
@@ -1140,8 +1154,8 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
                         mimeType
                     });
                     completed++;
-                    mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})` });
-                } catch (error) { uploadError = error; }
+                    mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed: 0 });
+                } catch (error) { failed++; uploadError = error; mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: 'Lỗi: ' + fileName, completed, total: imageFiles.length, failed }); }
             }
         };
 
