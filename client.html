@@ -504,6 +504,7 @@
         let robotMessageInterval = null;
         let robotIdleTimer = null;
         let robotPromptIndex = 0;
+        let expiryTimer = null;
         let pinchStartDistance = 0;
         let pinchStartScale = 1;
         let panX = 0;
@@ -711,8 +712,18 @@
 
         function updateCheckBannerVisibility() {
             const lightboxOpen = elements.imageLightbox.classList.contains('open');
-            elements.checkReadyBanner.classList.toggle('visible', state.checkReady && state.viewMode === 'check' && !lightboxOpen);
-            elements.finalizedBanner.classList.toggle('visible', state.isFinalized && !lightboxOpen);
+            const isCompleted = state.workflowStatus === 'completed';
+            const remaining = state.expiresAt ? Math.max(0, Date.parse(state.expiresAt) - Date.now()) : 0;
+            const days = remaining ? Math.ceil(remaining / 86400000) : 60;
+            if (isCompleted) {
+                const notice = days > 0
+                    ? `✅ Hãy tải ảnh trong vòng ${days} ngày nhé · link ảnh sẽ tự hủy sau thời hạn này.`
+                    : '✅ Album đã hoàn thành.';
+                elements.finalizedBanner.textContent = notice;
+                elements.checkReadyBanner.textContent = notice;
+            }
+            elements.checkReadyBanner.classList.toggle('visible', !lightboxOpen && (isCompleted ? state.viewMode === 'check' : state.checkReady && state.viewMode === 'check'));
+            elements.finalizedBanner.classList.toggle('visible', !lightboxOpen && isCompleted && state.viewMode === 'original');
         }
 
         function canSelect(image) {
@@ -1266,7 +1277,6 @@
                 const data = await readApiJson(response, 'Không thể tải album');
 
                 state.isFinalized = !!data.isFinalized;
-                elements.finalizedBanner.classList.toggle('visible', state.isFinalized);
                 showRobotStatus(robotContextGreeting(), state.isFinalized);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
                 const mapImage = file => ({
@@ -1343,7 +1353,6 @@
                 if (limitChanged || statusChanged) {
                     state.maxSelections = nextLimit;
                     state.isFinalized = nextFinalized;
-                    elements.finalizedBanner.classList.toggle('visible', nextFinalized);
                     render();
                     if (!nextFinalized && statusChanged) {
                         setMessage('🔓 Album đã mở lại. Các ảnh cũ vẫn được giữ nguyên, bạn có thể chọn thêm ảnh.', 'success');
@@ -1447,7 +1456,6 @@
                     throw new Error(errorData.error || 'Không thể chốt album');
                 }
                 state.isFinalized = true;
-                elements.finalizedBanner.classList.add('visible');
                 render();
                 showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');
@@ -1492,6 +1500,7 @@
 
         attachSwipe();
         loadAlbum();
+        expiryTimer = window.setInterval(updateCheckBannerVisibility, 60000);
         // Cài đặt giới hạn rất nhẹ (chỉ một JSON nhỏ), kiểm tra ngắn để khách
         // được mở lựa chọn mới gần như ngay sau khi admin lưu thay đổi.
         window.setInterval(refreshAlbumLimit, 3000);

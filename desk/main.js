@@ -421,6 +421,16 @@ ipcMain.handle('get-last-drive-folder', () => {
     return { id: latestAlbum.driveParentId, path: parentPath || 'Drive của tôi' };
 });
 ipcMain.handle('update-status', (event, { id, status }) => { updateAlbumStatus(id, status); return true; });
+ipcMain.handle('update-payment-status', (event, { id, paymentStatus }) => {
+    const history = getAlbumHistory(); const index = history.findIndex(item => item.id === id);
+    if (index === -1) return { success: false, error: 'Không tìm thấy album.' };
+    history[index].paymentStatus = ['unpaid', 'deposit', 'paid'].includes(paymentStatus) ? paymentStatus : 'unpaid';
+    history[index].paymentUpdatedAt = new Date().toISOString();
+    fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
+    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${id}`).update({ paymentStatus: history[index].paymentStatus, paymentUpdatedAt: history[index].paymentUpdatedAt }).catch(() => {});
+    postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: Number(history[index].paymentAmount) || 0 }, serverAuthHeaders()).catch(() => {});
+    return { success: true, paymentStatus: history[index].paymentStatus };
+});
 ipcMain.handle('open-external-link', (event, url) => { shell.openExternal(url); });
 
 ipcMain.handle('delete-album', async (event, folderId) => {
@@ -1047,6 +1057,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff',
+            paymentStatus: 'unpaid',
+            paymentAmount: 0,
             status: "Đang chờ khách chọn", 
             localPath: folderPath, 
             driveParentId: driveParentId || null,

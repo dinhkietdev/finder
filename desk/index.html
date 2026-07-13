@@ -334,6 +334,10 @@
 
         <div id="view-history" class="view-section">
             <h2>Thư viện album</h2>
+            <div class="box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px 18px;">
+                <input id="library-studio-filter" type="search" placeholder="Lọc theo Studio…" style="max-width:260px;">
+                <select id="library-payment-filter" style="max-width:220px;"><option value="">Tất cả thanh toán</option><option value="unpaid">Chưa thanh toán</option><option value="deposit">Đã đặt cọc</option><option value="paid">Đã thanh toán đủ</option></select>
+            </div>
             <div class="album-grid" id="history-grid-container"></div>
             <div class="box" id="sync-progress-box-wrapper" style="margin-top: 30px; display: none;">
                 <div id="sync-progress-box" class="sync-tracker-container">
@@ -777,7 +781,8 @@
                 const manuallyDone = /đã\s*(xong|chốt|hoàn)/i.test(album.status || '');
                 const isFinalized = !!data.isFinalized;
                 const checkReady = Boolean(settingsData.settings?.checkReady && settingsData.settings?.checkFolderId && isFinalized);
-                return { ...album, selectedCount, isFinalized, checkReady, finalizedAt: data.finalizedAt || null, isDone: isFinalized || manuallyDone };
+                const isCompleted = settingsData.settings?.workflowStatus === 'completed';
+                return { ...album, ...settingsData.settings, selectedCount, isFinalized, checkReady, isCompleted, finalizedAt: data.finalizedAt || null, isDone: isCompleted || manuallyDone };
             } catch (error) {
                 return { ...album, selectedCount: album.selectedCount || 0, isFinalized: !!album.isFinalized, finalizedAt: album.finalizedAt || null, isDone: !!album.isDone || /đã\s*(xong|chốt|hoàn)/i.test(album.status || '') };
             }
@@ -939,6 +944,9 @@
         async function loadDashboard() {
             const recent = document.getElementById('dashboard-recent');
             const history = await ipcRenderer.invoke('get-history');
+            const studioFilter = (document.getElementById('library-studio-filter')?.value || '').trim().toLowerCase();
+            const paymentFilter = document.getElementById('library-payment-filter')?.value || '';
+            const visibleHistory = history.filter(album => (!studioFilter || String(album.studioName || 'Finder').toLowerCase().includes(studioFilter)) && (!paymentFilter || (album.paymentStatus || 'unpaid') === paymentFilter));
             const sequence = ++dashboardRefreshSequence;
             // Local history is available immediately, so the user sees the
             // dashboard without waiting for one request per album.
@@ -1229,8 +1237,16 @@
                 return; 
             }
 
+            const studioFilter = (document.getElementById('library-studio-filter')?.value || '').trim().toLowerCase();
+            const paymentFilter = document.getElementById('library-payment-filter')?.value || '';
+            const visibleHistory = history.filter(album =>
+                (!studioFilter || String(album.studioName || 'Finder').toLowerCase().includes(studioFilter)) &&
+                (!paymentFilter || (album.paymentStatus || 'unpaid') === paymentFilter)
+            );
+
             gridContainer.innerHTML = '';
-            history.forEach(album => {
+            if (!visibleHistory.length) gridContainer.innerHTML = '<p style="text-align:center;grid-column:1/-1;padding:30px;color:#64748b;">Không có album phù hợp bộ lọc.</p>';
+            visibleHistory.forEach(album => {
                 const badgeClass = album.status.includes('Đã xong') ? 'album-badge done' : 'album-badge waiting';
                 const card = document.createElement('div');
                 card.className = 'album-card';
@@ -1247,13 +1263,14 @@
                     <div class="album-info-box">
                         <div>
                             <div class="album-title-text" title="${escapeHtml(album.name || '')}">${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
-                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText} · 💳 ${album.paymentStatus === 'paid' ? 'Đã thanh toán' : album.paymentStatus === 'deposit' ? 'Đã đặt cọc' : 'Chưa thanh toán'}</div>
                             <div class="album-status-history" id="status-history-${album.id}" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
                             <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">
                                 <span class="album-flow-step active"><i class="album-flow-dot">1</i>Chọn</span>
                                 <span class="album-flow-step"><i class="album-flow-dot">2</i>Chốt</span>
                                 <span class="album-flow-step"><i class="album-flow-dot">3</i>RAW</span>
                                 <span class="album-flow-step"><i class="album-flow-dot">4</i>CHECK</span>
+                                <span class="album-flow-step"><i class="album-flow-dot">5</i>FINAL</span>
                             </div>
                             <div class="album-date-text" title="${escapeHtml(album.localPath || '')}" style="overflow-wrap:anywhere;">📁 Máy: ${escapeHtml(album.localPath || 'Không còn đường dẫn')}</div>
                             <div class="album-date-text" title="${escapeHtml(album.drivePath || '')}" style="overflow-wrap:anywhere;">☁️ Drive: ${escapeHtml(album.drivePath || 'Drive của tôi')}</div>
@@ -1264,6 +1281,7 @@
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-drive-link" data-action="drive-link" style="display:none;" onclick="copyFinalDriveLink('${album.id}')">📋 Link Drive cuối</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
+                            <button class="btn-outline" onclick="toggleAlbumPayment('${album.id}')">💳 Đổi thanh toán</button>
                             <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
@@ -1312,20 +1330,30 @@
                 isAlbumSyncing = false;
             }
         }
+        async function toggleAlbumPayment(folderId) {
+            const history = await ipcRenderer.invoke('get-history');
+            const album = history.find(item => item.id === folderId);
+            if (!album) return;
+            const next = album.paymentStatus === 'paid' ? 'unpaid' : album.paymentStatus === 'unpaid' ? 'deposit' : 'paid';
+            await ipcRenderer.invoke('update-payment-status', { id: folderId, paymentStatus: next });
+            loadAlbumHistory();
+        }
+        document.getElementById('library-studio-filter').addEventListener('input', () => loadAlbumHistory());
+        document.getElementById('library-payment-filter').addEventListener('change', () => loadAlbumHistory());
 
-        function renderAlbumTimeline(folderId, isFinalized, checkReady) {
+        function renderAlbumTimeline(folderId, isFinalized, checkReady, completed = false) {
             const flow = document.getElementById(`flow-${folderId}`);
             if (!flow) return;
             const card = flow.closest('.album-card');
             const rawSynced = card?.dataset.rawSynced === '1';
-            const stage = checkReady ? 4 : rawSynced ? 3 : isFinalized ? 2 : 1;
+            const stage = completed ? 5 : checkReady ? 4 : rawSynced ? 3 : isFinalized ? 2 : 1;
             flow.querySelectorAll('.album-flow-step').forEach((step, index) => {
                 step.classList.toggle('done', index + 1 < stage || (stage === 4 && index < 4));
                 step.classList.toggle('active', index + 1 === stage);
             });
         }
 
-        function updateAlbumActionVisibility(folderId, isFinalized, checkReady, checkNeedsRevision = false) {
+        function updateAlbumActionVisibility(folderId, isFinalized, checkReady, checkNeedsRevision = false, completed = false) {
             const card = document.querySelector(`#check-btn-${folderId}`)?.closest('.album-card');
             if (!card) return;
             const rawButton = card.querySelector('[data-action="raw"]');
@@ -1336,7 +1364,7 @@
             if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
             if (checkButton) checkButton.style.display = isFinalized && rawSynced && (!checkReady || checkNeedsRevision) ? '' : 'none';
             if (driveLinkButton) driveLinkButton.style.display = 'none';
-            renderAlbumTimeline(folderId, isFinalized, checkReady);
+            renderAlbumTimeline(folderId, isFinalized, checkReady, completed);
         }
 
         async function copyFinalDriveLink(folderId) {
@@ -1467,7 +1495,7 @@
                     const checkNeedsRevision = Boolean(settingsData.settings?.checkNeedsRevision);
                     const checkCompleted = settingsData.settings?.workflowStatus === 'completed';
                     const checkReadyForWorkflow = checkReady && !!data.isFinalized;
-                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow, checkNeedsRevision);
+                    updateAlbumActionVisibility(folderId, !!data.isFinalized, checkReadyForWorkflow, checkNeedsRevision, checkCompleted);
                     if (checkReady && !data.isFinalized) {
                         ipcRenderer.invoke('update-status', { id: folderId, status: 'Đang chờ khách chọn lại' });
                         btn.innerHTML = `🔓 Đang chờ khách chọn lại · ${count} ảnh cũ`;
