@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const http = require('http');
 const { execFile } = require('child_process');
+const crypto = require('crypto');
 const https = require('https'); 
 const { google } = require('googleapis');
 const sharp = require('sharp');
@@ -918,6 +919,64 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
         }
         return { success: false, error: friendlyDriveError(error) };
     }
+});
+
+// Upload gallery tiệc/PSC: dùng đúng thư mục Drive đã chọn, không tạo thư mục
+// con và không gọi AI culling. Gallery được đăng ký riêng trên server sau khi
+// toàn bộ ảnh đã upload thành công.
+ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
+    const folderPath = payload.folderPath;
+    const imageFiles = (Array.isArray(payload.imageFiles) ? payload.imageFiles : []).filter(file => /\.jpe?g$|\.png$|\.webp$/i.test(file));
+    const driveParentId = payload.driveParentId || 'root';
+    const galleryName = String(payload.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const studioName = String(payload.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+    const expiresDays = Math.min(3650, Math.max(1, Number(payload.expiresDays) || 60));
+    if (!folderPath || !fs.existsSync(folderPath)) return { success: false, error: 'Không tìm thấy thư mục ảnh tiệc.' };
+    if (!imageFiles.length) return { success: false, error: 'Thư mục không có ảnh JPG/PNG/WebP hợp lệ.' };
+    try {
+        uploadInProgress = true;
+        mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: 'Đang kết nối Google Drive…', completed: 0, total: imageFiles.length, failed: 0 });
+        const auth = await authenticateCasi(true);
+        const drive = google.drive({ version: 'v3', auth });
+        await drive.about.get({ fields: 'user(emailAddress)' });
+        const existingFiles = await drive.files.list({ q: `'${driveParentId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
+        const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
+        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        let completed = imageFiles.length - filesToUpload.length;
+        let failed = 0; let nextIndex = 0; let uploadError = null;
+        const startedAt = Date.now();
+        const worker = async () => {
+            while (!uploadError) {
+                const index = nextIndex++;
+                if (index >= filesToUpload.length) return;
+                const fileName = filesToUpload[index];
+                try {
+                    const ext = path.extname(fileName).toLowerCase();
+                    const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+                    await uploadDriveFileWithRetry(drive, { fileName, parentId: driveParentId, localPath: path.join(folderPath, fileName), mimeType });
+                    completed++;
+                    mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: Math.round(completed / Math.max(1, (Date.now() - startedAt) / 1000) * 60) });
+                } catch (error) { failed++; uploadError = error; mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `Lỗi: ${fileName}`, completed, total: imageFiles.length, failed }); }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, Math.max(1, filesToUpload.length)) }, worker));
+        if (uploadError) throw uploadError;
+        try { await drive.permissions.create({ fileId: driveParentId, requestBody: { role: 'reader', type: 'anyone' }, supportsAllDrives: true }); } catch (_) {}
+        const galleryId = `party-${crypto.randomUUID()}`;
+        const publicSlug = `${slugifyAlbumName(galleryName)}-${galleryId.slice(-6).toLowerCase()}`;
+        const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: driveParentId, galleryName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
+        const tokenPath = LOCAL_TOKEN_PATH;
+        if (fs.existsSync(tokenPath)) {
+            try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
+        }
+        const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
+        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: galleryName, studioName, galleryType: 'party', status: 'Hoàn thành · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: payload.driveParentPath || 'Drive của tôi' });
+        mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: 'Đã hoàn tất gallery tiệc.', completed: imageFiles.length, total: imageFiles.length, failed: 0 });
+        return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
+    } catch (error) {
+        logDriveDiagnostic('upload-party-gallery', error);
+        return { success: false, error: friendlyDriveError(error) };
+    } finally { uploadInProgress = false; }
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {

@@ -338,6 +338,45 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     res.json({ success: true, settings: albumSettingsDatabase[folderId] });
 });
 
+// Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
+// đã chọn; không tạo ORIGINAL/CHECK và không đi qua luồng chọn ảnh.
+app.post('/api/party-gallery', async (req, res) => {
+    await loadPersistentState();
+    const driveFolderId = typeof req.body?.driveFolderId === 'string' ? req.body.driveFolderId.trim() : (typeof req.body?.folderId === 'string' ? req.body.folderId.trim() : '');
+    const folderId = typeof req.body?.galleryId === 'string' && req.body.galleryId.trim() ? req.body.galleryId.trim() : driveFolderId;
+    if (!driveFolderId) return res.status(400).json({ success: false, error: 'Thiếu thư mục Google Drive.' });
+    const galleryName = String(req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+    const requestedSlug = slugifyAlbumName(req.body?.publicSlug || galleryName);
+    const publicSlug = `${requestedSlug}-${String(folderId).slice(-6).toLowerCase()}`;
+    const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
+    albumSettingsDatabase[folderId] = {
+        ...(albumSettingsDatabase[folderId] || {}),
+        isEnabled: true,
+        text: 'ẢNH TIỆC',
+        maxSelections: 0,
+        publicSlug,
+        clientName: galleryName,
+        originalFolderId: driveFolderId,
+        studioName,
+        galleryType: 'party',
+        partyGallery: true,
+        checkReady: false,
+        checkVersion: 0,
+        workflowStatus: 'completed',
+        finalizedAt: createdAt,
+        expiresAt,
+        expiresDays,
+        paymentStatus: req.body?.paymentStatus || 'unpaid',
+        paymentAmount: Number(req.body?.paymentAmount) || 0
+    };
+    finalizedDatabase[folderId] = true;
+    await persistState();
+    res.json({ success: true, folderId, driveFolderId, publicSlug, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlug}`, expiresAt, expiresDays });
+});
+
 app.get('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const folderId = req.params.folderId;

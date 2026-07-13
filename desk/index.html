@@ -263,7 +263,12 @@
 
         <div id="view-upload" class="view-section">
             <h2>Tạo album mới</h2>
-            <div class="box">
+            <div class="upload-mode-switch" role="tablist" aria-label="Chọn luồng tạo album" style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 16px;">
+                <button id="upload-mode-selection" type="button" class="btn-success" role="tab" aria-selected="true">Album khách chọn ảnh</button>
+                <button id="upload-mode-party" type="button" class="btn-outline" role="tab" aria-selected="false">Gallery tiệc / PSC</button>
+            </div>
+            <div id="standard-upload-flow">
+            <div class="box" id="standard-folder-section">
                 <h3>01 — Chọn thư mục ảnh</h3>
                 <button id="btn-select">Chọn thư mục & quét ảnh</button>
                 <p id="selected-path" style="color: #10b981; font-weight: bold; margin-top: 10px; font-size: 13px;"></p>
@@ -330,6 +335,25 @@
                     <button type="button" id="btn-resume-upload" class="btn-success">▶ Tiếp tục tải lên</button>
                 </div>
             </div>
+            </div>
+
+        <div class="box" id="party-upload-section" style="display:none;">
+            <h3>03 — Upload gallery tiệc / PSC</h3>
+            <p style="margin-top:-4px;color:#64748b;font-size:13px;max-width:720px;">Upload trực tiếp vào thư mục Google Drive đã chọn. Luồng này không chạy AI culling và không tạo thư mục con.</p>
+            <div class="input-group">
+                <label>Thư mục ảnh tiệc trên máy:</label>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <input id="party-folder-path" type="text" readonly placeholder="Chưa chọn thư mục ảnh" style="flex:1;min-width:260px;">
+                    <button id="btn-party-select-folder" type="button" class="btn-outline">📁 Chọn thư mục ảnh</button>
+                </div>
+                <p id="party-folder-status" style="margin:7px 0 0;color:#64748b;font-size:12px;">Chỉ nhận JPG, PNG và WebP.</p>
+            </div>
+            <div class="input-group"><label>Tên gallery hiển thị cho khách:</label><input id="party-gallery-name" type="text" placeholder="Ví dụ: Tiệc cưới Ngọc & Kiet"></div>
+            <div class="input-group"><label>Thư mục đích trên Google Drive:</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="party-drive-parent-path" type="text" value="Drive của tôi (thư mục gốc)" readonly style="flex:1;min-width:260px;"><button id="btn-party-choose-drive-folder" type="button" class="btn-outline">☁️ Chọn thư mục Drive</button></div></div>
+            <div class="input-group"><label>Thời hạn hiển thị thông báo (ngày):</label><input id="party-expires-days" type="number" min="1" max="3650" value="60" placeholder="Mặc định 60 ngày"></div>
+            <button id="btn-party-upload" type="button" class="btn-success" disabled>🎉 Upload gallery tiệc</button>
+            <p id="party-upload-status" style="margin-top:12px;font-size:13px;line-height:1.5;"></p>
+        </div>
         </div>
 
         <div id="view-history" class="view-section">
@@ -478,6 +502,9 @@
         let isAlbumSyncing = false;
         let driveNavigation = [{ id: null, path: 'Drive của tôi' }];
         let selectedDriveFolder = { id: null, path: 'Drive của tôi' };
+        let partyFolderPath = '';
+        let partyImageFiles = [];
+        let partyUploadInProgress = false;
         let dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
         let dashboardAlbums = [];
 
@@ -615,10 +642,27 @@
         }
 
         function updateDrivePath() {
-            document.getElementById('drive-parent-path').value = selectedDriveFolder.id
-                ? selectedDriveFolder.path
-                : 'Drive của tôi (thư mục gốc)';
+            const value = selectedDriveFolder.id ? selectedDriveFolder.path : 'Drive của tôi (thư mục gốc)';
+            document.getElementById('drive-parent-path').value = value;
+            const partyPath = document.getElementById('party-drive-parent-path');
+            if (partyPath) partyPath.value = value;
         }
+
+        function setUploadFlow(flow) {
+            const standard = flow !== 'party';
+            document.getElementById('standard-upload-flow').style.display = standard ? '' : 'none';
+            document.getElementById('party-upload-section').style.display = standard ? 'none' : '';
+            const selectionTab = document.getElementById('upload-mode-selection');
+            const partyTab = document.getElementById('upload-mode-party');
+            selectionTab.className = standard ? 'btn-success' : 'btn-outline';
+            partyTab.className = standard ? 'btn-outline' : 'btn-success';
+            selectionTab.setAttribute('aria-selected', String(standard));
+            partyTab.setAttribute('aria-selected', String(!standard));
+        }
+
+        document.getElementById('upload-mode-selection').addEventListener('click', () => setUploadFlow('selection'));
+        document.getElementById('upload-mode-party').addEventListener('click', () => setUploadFlow('party'));
+        setUploadFlow('selection');
 
         async function restoreLastDriveFolder() {
             const lastFolder = await ipcRenderer.invoke('get-last-drive-folder');
@@ -1016,6 +1060,38 @@
             }
         });
 
+        document.getElementById('btn-party-select-folder').addEventListener('click', async () => {
+            const folder = await ipcRenderer.invoke('select-folder');
+            if (!folder) return;
+            partyFolderPath = folder;
+            document.getElementById('party-folder-path').value = folder;
+            document.getElementById('party-folder-status').textContent = 'Đang đọc danh sách ảnh…';
+            partyImageFiles = await ipcRenderer.invoke('scan-images', folder);
+            document.getElementById('party-folder-status').textContent = `✅ Đã nhận ${partyImageFiles.length} ảnh hợp lệ. AI culling không được chạy cho gallery tiệc.`;
+            document.getElementById('btn-party-upload').disabled = partyImageFiles.length === 0;
+        });
+
+        document.getElementById('btn-party-upload').addEventListener('click', async () => {
+            if (!partyFolderPath || !partyImageFiles.length) return;
+            const button = document.getElementById('btn-party-upload');
+            const status = document.getElementById('party-upload-status');
+            const galleryName = document.getElementById('party-gallery-name').value.trim() || partyFolderPath.split(/[\\/]/).filter(Boolean).pop() || 'Ảnh tiệc';
+            const expiresDays = Math.min(3650, Math.max(1, Number(document.getElementById('party-expires-days').value) || 60));
+            button.disabled = true;
+            partyUploadInProgress = true;
+            status.textContent = 'Đang upload trực tiếp vào thư mục Google Drive đã chọn…';
+            try {
+                const result = await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, galleryName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
+                if (!result.success) throw new Error(result.error || 'Upload gallery tiệc thất bại.');
+                status.innerHTML = `🎉 <b style="color:#059669;">Đã upload ${result.completed} ảnh.</b> <button type="button" class="btn-outline" id="party-copy-link">Sao chép link gallery</button>`;
+                const copy = document.getElementById('party-copy-link');
+                copy?.addEventListener('click', async () => { await navigator.clipboard.writeText(result.folderLink); copy.textContent = 'Đã sao chép ✓'; });
+                await loadAlbumHistory();
+                await loadDashboard();
+            } catch (error) { status.innerHTML = `<span style="color:#dc2626;">Không thể upload: ${escapeHtml(error.message)}</span>`; }
+            finally { partyUploadInProgress = false; button.disabled = false; }
+        });
+
         ipcRenderer.on('scan-progress', (event, data) => {
             document.getElementById('scan-result').innerHTML = `⏳ Đang quét thư mục: <b>${data.scanned}/${data.total}</b> tệp · tìm thấy <b>${data.found}</b> ảnh`;
         });
@@ -1209,6 +1285,7 @@
             document.getElementById('progress-text').innerText = `${data.progress}%`;
             const stats = `${data.completed || 0}/${data.total || 0} thành công · ${data.failed || 0} lỗi${data.rate ? ` · ~${data.rate} ảnh/phút` : ''}`;
             document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile} · ${stats}`;
+            if (partyUploadInProgress) document.getElementById('party-upload-status').textContent = `Đang upload: ${data.currentFile} · ${stats}`;
         });
 
         ipcRenderer.on('sync-progress', (event, data) => {
@@ -1262,7 +1339,7 @@
                     </div>
                     <div class="album-info-box">
                         <div>
-                            <div class="album-title-text" title="${escapeHtml(album.name || '')}">${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
+                            <div class="album-title-text" title="${escapeHtml(album.name || '')}">${album.galleryType === 'party' ? '🎉 ' : ''}${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
                             <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText} · 💳 ${album.paymentStatus === 'paid' ? 'Đã thanh toán' : album.paymentStatus === 'deposit' ? 'Đã đặt cọc' : 'Chưa thanh toán'}</div>
                             <div class="album-status-history" id="status-history-${album.id}" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
                             <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">
@@ -1381,6 +1458,7 @@
             document.getElementById('drive-folder-modal').style.display = 'flex';
             await loadDriveFolders();
         });
+        document.getElementById('btn-party-choose-drive-folder').addEventListener('click', () => document.getElementById('btn-choose-drive-folder').click());
 
         document.getElementById('btn-clear-drive-folder').addEventListener('click', () => {
             selectedDriveFolder = { id: null, path: 'Drive của tôi' };

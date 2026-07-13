@@ -439,6 +439,8 @@
             checkVersion: 0,
             checkNeedsRevision: false,
             workflowStatus: 'selection_open',
+            galleryType: 'selection',
+            expiresDays: 60,
             expiresAt: null,
             aiGroups: [],
             publicSlug: albumSlug,
@@ -558,7 +560,7 @@
         }
 
         function downloadCheckImage() {
-            if (state.viewMode !== 'check') return;
+            if (state.viewMode !== 'check' && state.galleryType !== 'party') return;
             const current = getCurrentImage();
             if (!current?.id) return;
             const url = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(current.id)}`;
@@ -714,7 +716,7 @@
             const lightboxOpen = elements.imageLightbox.classList.contains('open');
             const isCompleted = state.workflowStatus === 'completed';
             const remaining = state.expiresAt ? Math.max(0, Date.parse(state.expiresAt) - Date.now()) : 0;
-            const days = remaining ? Math.ceil(remaining / 86400000) : 60;
+            const days = remaining ? Math.ceil(remaining / 86400000) : (Number(state.expiresDays) || 60);
             if (isCompleted) {
                 const notice = days > 0
                     ? `✅ Hãy tải ảnh trong vòng ${days} ngày nhé · link ảnh sẽ tự hủy sau thời hạn này.`
@@ -749,7 +751,8 @@
             current.viewed = true;
             renderBranding();
             const isCheckView = state.viewMode === 'check';
-            const canEditSelection = !isCheckView && !state.isFinalized;
+            const isPartyGallery = state.galleryType === 'party';
+            const canEditSelection = !isCheckView && !state.isFinalized && !isPartyGallery;
             const canEditNote = !state.workflowStatus || state.workflowStatus !== 'completed' ? (isCheckView || canEditSelection) : false;
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
             if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
@@ -772,13 +775,13 @@
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
-            elements.reviewModeBar.classList.toggle('visible', state.checkReady);
+            elements.reviewModeBar.classList.toggle('visible', state.checkReady && !isPartyGallery);
             elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision && state.workflowStatus !== 'completed' ? '' : 'none';
             elements.checkModeBtn.classList.toggle('active', isCheckView);
             elements.originalModeBtn.classList.toggle('active', !isCheckView);
             elements.contentGrid.classList.toggle('check-view', isCheckView);
-            elements.selectedImagesSection.style.display = isCheckView ? 'none' : '';
-            elements.jumpToSelected.style.display = isCheckView ? 'none' : '';
+            elements.selectedImagesSection.style.display = isCheckView || isPartyGallery ? 'none' : '';
+            elements.jumpToSelected.style.display = isCheckView || isPartyGallery ? 'none' : '';
             updateCheckBannerVisibility();
             elements.selectBtn.classList.toggle('active', !!current.selected);
             elements.selectBtn.classList.toggle('btn-select-selected', !!current.selected);
@@ -800,7 +803,7 @@
             elements.lightboxNoteBtn.disabled = !canEditNote || savingFiles.has(current.fullName);
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
-            elements.lightboxDownloadBtn.style.display = isCheckView ? '' : 'none';
+            elements.lightboxDownloadBtn.style.display = isCheckView || isPartyGallery ? '' : 'none';
 
             elements.thumbStrip.innerHTML = '';
             galleryEntries
@@ -1276,7 +1279,9 @@
                 const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' }, 3);
                 const data = await readApiJson(response, 'Không thể tải album');
 
-                state.isFinalized = !!data.isFinalized;
+                state.galleryType = data.settings?.galleryType || (data.settings?.partyGallery ? 'party' : 'selection');
+                state.expiresDays = Number(data.settings?.expiresDays) || 60;
+                state.isFinalized = !!data.isFinalized || state.galleryType === 'party';
                 showRobotStatus(robotContextGreeting(), state.isFinalized);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
                 const mapImage = file => ({
