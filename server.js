@@ -360,6 +360,7 @@ app.post('/api/party-gallery', async (req, res) => {
     const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
+    const sectionName = String(req.body?.sectionName || 'Ngày 1').trim() || 'Ngày 1';
     albumSettingsDatabase[folderId] = {
         ...(albumSettingsDatabase[folderId] || {}),
         isEnabled: true,
@@ -369,6 +370,7 @@ app.post('/api/party-gallery', async (req, res) => {
         clientName: galleryName,
         displayName: galleryName,
         originalFolderId: driveFolderId,
+        gallerySections: [{ id: driveFolderId, name: sectionName, driveFolderId, createdAt }],
         studioName,
         galleryType: 'party',
         partyGallery: true,
@@ -384,6 +386,23 @@ app.post('/api/party-gallery', async (req, res) => {
     finalizedDatabase[folderId] = true;
     await persistState();
     res.json({ success: true, folderId, driveFolderId, publicSlug, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlug}`, expiresAt, expiresDays });
+});
+
+// Thêm một ngày/đợt ảnh vào gallery tiệc hiện tại. Link publicSlug giữ nguyên;
+// chỉ bổ sung thư mục Drive và một mục hiển thị mới cho trang khách.
+app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
+    await loadPersistentState();
+    const folderId = req.params.folderId;
+    const settings = albumSettingsDatabase[folderId];
+    if (!settings || settings.galleryType !== 'party') return res.status(404).json({ success: false, error: 'Không tìm thấy gallery tiệc.' });
+    const driveFolderId = String(req.body?.driveFolderId || '').trim();
+    const name = String(req.body?.sectionName || '').trim();
+    if (!driveFolderId || !name) return res.status(400).json({ success: false, error: 'Thiếu tên ngày hoặc thư mục Drive.' });
+    const sections = Array.isArray(settings.gallerySections) ? settings.gallerySections : [{ id: settings.originalFolderId || folderId, name: 'Ngày 1', driveFolderId: settings.originalFolderId || folderId }];
+    if (!sections.some(section => section.driveFolderId === driveFolderId)) sections.push({ id: driveFolderId, name, driveFolderId, createdAt: new Date().toISOString() });
+    settings.gallerySections = sections;
+    await persistState();
+    res.json({ success: true, gallerySections: sections, publicSlug: settings.publicSlug });
 });
 
 app.get('/api/album/:folderId/settings', async (req, res) => {
@@ -478,7 +497,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
-            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
+            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
         }
 
         const albumOAuth = await getAlbumDriveAuth(folderId);
@@ -524,12 +543,16 @@ app.get('/api/album/:folderId', async (req, res) => {
                 .map(toClientFile);
         };
         // Album mới lưu ảnh gốc trong ORIGINAL; album cũ vẫn đọc ảnh ở root.
-        const files = await listDriveImages(currentSettings.originalFolderId || folderId);
+        const sections = currentSettings.galleryType === 'party' && Array.isArray(currentSettings.gallerySections) && currentSettings.gallerySections.length
+            ? currentSettings.gallerySections
+            : [{ id: currentSettings.originalFolderId || folderId, name: 'Ảnh', driveFolderId: currentSettings.originalFolderId || folderId }];
+        const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId || section.id)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
+        const files = sectionFiles.flat();
         const checkFiles = hasCheckFolder ? await listDriveImages(currentSettings.checkFolderId) : [];
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
-        res.json({ success: true, folderId, files, checkFiles, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
+        res.json({ success: true, folderId, files, checkFiles, gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: currentSettings, isFinalized });
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

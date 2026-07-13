@@ -287,6 +287,9 @@
         .qr-card img { width:210px; height:210px; margin:14px auto; display:block; border-radius:12px; }
         .qr-card button { min-height:42px; padding:9px 18px; border:0; border-radius:11px; background:#0f172a; color:#fff; font-weight:800; cursor:pointer; }
         .download-selected { width:100%; margin-top:2px; }
+        .gallery-sections-nav { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+        .gallery-section-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-main); border-radius:999px; padding:8px 13px; cursor:pointer; font-weight:750; font-size:12px; }
+        .gallery-section-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
         @media (max-width:700px) {
             .header-panel { grid-template-columns:1fr; gap:12px; }
             .brand-identity { justify-self:start; }
@@ -369,6 +372,7 @@
 
         <div class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
+            <div id="gallerySectionsNav" class="gallery-sections-nav" style="display:none;"></div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
@@ -440,6 +444,8 @@
             checkNeedsRevision: false,
             workflowStatus: 'selection_open',
             galleryType: 'selection',
+            gallerySections: [],
+            activeGallerySection: 'all',
             expiresDays: 60,
             expiresAt: null,
             aiGroups: [],
@@ -495,6 +501,7 @@
             robotMessage: document.querySelector('#helpRobot .robot-message'),
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
+            ,gallerySectionsNav: document.getElementById('gallerySectionsNav')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
@@ -615,6 +622,35 @@
 
         function naturalImageCompare(a, b) {
             return String(a?.fullName || a?.shortName || '').localeCompare(String(b?.fullName || b?.shortName || ''), undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        function setGallerySection(sectionId) {
+            state.activeGallerySection = sectionId || 'all';
+            const base = state.viewMode === 'check' ? state.checkImages : state.originalImages;
+            state.images = state.galleryType === 'party' && state.activeGallerySection !== 'all'
+                ? base.filter(image => String(image.gallerySectionId || '') === String(state.activeGallerySection))
+                : base.slice();
+            state.currentIndex = 0;
+            render();
+        }
+
+        function renderGallerySections() {
+            const nav = elements.gallerySectionsNav;
+            if (!nav) return;
+            const sections = state.galleryType === 'party' ? state.gallerySections : [];
+            nav.innerHTML = '';
+            if (sections.length < 2) { nav.style.display = 'none'; return; }
+            nav.style.display = 'flex';
+            const all = document.createElement('button'); all.type = 'button'; all.className = 'gallery-section-btn'; all.textContent = `Tất cả (${state.originalImages.length})`;
+            all.classList.toggle('active', state.activeGallerySection === 'all'); all.onclick = () => setGallerySection('all'); nav.appendChild(all);
+            sections.forEach(section => {
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'gallery-section-btn';
+                const count = state.originalImages.filter(image => String(image.gallerySectionId || '') === String(section.id || section.driveFolderId)).length;
+                button.textContent = `${section.name || 'Ngày'} (${count})`;
+                button.classList.toggle('active', String(state.activeGallerySection) === String(section.id || section.driveFolderId));
+                button.onclick = () => setGallerySection(section.id || section.driveFolderId);
+                nav.appendChild(button);
+            });
         }
 
         const visualSignatureCache = new WeakMap();
@@ -785,6 +821,7 @@
             elements.statusMessage.style.display = isFinalView && !elements.statusMessage.classList.contains('error') ? 'none' : '';
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
+            renderGallerySections();
             elements.reviewModeBar.classList.toggle('visible', state.checkReady && !isPartyGallery);
             elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision && state.workflowStatus !== 'completed' ? '' : 'none';
             elements.checkModeBtn.classList.toggle('active', isCheckView);
@@ -1016,7 +1053,8 @@
 
         function robotContextGreeting() {
             if (!state.images.length) return 'Hiện album chưa có ảnh để xem.';
-            if (state.workflowStatus === 'completed' || state.galleryType === 'party') return 'Album đã hoàn tất. Bạn có thể xem và lưu các ảnh chất lượng cao.';
+            if (state.galleryType === 'party') return `Gallery tiệc đã sẵn sàng với ${state.gallerySections.length || 1} ngày/đợt ảnh. Bạn có thể chuyển mục để xem từng phần.`;
+            if (state.workflowStatus === 'completed') return 'Album đã hoàn tất. Bạn có thể xem và lưu các ảnh chất lượng cao.';
             if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở ảnh để kiểm tra.`;
             if (state.isFinalized) return `Đã ghi nhận ${selectedCount()} ảnh bạn chọn. Studio sẽ xử lý theo các ghi chú trong album.`;
             if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; hiện đã chọn ${selectedCount()}.`;
@@ -1028,7 +1066,9 @@
             robotIdleTimer = window.setTimeout(() => {
                 if (elements.imageLightbox.classList.contains('open')) { scheduleRobotAssistant(); return; }
                 const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
-                const prompts = isFinalView
+                const prompts = state.galleryType === 'party'
+                    ? [`Gallery có ${state.gallerySections.length || 1} ngày/đợt ảnh để xem.`, 'Bạn có thể chuyển tab ngày ở phía trên thư viện ảnh.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh trong mục hiện tại.`]
+                    : isFinalView
                     ? ['Ảnh đã hoàn tất, bạn có thể lưu lại ngay.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh hoàn thiện.`]
                     : state.checkReady
                         ? ['Bạn có thể mở ảnh để kiểm tra bản chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`]
@@ -1299,6 +1339,8 @@
                 const data = await readApiJson(response, 'Không thể tải album');
 
                 state.galleryType = data.settings?.galleryType || (data.settings?.partyGallery ? 'party' : 'selection');
+                state.gallerySections = Array.isArray(data.gallerySections) && data.gallerySections.length ? data.gallerySections : (Array.isArray(data.settings?.gallerySections) ? data.settings.gallerySections : []);
+                state.activeGallerySection = 'all';
                 state.expiresDays = Number(data.settings?.expiresDays) || 60;
                 state.isFinalized = !!data.isFinalized || state.galleryType === 'party';
                 showRobotStatus(robotContextGreeting(), state.isFinalized);

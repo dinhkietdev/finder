@@ -355,6 +355,7 @@
                 <p id="party-folder-status" style="margin:7px 0 0;color:#64748b;font-size:12px;">Chỉ nhận JPG, PNG và WebP.</p>
             </div>
             <div class="input-group"><label>Tên gallery hiển thị cho khách:</label><input id="party-gallery-name" type="text" placeholder="Ví dụ: Tiệc cưới Ngọc & Kiet"></div>
+            <div class="input-group"><label>Tên ngày/đợt ảnh:</label><input id="party-section-name" type="text" placeholder="Ví dụ: Vu quy hoặc Thành hôn" value="Ngày 1"></div>
             <div class="input-group"><label>Thư mục đích trên Google Drive:</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="party-drive-parent-path" type="text" value="Drive của tôi (thư mục gốc)" readonly style="flex:1;min-width:260px;"><button id="btn-party-choose-drive-folder" type="button" class="btn-outline">☁️ Chọn thư mục Drive</button></div></div>
             <div class="input-group"><label>Thời hạn hiển thị thông báo (ngày):</label><input id="party-expires-days" type="number" min="1" max="3650" value="60" placeholder="Mặc định 60 ngày"></div>
             <button id="btn-party-upload" type="button" class="btn-success" disabled>🎉 Upload gallery tiệc</button>
@@ -364,6 +365,10 @@
 
         <div id="view-history" class="view-section">
             <h2>Thư viện album</h2>
+            <div class="upload-mode-switch" style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;">
+                <button id="library-tab-selection" type="button" class="btn-success">📸 Album khách chọn ảnh</button>
+                <button id="library-tab-party" type="button" class="btn-outline">🎉 Gallery tiệc / PSC</button>
+            </div>
             <div class="box" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:14px 18px;">
                 <input id="library-studio-filter" type="search" placeholder="Lọc theo Studio…" style="max-width:260px;">
                 <select id="library-payment-filter" style="max-width:220px;"><option value="">Tất cả thanh toán</option><option value="unpaid">Chưa thanh toán</option><option value="deposit">Đã đặt cọc</option><option value="paid">Đã thanh toán đủ</option></select>
@@ -527,6 +532,8 @@
         let partyFolderPath = '';
         let partyImageFiles = [];
         let partyUploadInProgress = false;
+        let partyAppendAlbumId = null;
+        let libraryTypeFilter = 'selection';
         let dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
         let dashboardAlbums = [];
 
@@ -682,9 +689,29 @@
             partyTab.setAttribute('aria-selected', String(!standard));
         }
 
+        async function appendPartyGallery(folderId) {
+            partyAppendAlbumId = folderId;
+            setUploadFlow('party');
+            switchView('view-upload', document.querySelector('.nav-item[data-view="view-upload"]'));
+            const history = await ipcRenderer.invoke('get-history');
+            const album = history.find(item => item.id === folderId);
+            document.getElementById('party-gallery-name').value = album?.name || '';
+            document.getElementById('party-section-name').value = '';
+            document.getElementById('party-upload-status').textContent = 'Đang thêm ngày/đợt ảnh vào gallery hiện tại. Link khách sẽ giữ nguyên.';
+            document.getElementById('btn-party-upload').textContent = '➕ Upload thêm ngày/đợt ảnh';
+        }
+
         document.getElementById('upload-mode-selection').addEventListener('click', () => setUploadFlow('selection'));
         document.getElementById('upload-mode-party').addEventListener('click', () => setUploadFlow('party'));
         setUploadFlow('selection');
+        function setLibraryTypeFilter(type) {
+            libraryTypeFilter = type === 'party' ? 'party' : 'selection';
+            document.getElementById('library-tab-selection').className = libraryTypeFilter === 'selection' ? 'btn-success' : 'btn-outline';
+            document.getElementById('library-tab-party').className = libraryTypeFilter === 'party' ? 'btn-success' : 'btn-outline';
+            loadAlbumHistory();
+        }
+        document.getElementById('library-tab-selection').addEventListener('click', () => setLibraryTypeFilter('selection'));
+        document.getElementById('library-tab-party').addEventListener('click', () => setLibraryTypeFilter('party'));
 
         async function restoreLastDriveFolder() {
             const lastFolder = await ipcRenderer.invoke('get-last-drive-folder');
@@ -1098,12 +1125,15 @@
             const button = document.getElementById('btn-party-upload');
             const status = document.getElementById('party-upload-status');
             const galleryName = document.getElementById('party-gallery-name').value.trim() || partyFolderPath.split(/[\\/]/).filter(Boolean).pop() || 'Ảnh tiệc';
+            const sectionName = document.getElementById('party-section-name').value.trim() || 'Ngày 1';
             const expiresDays = Math.min(3650, Math.max(1, Number(document.getElementById('party-expires-days').value) || 60));
             button.disabled = true;
             partyUploadInProgress = true;
             status.textContent = 'Đang upload trực tiếp vào thư mục Google Drive đã chọn…';
             try {
-                const result = await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, galleryName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
+                const result = partyAppendAlbumId
+                    ? await ipcRenderer.invoke('append-party-gallery', { folderId: partyAppendAlbumId, folderPath: partyFolderPath, imageFiles: partyImageFiles, sectionName })
+                    : await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, galleryName, sectionName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
                 if (!result.success) throw new Error(result.error || 'Upload gallery tiệc thất bại.');
                 status.innerHTML = `🎉 <b style="color:#059669;">Đã upload ${result.completed} ảnh.</b> <button type="button" class="btn-outline" id="party-copy-link">Sao chép link gallery</button>`;
                 const copy = document.getElementById('party-copy-link');
@@ -1111,7 +1141,7 @@
                 await loadAlbumHistory();
                 await loadDashboard();
             } catch (error) { status.innerHTML = `<span style="color:#dc2626;">Không thể upload: ${escapeHtml(error.message)}</span>`; }
-            finally { partyUploadInProgress = false; button.disabled = false; }
+            finally { partyUploadInProgress = false; partyAppendAlbumId = null; button.textContent = '🎉 Upload gallery tiệc'; button.disabled = false; }
         });
 
         ipcRenderer.on('scan-progress', (event, data) => {
@@ -1352,6 +1382,7 @@
             const studioFilter = (document.getElementById('library-studio-filter')?.value || '').trim().toLowerCase();
             const paymentFilter = document.getElementById('library-payment-filter')?.value || '';
             const visibleHistory = history.filter(album =>
+                (libraryTypeFilter === 'party' ? album.galleryType === 'party' : album.galleryType !== 'party') &&
                 (!studioFilter || String(album.studioName || 'Finder').toLowerCase().includes(studioFilter)) &&
                 (!paymentFilter || (album.paymentStatus || 'unpaid') === paymentFilter)
             );
@@ -1365,6 +1396,7 @@
                 card.dataset.rawSynced = album.rawSynced ? '1' : '0';
                 
                 const limitText = album.maxSelections ? `${album.maxSelections} ảnh` : `Không`;
+                const isPartyAlbum = album.galleryType === 'party';
 
                 card.innerHTML = `
                     <div class="album-thumb-wrapper">
@@ -1401,6 +1433,16 @@
                     </div>
                 `;
                 gridContainer.appendChild(card);
+                if (isPartyAlbum) {
+                    card.querySelector(`#status-${album.id}`)?.remove();
+                    card.querySelector(`#flow-${album.id}`)?.remove();
+                    card.querySelector(`#status-history-${album.id}`)?.remove();
+                    ['.btn-check', '.btn-sync', '.btn-drive-link', '.btn-edit-limit', '.btn-check-upload'].forEach(selector => card.querySelector(selector)?.remove());
+                    const appendButton = document.createElement('button');
+                    appendButton.className = 'btn-success'; appendButton.textContent = '➕ Thêm ngày/ảnh';
+                    appendButton.addEventListener('click', () => appendPartyGallery(album.id));
+                    card.querySelector('.album-btn-row')?.prepend(appendButton);
+                }
                 const timelineEl = document.getElementById(`status-history-${album.id}`);
                 if (timelineEl) {
                     (album.statusHistory || []).slice(-4).reverse().forEach(item => {

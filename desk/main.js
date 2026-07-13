@@ -946,6 +946,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
     const imageFiles = (Array.isArray(payload.imageFiles) ? payload.imageFiles : []).filter(file => /\.jpe?g$|\.png$|\.webp$/i.test(file));
     const driveParentId = payload.driveParentId || 'root';
     const galleryName = String(payload.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const sectionName = String(payload.sectionName || 'Ngày 1').trim() || 'Ngày 1';
     const studioName = String(payload.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
     const expiresDays = Math.min(3650, Math.max(1, Number(payload.expiresDays) || 60));
     if (!folderPath || !fs.existsSync(folderPath)) return { success: false, error: 'Không tìm thấy thư mục ảnh tiệc.' };
@@ -982,19 +983,66 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         try { await drive.permissions.create({ fileId: driveParentId, requestBody: { role: 'reader', type: 'anyone' }, supportsAllDrives: true }); } catch (_) {}
         const galleryId = `party-${crypto.randomUUID()}`;
         const publicSlug = `${slugifyAlbumName(galleryName)}-${galleryId.slice(-6).toLowerCase()}`;
-        const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: driveParentId, galleryName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
+        const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: driveParentId, galleryName, sectionName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
         const tokenPath = LOCAL_TOKEN_PATH;
         if (fs.existsSync(tokenPath)) {
             try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
         }
         const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
-        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: galleryName, studioName, galleryType: 'party', status: 'Hoàn thành · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: payload.driveParentPath || 'Drive của tôi' });
+        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: galleryName, studioName, galleryType: 'party', gallerySections: [{ id: driveParentId, name: sectionName, driveFolderId: driveParentId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: payload.driveParentPath || 'Drive của tôi' });
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: 'Đã hoàn tất gallery tiệc.', completed: imageFiles.length, total: imageFiles.length, failed: 0 });
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
     } catch (error) {
         logDriveDiagnostic('upload-party-gallery', error);
         return { success: false, error: friendlyDriveError(error) };
     } finally { uploadInProgress = false; }
+});
+
+ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
+    const history = getAlbumHistory();
+    const album = history.find(item => item.id === payload.folderId && item.galleryType === 'party');
+    const folderPath = payload.folderPath;
+    const imageFiles = Array.isArray(payload.imageFiles) ? payload.imageFiles : [];
+    const sectionName = String(payload.sectionName || 'Ngày mới').trim() || 'Ngày mới';
+    if (!album) return { success: false, error: 'Không tìm thấy gallery tiệc.' };
+    if (!folderPath || !fs.existsSync(folderPath) || !imageFiles.length) return { success: false, error: 'Thư mục bổ sung không có ảnh hợp lệ.' };
+    try {
+        uploadInProgress = true;
+        const auth = await authenticateCasi(true);
+        const drive = google.drive({ version: 'v3', auth });
+        const parentId = album.driveParentId || album.originalFolderId;
+        if (!parentId) throw new Error('Gallery chưa có thư mục Drive gốc.');
+        const created = await drive.files.create({ resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+        const sectionFolderId = created.data.id;
+        let completed = 0; let failed = 0; let nextIndex = 0; let uploadError = null;
+        const startedAt = Date.now();
+        const worker = async () => {
+            while (!uploadError) {
+                const index = nextIndex++;
+                if (index >= imageFiles.length) return;
+                const fileName = imageFiles[index];
+                try {
+                    const ext = path.extname(fileName).toLowerCase();
+                    const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+                    await uploadDriveFileWithRetry(drive, { fileName, parentId: sectionFolderId, localPath: path.join(folderPath, fileName), mimeType });
+                    completed++;
+                    const timing = uploadTiming(completed, imageFiles.length, startedAt);
+                    mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${sectionName}/${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
+                } catch (error) { failed++; uploadError = error; }
+            }
+        };
+        await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, imageFiles.length) }, worker));
+        if (uploadError) throw uploadError;
+        try { await drive.permissions.create({ fileId: sectionFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
+        const response = await postServerJson(`/api/party-gallery/${album.id}/sections`, { driveFolderId: sectionFolderId, sectionName }, serverAuthHeaders());
+        const index = history.findIndex(item => item.id === album.id);
+        const sections = Array.isArray(history[index].gallerySections) ? history[index].gallerySections : [];
+        sections.push({ id: sectionFolderId, name: sectionName, driveFolderId: sectionFolderId, createdAt: new Date().toISOString() });
+        if (index >= 0) { history[index].gallerySections = sections; history[index].status = 'Đã cập nhật · Gallery tiệc'; history[index].statusUpdatedAt = new Date().toISOString(); fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8'); }
+        mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: `Đã hoàn tất ${sectionName}.`, completed: imageFiles.length, total: imageFiles.length, failed: 0 });
+        return { success: true, completed, failed, folderLink: album.link, gallerySections: response.gallerySections || sections };
+    } catch (error) { logDriveDiagnostic('append-party-gallery', error); return { success: false, error: friendlyDriveError(error) }; }
+    finally { uploadInProgress = false; }
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {
