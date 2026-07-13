@@ -293,7 +293,7 @@ app.post('/api/auth/save-token', (req, res) => {
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
     const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
@@ -306,7 +306,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             publicSlug: publicSlug || `album-${String(folderId).slice(-6).toLowerCase()}`,
             clientName: clientName || text || 'Album khách hàng',
             originalFolderId: originalFolderId || null,
-            paymentStatus: paymentStatus || 'unpaid', paymentAmount: Number(paymentAmount) || 0,
+            paymentStatus: paymentStatus || 'unpaid', paymentAmount: Number(paymentAmount) || 0, paymentTotal: Number(paymentTotal ?? paymentAmount) || 0, paymentDeposit: Number(paymentDeposit) || 0, paymentPaid: Number(paymentPaid) || 0, paymentBalance: Number(paymentBalance) || 0, paymentPayer: paymentPayer || 'client', paymentNote: String(paymentNote || ''),
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
@@ -320,6 +320,12 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (originalFolderId !== undefined) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
         if (paymentStatus !== undefined) albumSettingsDatabase[folderId].paymentStatus = paymentStatus;
         if (paymentAmount !== undefined) albumSettingsDatabase[folderId].paymentAmount = Number(paymentAmount) || 0;
+        if (paymentTotal !== undefined) albumSettingsDatabase[folderId].paymentTotal = Number(paymentTotal) || 0;
+        if (paymentDeposit !== undefined) albumSettingsDatabase[folderId].paymentDeposit = Number(paymentDeposit) || 0;
+        if (paymentPaid !== undefined) albumSettingsDatabase[folderId].paymentPaid = Number(paymentPaid) || 0;
+        if (paymentBalance !== undefined) albumSettingsDatabase[folderId].paymentBalance = Number(paymentBalance) || 0;
+        if (paymentPayer !== undefined) albumSettingsDatabase[folderId].paymentPayer = paymentPayer;
+        if (paymentNote !== undefined) albumSettingsDatabase[folderId].paymentNote = String(paymentNote || '');
         if (studioName !== undefined) albumSettingsDatabase[folderId].studioName = String(studioName || 'Finder').trim().toUpperCase();
         if (studioLogo !== undefined) albumSettingsDatabase[folderId].studioLogo = studioLogo;
         if (accentColor !== undefined) albumSettingsDatabase[folderId].accentColor = accentColor;

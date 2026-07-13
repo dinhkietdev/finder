@@ -422,15 +422,25 @@ ipcMain.handle('get-last-drive-folder', () => {
     return { id: latestAlbum.driveParentId, path: parentPath || 'Drive của tôi' };
 });
 ipcMain.handle('update-status', (event, { id, status }) => { updateAlbumStatus(id, status); return true; });
-ipcMain.handle('update-payment-status', (event, { id, paymentStatus }) => {
+ipcMain.handle('update-payment-status', (event, { id, paymentStatus, paymentTotal, paymentDeposit, paymentPaid, paymentPayer, paymentNote }) => {
     const history = getAlbumHistory(); const index = history.findIndex(item => item.id === id);
     if (index === -1) return { success: false, error: 'Không tìm thấy album.' };
-    history[index].paymentStatus = ['unpaid', 'deposit', 'paid'].includes(paymentStatus) ? paymentStatus : 'unpaid';
+    const total = Math.max(0, Number(paymentTotal) || 0);
+    const deposit = Math.max(0, Number(paymentDeposit) || 0);
+    const paid = Math.max(0, Number(paymentPaid) || 0);
+    const received = deposit + paid;
+    history[index].paymentTotal = total;
+    history[index].paymentDeposit = deposit;
+    history[index].paymentPaid = paid;
+    history[index].paymentBalance = Math.max(0, total - received);
+    history[index].paymentPayer = ['client', 'studio', 'personal'].includes(paymentPayer) ? paymentPayer : 'client';
+    history[index].paymentNote = String(paymentNote || '').trim();
+    history[index].paymentStatus = received <= 0 ? 'unpaid' : (total > 0 && received >= total ? 'paid' : 'deposit');
     history[index].paymentUpdatedAt = new Date().toISOString();
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${id}`).update({ paymentStatus: history[index].paymentStatus, paymentUpdatedAt: history[index].paymentUpdatedAt }).catch(() => {});
-    postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: Number(history[index].paymentAmount) || 0 }, serverAuthHeaders()).catch(() => {});
-    return { success: true, paymentStatus: history[index].paymentStatus };
+    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${id}`).update({ paymentStatus: history[index].paymentStatus, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote, paymentUpdatedAt: history[index].paymentUpdatedAt }).catch(() => {});
+    postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: total, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote }, serverAuthHeaders()).catch(() => {});
+    return { success: true, paymentStatus: history[index].paymentStatus, paymentBalance: history[index].paymentBalance };
 });
 ipcMain.handle('open-external-link', (event, url) => { shell.openExternal(url); });
 

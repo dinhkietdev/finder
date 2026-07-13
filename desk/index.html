@@ -63,7 +63,7 @@
         .album-info-box { padding: 17px; flex-grow: 1; display: flex; flex-direction: column; justify-content: space-between; }
         .album-title-text { font-size: 16px; font-weight: bold; color: #0f172a; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .album-date-text { font-size: 12px; color: #64748b; margin-bottom: 12px; }
-        .album-flow { display:flex; align-items:center; gap:0; margin:10px 0 12px; padding:9px 8px; border:1px solid #eef0f5; border-radius:10px; background:#fafbff; overflow:hidden; }
+        .album-flow { display:flex; align-items:center; gap:0; margin:10px 0 12px; padding:9px 8px; border:1px solid #eef0f5; border-radius:10px; background:#fafbff; overflow-x:auto; overflow-y:hidden; scrollbar-width:thin; }
         .album-flow-step { display:flex; align-items:center; gap:4px; color:#94a3b8; font-size:10px; font-weight:700; white-space:nowrap; }
         .album-flow-step::after { content:'›'; margin:0 5px; color:#cbd5e1; font-size:14px; }
         .album-flow-step:last-child::after { display:none; }
@@ -72,6 +72,7 @@
         .album-flow-dot { width:17px; height:17px; border-radius:50%; display:grid; place-items:center; background:#e2e8f0; color:#64748b; font-size:9px; }
         .album-flow-step.active .album-flow-dot { background:#dbeafe; color:#2563eb; box-shadow:0 0 0 3px #eff6ff; }
         .album-flow-step.done .album-flow-dot { background:#d1fae5; color:#047857; }
+        .album-payment-summary { margin-top:4px; color:#475569; font-size:12px; font-weight:650; }
         @media (max-width:520px) { .album-flow { overflow-x:auto; } .album-flow-step { font-size:9px; } }
         
         .album-btn-row { display: flex; flex-wrap: wrap; gap: 6px; border-top: 1px solid #f1f5f9; padding-top: 12px; }
@@ -429,6 +430,21 @@
                 <button class="btn-outline" onclick="closeEditLimitModal()">Hủy bỏ</button>
                 <button class="btn-success" onclick="saveNewLimit()">Lưu thay đổi</button>
             </div>
+        </div>
+    </div>
+
+    <div class="custom-modal-overlay" id="payment-modal">
+        <div class="custom-modal-box" style="width:min(520px,92vw);">
+            <div class="custom-modal-title">Thanh toán album</div>
+            <p id="payment-modal-album" style="font-size:13px;color:#64748b;margin:0 0 14px;"></p>
+            <input type="hidden" id="payment-album-id">
+            <label class="input-group">Tổng giá trị bộ ảnh<input type="number" id="payment-total-input" min="0" step="1000" placeholder="0"></label>
+            <label class="input-group">Khách đã cọc<input type="number" id="payment-deposit-input" min="0" step="1000" placeholder="0"></label>
+            <label class="input-group">Đã thanh toán thêm<input type="number" id="payment-paid-input" min="0" step="1000" placeholder="0"></label>
+            <label class="input-group">Người thanh toán<select id="payment-payer-input"><option value="client">Khách hàng</option><option value="studio">Studio</option><option value="personal">Cá nhân</option></select></label>
+            <label class="input-group">Ghi chú<input type="text" id="payment-note-input" placeholder="Ví dụ: đã nhận chuyển khoản ngày…"></label>
+            <p id="payment-balance-preview" style="font-weight:700;color:#2563eb;margin:10px 0;"></p>
+            <div class="custom-modal-actions"><button class="btn-outline" onclick="closePaymentModal()">Hủy bỏ</button><button class="btn-success" onclick="savePaymentModal()">Lưu thanh toán</button></div>
         </div>
     </div>
 
@@ -941,15 +957,15 @@
             const done = dashboardAlbums.filter(album => album.isDone);
             const now = new Date();
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            const waitingClients = dashboardAlbums.filter(album => !album.isFinalized && !album.checkReady);
+            const waitingClients = dashboardAlbums.filter(album => !album.isCompleted && !album.isFinalized && !album.checkReady);
             const todayWork = dashboardAlbums.filter(album => {
-                if (album.checkReady) return false;
+                if (album.checkReady || album.isCompleted) return false;
                 const due = albumDueDate(album);
                 return (album.isFinalized || album.rawSynced || album.status === 'Đang edit') && isSameDay(due, today);
             });
             const overdue = dashboardAlbums.filter(album => {
                 const due = albumDueDate(album);
-                return due && due < today && !album.checkReady;
+                return due && due < today && !album.checkReady && !album.isCompleted;
             });
             document.getElementById('dashboard-total').textContent = dashboardAlbums.length;
             document.getElementById('dashboard-waiting').textContent = waiting.length;
@@ -964,11 +980,11 @@
             dashboardAlbums.slice(0, 6).forEach(album => {
                 const row = createDashboardAlbumRow(album, 'Mở album', () => ipcRenderer.invoke('open-external-link', album.link));
                 const status = document.createElement('span'); status.className = `dashboard-status${album.isDone ? ' done' : ''}`;
-                status.textContent = album.checkReady ? `Đã chỉnh sửa · chờ kiểm tra` : album.isFinalized ? `Đã chốt · ${album.selectedCount} ảnh` : album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : (album.status || 'Đang chờ khách chọn');
+                status.textContent = album.isCompleted ? '✅ Hoàn thành · FINAL' : album.checkReady ? `Đã chỉnh sửa · chờ kiểm tra` : album.isFinalized ? `Đã chốt · ${album.selectedCount} ảnh` : album.selectedCount ? `Đang chọn · ${album.selectedCount} ảnh` : (album.status || 'Đang chờ khách chọn');
                 row.insertBefore(status, row.lastElementChild); recent.appendChild(row);
             });
 
-            const readyToEdit = dashboardAlbums.filter(album => album.isFinalized).sort((a, b) => (parseDashboardDate(a.finalizedAt)?.getTime() || 0) - (parseDashboardDate(b.finalizedAt)?.getTime() || 0));
+            const readyToEdit = dashboardAlbums.filter(album => album.isFinalized && !album.isCompleted).sort((a, b) => (parseDashboardDate(a.finalizedAt)?.getTime() || 0) - (parseDashboardDate(b.finalizedAt)?.getTime() || 0));
             if (readyToEdit.length) {
                 readyToEdit.slice(0, 5).forEach((album, index) => {
                     const row = createDashboardAlbumRow(album, `Ưu tiên ${index + 1}`, () => ipcRenderer.invoke('open-external-link', album.link));
@@ -1340,7 +1356,8 @@
                     <div class="album-info-box">
                         <div>
                             <div class="album-title-text" title="${escapeHtml(album.name || '')}">${album.galleryType === 'party' ? '🎉 ' : ''}${escapeHtml(album.name || 'Album chưa đặt tên')} <span style="font-weight:500;color:#64748b;">| ${escapeHtml(album.studioName || 'Finder')}</span></div>
-                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText} · 💳 ${album.paymentStatus === 'paid' ? 'Đã thanh toán' : album.paymentStatus === 'deposit' ? 'Đã đặt cọc' : 'Chưa thanh toán'}</div>
+                            <div class="album-date-text">📅 ${album.date.split(' ')[1] || album.date} | 🔢 Giới hạn: ${limitText}</div>
+                            <div class="album-payment-summary">💳 ${paymentSummary(album)}</div>
                             <div class="album-status-history" id="status-history-${album.id}" style="margin-top:6px; font-size:11px; color:#64748b;"></div>
                             <div class="album-flow" id="flow-${album.id}" aria-label="Tiến trình album">
                                 <span class="album-flow-step active"><i class="album-flow-dot">1</i>Chọn</span>
@@ -1358,7 +1375,7 @@
                             <button class="btn-outline btn-web" onclick="ipcRenderer.invoke('open-external-link', '${album.link}')">🌐 Web</button>
                             <button class="btn-outline btn-drive-link" data-action="drive-link" style="display:none;" onclick="copyFinalDriveLink('${album.id}')">📋 Link Drive cuối</button>
                             <button class="btn-outline btn-edit-limit" onclick="openEditLimitModal('${album.id}', ${album.maxSelections || 0})">🔢 Sửa Số Lượng</button>
-                            <button class="btn-outline" onclick="toggleAlbumPayment('${album.id}')">💳 Đổi thanh toán</button>
+                            <button class="btn-outline" onclick="openPaymentModal('${album.id}')">💳 Quản lý thanh toán</button>
                             <button class="btn-success btn-check-upload" data-action="check" style="display:none;" onclick="uploadCheckForAlbum('${album.id}', this)">${album.checkStatus === 'ready' ? '↻ Cập nhật CHECK' : '⬆ Upload CHECK'}</button>
                             <button class="btn-trash btn-delete" onclick="deleteAlbumFromApp('${album.id}')" title="Xóa album khỏi hệ thống">🗑️</button>
                         </div>
@@ -1407,14 +1424,46 @@
                 isAlbumSyncing = false;
             }
         }
-        async function toggleAlbumPayment(folderId) {
+        function formatMoney(value) { return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(Math.max(0, Number(value) || 0)); }
+        function paymentSummary(album) {
+            const total = Number(album.paymentTotal ?? album.paymentAmount) || 0;
+            const received = (Number(album.paymentDeposit) || 0) + (Number(album.paymentPaid) || 0);
+            if (!total && !received) return 'Chưa thanh toán';
+            const balance = Math.max(0, total - received);
+            return `${album.paymentStatus === 'paid' ? 'Đã thanh toán đủ' : 'Đã nhận ' + formatMoney(received)}${total ? ` · Tổng ${formatMoney(total)} · Còn ${formatMoney(balance)}` : ''}`;
+        }
+        async function openPaymentModal(folderId) {
             const history = await ipcRenderer.invoke('get-history');
             const album = history.find(item => item.id === folderId);
             if (!album) return;
-            const next = album.paymentStatus === 'paid' ? 'unpaid' : album.paymentStatus === 'unpaid' ? 'deposit' : 'paid';
-            await ipcRenderer.invoke('update-payment-status', { id: folderId, paymentStatus: next });
-            loadAlbumHistory();
+            document.getElementById('payment-album-id').value = folderId;
+            document.getElementById('payment-modal-album').textContent = `${album.name || 'Album'} · ${album.studioName || 'Finder'}`;
+            document.getElementById('payment-total-input').value = Number(album.paymentTotal ?? album.paymentAmount) || '';
+            document.getElementById('payment-deposit-input').value = Number(album.paymentDeposit) || '';
+            document.getElementById('payment-paid-input').value = Number(album.paymentPaid) || '';
+            document.getElementById('payment-payer-input').value = album.paymentPayer || 'client';
+            document.getElementById('payment-note-input').value = album.paymentNote || '';
+            updatePaymentBalancePreview();
+            document.getElementById('payment-modal').style.display = 'flex';
         }
+        function closePaymentModal() { document.getElementById('payment-modal').style.display = 'none'; }
+        function updatePaymentBalancePreview() {
+            const total = Number(document.getElementById('payment-total-input').value) || 0;
+            const received = (Number(document.getElementById('payment-deposit-input').value) || 0) + (Number(document.getElementById('payment-paid-input').value) || 0);
+            document.getElementById('payment-balance-preview').textContent = `Đã nhận: ${formatMoney(received)} · Còn lại: ${formatMoney(Math.max(0, total - received))}`;
+        }
+        async function savePaymentModal() {
+            const id = document.getElementById('payment-album-id').value;
+            const total = Math.max(0, Number(document.getElementById('payment-total-input').value) || 0);
+            const deposit = Math.max(0, Number(document.getElementById('payment-deposit-input').value) || 0);
+            const paid = Math.max(0, Number(document.getElementById('payment-paid-input').value) || 0);
+            const result = await ipcRenderer.invoke('update-payment-status', { id, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentPayer: document.getElementById('payment-payer-input').value, paymentNote: document.getElementById('payment-note-input').value });
+            if (!result.success) return alert(result.error || 'Không thể lưu thanh toán.');
+            closePaymentModal();
+            await loadAlbumHistory();
+            await loadDashboard();
+        }
+        ['payment-total-input', 'payment-deposit-input', 'payment-paid-input'].forEach(id => document.getElementById(id).addEventListener('input', updatePaymentBalancePreview));
         document.getElementById('library-studio-filter').addEventListener('input', () => loadAlbumHistory());
         document.getElementById('library-payment-filter').addEventListener('change', () => loadAlbumHistory());
 
@@ -1438,8 +1487,8 @@
             const driveLinkButton = card.querySelector('[data-action="drive-link"]');
             const rawSynced = card.dataset.rawSynced === '1';
             // Luồng thao tác bắt buộc: khách chốt → Gom RAW → Upload CHECK.
-            if (rawButton) rawButton.style.display = isFinalized && !checkReady && !rawSynced ? '' : 'none';
-            if (checkButton) checkButton.style.display = isFinalized && rawSynced && (!checkReady || checkNeedsRevision) ? '' : 'none';
+            if (rawButton) rawButton.style.display = !completed && isFinalized && !checkReady && !rawSynced ? '' : 'none';
+            if (checkButton) checkButton.style.display = !completed && isFinalized && rawSynced && (!checkReady || checkNeedsRevision) ? '' : 'none';
             if (driveLinkButton) driveLinkButton.style.display = 'none';
             renderAlbumTimeline(folderId, isFinalized, checkReady, completed);
         }
@@ -1584,7 +1633,7 @@
                         if (status) { status.innerText = "Đang chờ khách chọn lại"; status.className = "album-badge waiting"; }
                     } else if (checkCompleted) {
                         ipcRenderer.invoke('update-status', { id: folderId, status: 'Hoàn thành' });
-                        btn.innerHTML = '🏁 Hoàn thành · CHECK ' + (settingsData.settings?.checkVersion || 1);
+                        btn.innerHTML = '🏁 Hoàn thành · FINAL';
                         btn.style.background = '#16a34a';
                         btn.style.color = '#fff';
                         btn.style.border = 'none';
