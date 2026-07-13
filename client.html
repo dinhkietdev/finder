@@ -338,7 +338,7 @@
                 <div class="photo-meta">
                     <div>
                         <div class="photo-name" id="photoName">Đang tải ảnh...</div>
-                        <div class="hint">Vuốt trái/phải trên ảnh để chuyển nhanh</div>
+                        <div class="hint" id="swipeHint">Vuốt trái/phải trên ảnh để chuyển nhanh</div>
                     </div>
                     <div class="photo-badge" id="photoStatusBadge">Đang chờ</div>
                 </div>
@@ -461,6 +461,7 @@
             photoIndexLabel: document.getElementById('photoIndexLabel'),
             selectedCountLabel: document.getElementById('selectedCountLabel'),
             photoStatusBadge: document.getElementById('photoStatusBadge'),
+            swipeHint: document.getElementById('swipeHint'),
             noteInput: document.getElementById('noteInput'),
             imageActionRow: document.getElementById('imageActionRow'),
             statusMessage: document.getElementById('statusMessage'),
@@ -752,6 +753,8 @@
             renderBranding();
             const isCheckView = state.viewMode === 'check';
             const isPartyGallery = state.galleryType === 'party';
+            const isFinalView = state.workflowStatus === 'completed' || isPartyGallery;
+            if (isFinalView) state.compareEnabled = false;
             const canEditSelection = !isCheckView && !state.isFinalized && !isPartyGallery;
             const canEditNote = !state.workflowStatus || state.workflowStatus !== 'completed' ? (isCheckView || canEditSelection) : false;
             const imgUrl = current.preview || current.thumbnail || current.originalUrl;
@@ -773,6 +776,12 @@
             elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
+            // Các gallery chỉ xem (FINAL và gallery tiệc) không hiển thị nhãn
+            // chọn/trạng thái hay hướng dẫn của luồng lựa ảnh.
+            elements.albumStatusPill.style.display = isFinalView ? 'none' : '';
+            elements.photoStatusBadge.style.display = isFinalView ? 'none' : '';
+            elements.swipeHint.style.display = isFinalView ? 'none' : '';
+            elements.statusMessage.style.display = isFinalView && !elements.statusMessage.classList.contains('error') ? 'none' : '';
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
             elements.galleryCount.textContent = `${state.images.length} ảnh`;
             elements.reviewModeBar.classList.toggle('visible', state.checkReady && !isPartyGallery);
@@ -804,6 +813,10 @@
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.lightboxDownloadBtn.style.display = isCheckView || isPartyGallery ? '' : 'none';
+            if (isFinalView) {
+                elements.compareToggleBtn.style.display = 'none';
+                elements.compareStage.classList.remove('visible');
+            }
 
             elements.thumbStrip.innerHTML = '';
             galleryEntries
@@ -944,7 +957,8 @@
             if (!current) return;
             const highResolutionUrl = current.lightbox || current.originalUrl || current.preview || current.thumbnail || '';
             const compareOriginal = state.viewMode === 'check' ? findOriginalForCheck(current) : null;
-            const canCompare = Boolean(compareOriginal && (compareOriginal.lightbox || compareOriginal.originalUrl));
+            const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
+            const canCompare = !isFinalView && Boolean(compareOriginal && (compareOriginal.lightbox || compareOriginal.originalUrl));
             const showCompare = canCompare && state.compareEnabled;
             elements.compareToggleBtn.style.display = canCompare ? '' : 'none';
             elements.compareToggleBtn.textContent = showCompare ? '🖼️ Ảnh đơn' : '↔ So sánh';
@@ -1001,7 +1015,8 @@
 
         function robotContextGreeting() {
             if (!state.images.length) return 'Hiện album chưa có ảnh để xem.';
-            if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở một ảnh rồi bấm “↔ So sánh”.`;
+            if (state.workflowStatus === 'completed' || state.galleryType === 'party') return 'Album đã hoàn tất. Bạn có thể xem và lưu các ảnh chất lượng cao.';
+            if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở ảnh để kiểm tra.`;
             if (state.isFinalized) return `Đã ghi nhận ${selectedCount()} ảnh bạn chọn. Studio sẽ xử lý theo các ghi chú trong album.`;
             if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; hiện đã chọn ${selectedCount()}.`;
             return `Album có ${state.images.length} ảnh. Hãy mở ảnh bạn quan tâm để xem và gửi lựa chọn cho studio.`;
@@ -1011,11 +1026,14 @@
             window.clearTimeout(robotIdleTimer);
             robotIdleTimer = window.setTimeout(() => {
                 if (elements.imageLightbox.classList.contains('open')) { scheduleRobotAssistant(); return; }
-                const prompts = state.checkReady
-                    ? ['Bạn có thể kéo thanh ↔ để kiểm tra trước và sau khi chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`]
-                    : state.isFinalized
-                        ? ['Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh và ghi chú yêu cầu chỉnh sửa.', `Album đã chốt ${selectedCount()} ảnh.`]
-                        : [`Bạn đã chọn ${selectedCount()} ảnh trong album.`, 'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.', 'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'];
+                const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
+                const prompts = isFinalView
+                    ? ['Ảnh đã hoàn tất, bạn có thể lưu lại ngay.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh hoàn thiện.`]
+                    : state.checkReady
+                        ? ['Bạn có thể mở ảnh để kiểm tra bản chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`]
+                        : state.isFinalized
+                            ? ['Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh.', `Album đã chốt ${selectedCount()} ảnh.`]
+                            : [`Bạn đã chọn ${selectedCount()} ảnh trong album.`, 'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.', 'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'];
                 showRobotStatus(prompts[robotPromptIndex++ % prompts.length]);
                 scheduleRobotAssistant();
             }, 22000);
