@@ -183,6 +183,12 @@ function saveDB() {
     try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, checkNotesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
 }
 
+function stripUndefined(value) {
+    if (Array.isArray(value)) return value.map(stripUndefined);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined).map(([key, item]) => [key, stripUndefined(item)]));
+}
+
 // Settings are updated much more frequently than the rest of an album
 // partition. Write only the settings child so a large liked-image partition or
 // an aggregate-node update cannot delay the Desktop response.
@@ -190,7 +196,7 @@ async function persistAlbumSettings(folderId) {
     if (!firebaseDb) return;
     const key = `finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`;
     await firebaseDb.ref(key).update({
-        settings: albumSettingsDatabase[folderId] || null,
+        settings: stripUndefined(albumSettingsDatabase[folderId] || null),
         updatedAt: new Date().toISOString()
     });
 }
@@ -669,7 +675,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // on that network write: return the management token immediately and let
     // the partition persist in the background. The slug resolver has a Drive
     // token fallback if this particular write is interrupted.
-    persistAlbumSettings(folderId).catch(error => console.warn('Không thể lưu settings album:', error.message));
+    persistAlbumSettings(folderId).catch(error => console.warn('Không thể lưu settings album:', JSON.stringify({ message: error.message, code: error.code })));
     res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending: Boolean(firebaseDb) });
 });
 
