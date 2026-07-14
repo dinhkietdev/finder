@@ -732,7 +732,7 @@ async function recoverDriveStructureBySlug(drive, slug) {
     const response = await drive.files.list({
         q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
         fields: 'files(id,name)', pageSize: 1000,
-        corpora: 'allDrives', includeItemsFromAllDrives: true, supportsAllDrives: true
+        includeItemsFromAllDrives: true, supportsAllDrives: true
     });
     const root = (response.data.files || []).find(folder =>
         canonicalPublicSlug(folder.name || '') === baseName
