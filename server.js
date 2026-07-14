@@ -377,35 +377,47 @@ async function findStudioHistoryBySlug(requested) {
 // Drive as a compatibility fallback. This path is only used after the normal
 // Firebase lookup fails, so normal client requests remain cheap.
 async function findDriveFolderByLegacySlug(requested, rawSlug) {
-    const auth = getServiceAccountAuth();
-    if (!auth) return null;
     const raw = String(rawSlug || '').trim();
     const rawTail = raw.includes('-') ? raw.slice(raw.lastIndexOf('-') + 1) : '';
     const tail = canonicalPublicSlug(rawTail);
     if (tail.length < 4) return null;
     const baseSlug = canonicalPublicSlug(raw.includes('-') ? raw.slice(0, raw.lastIndexOf('-')) : '');
-    const drive = google.drive({ version: 'v3', auth });
-    let pageToken;
-    do {
-        const response = await drive.files.list({
-            q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-            fields: 'nextPageToken,files(id,name,parents)',
-            pageSize: 1000,
-            pageToken,
-            corpora: 'allDrives',
-            includeItemsFromAllDrives: true,
-            supportsAllDrives: true
-        });
-        for (const folder of response.data.files || []) {
-            const id = String(folder.id || '');
-            const idTail = id.slice(-6).toLowerCase();
-            const nameSlug = canonicalPublicSlug(folder.name || '');
-            if (!id || idTail !== rawTail.toLowerCase() && canonicalPublicSlug(idTail) !== tail) continue;
-            if (baseSlug && nameSlug !== baseSlug) continue;
-            return { folderId: id, folderName: folder.name || 'Album khách hàng' };
+    const authCandidates = [];
+    const serviceAuth = getServiceAccountAuth();
+    if (serviceAuth) authCandidates.push(serviceAuth);
+    try {
+        const tokens = getStoredTokens();
+        const client = getOAuth2Client();
+        if (tokens && client) { client.setCredentials(tokens); authCandidates.push(client); }
+    } catch (_) {}
+    for (const auth of authCandidates) {
+        try {
+            const drive = google.drive({ version: 'v3', auth });
+            let pageToken;
+            do {
+                const response = await drive.files.list({
+                    q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+                    fields: 'nextPageToken,files(id,name,parents)',
+                    pageSize: 1000,
+                    pageToken,
+                    corpora: 'allDrives',
+                    includeItemsFromAllDrives: true,
+                    supportsAllDrives: true
+                });
+                for (const folder of response.data.files || []) {
+                    const id = String(folder.id || '');
+                    const idTail = id.slice(-6).toLowerCase();
+                    const nameSlug = canonicalPublicSlug(folder.name || '');
+                    if (!id || (idTail !== rawTail.toLowerCase() && canonicalPublicSlug(idTail) !== tail)) continue;
+                    if (baseSlug && nameSlug !== baseSlug) continue;
+                    return { folderId: id, folderName: folder.name || 'Album khách hàng' };
+                }
+                pageToken = response.data.nextPageToken || undefined;
+            } while (pageToken);
+        } catch (error) {
+            console.warn('Không thể tìm Drive bằng một credential:', error.message);
         }
-        pageToken = response.data.nextPageToken || undefined;
-    } while (pageToken);
+    }
     return null;
 }
 
