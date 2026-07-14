@@ -118,7 +118,9 @@
         .quick-note-card textarea { width:100%; min-height:130px; border-radius:10px; border:1px solid var(--border); background:#0f172a; color:#fff; padding:11px; resize:vertical; }
         .quick-note-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
         .help-robot { position:fixed; right:20px; bottom:84px; z-index:20; display:flex; flex-direction:column; align-items:flex-end; gap:9px; }
-        .robot-message { display:none; max-width:220px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
+        .robot-message { display:none; max-width:260px; padding:11px 13px; border-radius:15px 15px 3px 15px; background:#fff; color:#1e293b; font-size:13px; line-height:1.4; box-shadow:0 10px 28px rgba(0,0,0,.26); }
+        .robot-message a { color:#2563eb; font-weight:800; text-decoration:underline; text-underline-offset:2px; }
+        .robot-message a:focus-visible { outline:2px solid #2563eb; outline-offset:2px; border-radius:3px; }
         .help-robot.visible .robot-message, .help-robot:hover .robot-message { display:block; }
         .robot-button { position:relative; width:76px; height:76px; border:2px solid rgba(147,197,253,.8); border-radius:50%; overflow:visible; background:#fff; box-shadow:0 10px 24px rgba(37,99,235,.5); cursor:pointer; padding:0; }
         .robot-button { animation:robotFloat 3.6s ease-in-out infinite, robotGlow 2.8s ease-in-out infinite; }
@@ -573,6 +575,14 @@
         let robotMessageInterval = null;
         let robotIdleTimer = null;
         let robotPromptIndex = 0;
+        let robotContactShownAt = 0;
+        const ROBOT_CONTACT_COOLDOWN_MS = 3 * 60 * 1000;
+        const ROBOT_FACEBOOK_URL = 'https://www.facebook.com/inhkiet.704955';
+        const ROBOT_CONTACT_PROMPT = Object.freeze({
+            prefix: '📷 Đình Kiệt có nhận chụp ảnh nhé, liên hệ em ở đây: ',
+            linkText: 'Đình Kiệt',
+            href: ROBOT_FACEBOOK_URL
+        });
         let expiryTimer = null;
         let pinchStartDistance = 0;
         let pinchStartScale = 1;
@@ -1212,10 +1222,27 @@
             updateCheckBannerVisibility();
         }
 
+        function renderRobotMessage(message) {
+            elements.robotMessage.replaceChildren();
+            if (message && typeof message === 'object' && message.href) {
+                elements.robotMessage.append(document.createTextNode(message.prefix || ''));
+                const link = document.createElement('a');
+                link.href = message.href;
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = message.linkText || 'Đình Kiệt';
+                link.setAttribute('aria-label', 'Liên hệ Đình Kiệt trên Facebook');
+                elements.robotMessage.append(link);
+                if (message.suffix) elements.robotMessage.append(document.createTextNode(message.suffix));
+                return;
+            }
+            elements.robotMessage.textContent = String(message || '');
+        }
+
         function showRobotStatus(message, repeat = false) {
             window.clearTimeout(robotMessageTimeout);
             window.clearInterval(robotMessageInterval);
-            elements.robotMessage.textContent = message;
+            renderRobotMessage(message);
             const flash = () => {
                 elements.helpRobot.classList.add('visible');
                 robotMessageTimeout = window.setTimeout(() => elements.helpRobot.classList.remove('visible'), 5000);
@@ -1228,27 +1255,67 @@
             if (!state.images.length) return 'Hiện album chưa có ảnh để xem.';
             if (state.galleryType === 'party') return `Gallery tiệc đã sẵn sàng với ${state.gallerySections.length || 1} ngày/đợt ảnh. Bạn có thể chuyển mục để xem từng phần.`;
             if (state.workflowStatus === 'completed') return 'Album đã hoàn tất. Bạn có thể xem và lưu các ảnh chất lượng cao.';
+            if (state.checkNeedsRevision) return '🛠️ Studio đã nhận ghi chú của bạn và đang chờ xử lý chỉnh sửa tiếp.';
             if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở ảnh để kiểm tra.`;
             if (state.isFinalized) return `Đã ghi nhận ${selectedCount()} ảnh bạn chọn. Studio sẽ xử lý theo các ghi chú trong album.`;
-            if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; hiện đã chọn ${selectedCount()}.`;
+            if (state.maxSelections > 0 && selectedCount() >= state.maxSelections) return `✅ Bạn đã chọn đủ ${state.maxSelections} ảnh. Hãy kiểm tra lại rồi xác nhận khi sẵn sàng.`;
+            if (selectedCount() > 0) return `👍 Bạn đã chọn ${selectedCount()}${state.maxSelections > 0 ? `/${state.maxSelections}` : ''} ảnh. Bạn có thể tiếp tục xem và ghi chú trước khi chốt.`;
+            if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; mình sẽ cập nhật số đã chọn ngay trên nút.`;
             return `Album có ${state.images.length} ảnh. Hãy mở ảnh bạn quan tâm để xem và gửi lựa chọn cho studio.`;
+        }
+
+        function robotContextPrompts() {
+            const selected = selectedCount();
+            if (state.galleryType === 'party') return [
+                `Gallery có ${state.gallerySections.length || 1} ngày/đợt ảnh để xem.`,
+                'Bạn có thể chuyển tab ngày ở phía trên thư viện ảnh.',
+                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh trong mục hiện tại.`
+            ];
+            if (state.workflowStatus === 'completed') return [
+                'Ảnh đã hoàn tất, bạn có thể lưu lại ngay.',
+                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh hoàn thiện.`,
+                'Nếu cần hỗ trợ thêm, hãy liên hệ studio qua thông tin trên trang.'
+            ];
+            if (state.checkNeedsRevision) return [
+                'Studio đã nhận ghi chú và sẽ xử lý yêu cầu chỉnh sửa tiếp.',
+                'Bạn có thể xem lại từng ảnh CHECK để bổ sung ghi chú nếu cần.',
+                `Hiện có ${state.checkImages.length} ảnh trong bản CHECK mới nhất.`
+            ];
+            if (state.checkReady) return [
+                'Bạn có thể mở ảnh để kiểm tra bản chỉnh sửa.',
+                'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.',
+                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`
+            ];
+            if (state.isFinalized) return [
+                'Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh.',
+                `Album đã chốt ${selected} ảnh.`,
+                'Studio sẽ dựa trên lựa chọn và ghi chú để xử lý ảnh.'
+            ];
+            return [
+                `Bạn đã chọn ${selected}${state.maxSelections > 0 ? `/${state.maxSelections}` : ''} ảnh trong album.`,
+                'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.',
+                'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'
+            ];
+        }
+
+        function nextRobotPrompt() {
+            const shouldContact = robotPromptIndex >= 3
+                && robotPromptIndex % 4 === 3
+                && Date.now() - robotContactShownAt >= ROBOT_CONTACT_COOLDOWN_MS;
+            if (shouldContact) {
+                robotContactShownAt = Date.now();
+                return ROBOT_CONTACT_PROMPT;
+            }
+            const prompts = robotContextPrompts();
+            return prompts[robotPromptIndex % prompts.length];
         }
 
         function scheduleRobotAssistant() {
             window.clearTimeout(robotIdleTimer);
             robotIdleTimer = window.setTimeout(() => {
                 if (elements.imageLightbox.classList.contains('open')) { scheduleRobotAssistant(); return; }
-                const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
-                const prompts = state.galleryType === 'party'
-                    ? [`Gallery có ${state.gallerySections.length || 1} ngày/đợt ảnh để xem.`, 'Bạn có thể chuyển tab ngày ở phía trên thư viện ảnh.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh trong mục hiện tại.`]
-                    : isFinalView
-                    ? ['Ảnh đã hoàn tất, bạn có thể lưu lại ngay.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh hoàn thiện.`]
-                    : state.checkReady
-                        ? ['Bạn có thể mở ảnh để kiểm tra bản chỉnh sửa.', 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.', `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`]
-                        : state.isFinalized
-                            ? ['Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh.', `Album đã chốt ${selectedCount()} ảnh.`]
-                            : [`Bạn đã chọn ${selectedCount()} ảnh trong album.`, 'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.', 'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'];
-                showRobotStatus(prompts[robotPromptIndex++ % prompts.length]);
+                showRobotStatus(nextRobotPrompt());
+                robotPromptIndex += 1;
                 scheduleRobotAssistant();
             }, 22000);
         }
@@ -1525,7 +1592,6 @@
                 state.activeGallerySection = 'all';
                 state.expiresDays = Number(data.settings?.expiresDays) || 60;
                 state.isFinalized = !!data.isFinalized || state.galleryType === 'party';
-                showRobotStatus(robotContextGreeting(), state.isFinalized);
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
                 const mapImage = file => ({
                     ...file,
@@ -1572,6 +1638,9 @@
                 state.currentIndex = 0;
                 state.aiGroups = [];
                 render();
+                // Chỉ chào sau khi đã nạp đầy đủ trạng thái, giới hạn chọn và
+                // lựa chọn đã lưu để robot không nói sai ngữ cảnh lúc mới mở.
+                showRobotStatus(robotContextGreeting());
                 // Hiển thị gallery ngay lập tức; gom nhóm chạy nền sau đó.
                 if (state.viewMode === 'original') buildAiGroups().then(() => render()).catch(() => {});
                 scheduleRobotAssistant();
