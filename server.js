@@ -1697,6 +1697,9 @@ app.get('/api/album/:folderId', async (req, res) => {
         await loadPersistentState();
         let { folderId } = req.params;
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
+        if (!Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId) && !albumCacheDatabase[folderId]) {
+            return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', requestId: req.requestId, error: 'Không tìm thấy album.' });
+        }
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
         let currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
