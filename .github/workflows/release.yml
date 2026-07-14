@@ -111,9 +111,17 @@ jobs:
       - name: Build Windows installer
         run: npx electron-builder --win --publish never
       - name: Upload Windows assets
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" dist/*.exe dist/*.blockmap dist/latest.yml --clobber
+        run: |
+          $assets = @(
+            Get-ChildItem -Path dist -Filter '*.exe' -File
+            Get-ChildItem -Path dist -Filter '*.blockmap' -File
+            Get-ChildItem -Path dist -Filter 'latest.yml' -File
+          ) | Select-Object -ExpandProperty FullName
+          if (-not $assets) { throw 'No Windows release assets were produced.' }
+          gh release upload "$env:TAG" $assets --clobber
 
   publish:
     needs: [build-macos, build-windows]
