@@ -442,15 +442,27 @@ async function findDriveFolderByLegacySlug(requested, rawSlug) {
     if (firebaseDb) {
         try {
             const tokenSnapshot = await firebaseDb.ref('driveTokens').once('value');
-            const tokenIds = Object.keys(tokenSnapshot.val() || {}).filter(id => id.slice(-6).toLowerCase() === rawTail.toLowerCase());
-            for (const folderId of tokenIds) {
+            const tokenEntries = Object.entries(tokenSnapshot.val() || {});
+            for (const [folderId, storedTokens] of tokenEntries) {
+                const tokenRootId = normalizeDriveFolderId(storedTokens?._finderMeta?.driveFolderId, '');
+                const matchesTail = [folderId, tokenRootId].some(id => id && id.slice(-6).toLowerCase() === rawTail.toLowerCase());
+                if (!matchesTail && !tokenRootId) continue;
                 try {
                     const auth = await getAlbumDriveAuth(folderId);
                     if (!auth) continue;
                     const drive = google.drive({ version: 'v3', auth });
-                    const metadata = await drive.files.get({ fileId: folderId, fields: 'id,name,mimeType,appProperties', supportsAllDrives: true });
+                    const driveFolderId = normalizeDriveFolderId(auth.finderDriveFolderId, tokenRootId || folderId);
+                    const metadata = await drive.files.get({ fileId: driveFolderId, fields: 'id,name,mimeType,appProperties', supportsAllDrives: true });
                     const nameSlug = canonicalPublicSlug(metadata.data.name || '');
-                    if (!baseSlug || nameSlug === baseSlug) return { folderId, folderName: metadata.data.name || 'Album khách hàng', appProperties: metadata.data.appProperties || {} };
+                    if (!baseSlug || nameSlug === baseSlug) return {
+                        folderId: driveFolderId,
+                        albumFolderId: folderId,
+                        driveFolderId,
+                        folderName: metadata.data.name || 'Album khách hàng',
+                        appProperties: metadata.data.appProperties || {},
+                        galleryType: auth.finderGalleryType || storedTokens?._finderMeta?.galleryType || 'selection',
+                        gallerySections: auth.finderGallerySections || storedTokens?._finderMeta?.gallerySections || []
+                    };
                 } catch (error) {
                     console.warn('Không thể đọc folder Drive từ token album:', error.message);
                 }
@@ -593,7 +605,7 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
         try {
             const recovered = await findDriveFolderByLegacySlug(requested, req.params.slug);
             if (recovered) {
-                const folderId = recovered.folderId;
+                const folderId = recovered.albumFolderId || recovered.folderId;
                 const restored = {
                     isEnabled: true,
                     text: 'FINDERPICTURE STUDIO',
@@ -601,16 +613,20 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
                     publicSlug: requested,
                     clientName: recovered.folderName,
                     displayName: 'Finder',
-                    originalFolderId: null,
+                    originalFolderId: recovered.driveFolderId || recovered.folderId || null,
                     studioName: recovered.appProperties?.finderStudioName || 'FINDER',
                     studioLogo: '',
                     accentColor: '#7c8cff',
                     checkReady: false,
                     checkVersion: 0,
                     checkNeedsRevision: false,
-                    workflowStatus: 'selection_open'
+                    workflowStatus: recovered.galleryType === 'party' ? 'completed' : 'selection_open',
+                    galleryType: recovered.galleryType,
+                    partyGallery: recovered.galleryType === 'party',
+                    gallerySections: recovered.gallerySections || []
                 };
                 albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...restored };
+                if (recovered.galleryType === 'party') finalizedDatabase[folderId] = true;
                 // Do not hold the client response on a best-effort Firebase
                 // repair. The next request will use the persisted partition if
                 // the write succeeds; otherwise this resolver can recover it
