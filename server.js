@@ -402,6 +402,12 @@ function canonicalPublicSlug(value = '') {
     return slugifyAlbumName(value);
 }
 
+function normalizeDriveFolderId(value, fallback = '') {
+    const id = String(value || '').trim();
+    if (!id || id === '.' || id === '..') return String(fallback || '').trim();
+    return id;
+}
+
 async function findStudioHistoryBySlug(requested) {
     if (!firebaseDb) return null;
     try {
@@ -833,12 +839,15 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
 // đã chọn; không tạo ORIGINAL/CHECK và không đi qua luồng chọn ảnh.
 app.post('/api/party-gallery', async (req, res) => {
     await loadPersistentState();
-    const driveFolderId = typeof req.body?.driveFolderId === 'string' ? req.body.driveFolderId.trim() : (typeof req.body?.folderId === 'string' ? req.body.folderId.trim() : '');
+    const driveFolderId = normalizeDriveFolderId(
+        typeof req.body?.driveFolderId === 'string' ? req.body.driveFolderId : (typeof req.body?.folderId === 'string' ? req.body.folderId : ''),
+        ''
+    );
     const folderId = typeof req.body?.galleryId === 'string' && req.body.galleryId.trim() ? req.body.galleryId.trim() : driveFolderId;
     if (!driveFolderId) return res.status(400).json({ success: false, error: 'Thiếu thư mục Google Drive.' });
     const folderName = String(req.body?.folderName || req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
     const galleryName = String(req.body?.galleryName || folderName).trim() || folderName;
-    const sectionDriveFolderId = String(req.body?.sectionDriveFolderId || driveFolderId).trim();
+    const sectionDriveFolderId = normalizeDriveFolderId(req.body?.sectionDriveFolderId, driveFolderId) || driveFolderId;
     const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
     const requestedSlug = slugifyAlbumName(req.body?.publicSlug || folderName);
     // The slug contains the customer Drive root suffix, so it can be recovered
@@ -887,7 +896,7 @@ app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
     const settings = albumSettingsDatabase[folderId];
     if (!settings || settings.galleryType !== 'party') return res.status(404).json({ success: false, error: 'Không tìm thấy gallery tiệc.' });
     if (!requireAlbumManagement(req, res, folderId)) return;
-    const driveFolderId = String(req.body?.driveFolderId || '').trim();
+    const driveFolderId = normalizeDriveFolderId(req.body?.driveFolderId, '');
     const name = String(req.body?.sectionName || '').trim();
     if (!driveFolderId || !name) return res.status(400).json({ success: false, error: 'Thiếu tên ngày hoặc thư mục Drive.' });
     const sections = Array.isArray(settings.gallerySections) ? settings.gallerySections : [{ id: settings.originalFolderId || folderId, name: 'Ngày 1', driveFolderId: settings.originalFolderId || folderId }];
@@ -1133,10 +1142,17 @@ app.get('/api/album/:folderId', async (req, res) => {
             return files.filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || '')).map(toClientFile);
         };
         // Album mới lưu ảnh gốc trong ORIGINAL; album cũ vẫn đọc ảnh ở root.
-        const sections = currentSettings.galleryType === 'party' && Array.isArray(currentSettings.gallerySections) && currentSettings.gallerySections.length
-            ? currentSettings.gallerySections
-            : [{ id: currentSettings.originalFolderId || folderId, name: 'Ảnh', driveFolderId: currentSettings.originalFolderId || folderId }];
-        const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId || section.id)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
+        const configuredRoot = normalizeDriveFolderId(currentSettings.originalFolderId, '');
+        const configuredSections = currentSettings.galleryType === 'party' && Array.isArray(currentSettings.gallerySections)
+            ? currentSettings.gallerySections.map(section => {
+                const driveFolderId = normalizeDriveFolderId(section?.driveFolderId || section?.id, configuredRoot);
+                return driveFolderId ? { ...section, id: driveFolderId, driveFolderId } : null;
+            }).filter(Boolean)
+            : [];
+        const sections = configuredSections.length
+            ? configuredSections
+            : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
+        const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
         const files = sectionFiles.flat();
         const checkFiles = hasCheckFolder ? await listDriveImages(currentSettings.checkFolderId) : [];
 

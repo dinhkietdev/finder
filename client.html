@@ -1394,6 +1394,14 @@
                     const resolved = await readApiJson(resolveResponse, 'Không thể tìm album theo đường dẫn');
                     folderId = resolved.folderId;
                     state.publicSlug = resolved.settings?.publicSlug || albumSlug;
+                    // Preserve the gallery metadata while the second request
+                    // loads the Drive files. If that request fails, the page
+                    // still reports the correct Gallery/PSC mode instead of
+                    // falling back visually to the selection workflow.
+                    if (resolved.settings?.galleryType === 'party' || resolved.settings?.partyGallery) {
+                        state.galleryType = 'party';
+                        state.gallerySections = Array.isArray(resolved.settings.gallerySections) ? resolved.settings.gallerySections : [];
+                    }
                 } catch (error) { setMessage(`❌ ${error.message}`, 'error'); return; }
             }
             if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
