@@ -994,7 +994,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         if (uploadError) throw uploadError;
         try { await drive.permissions.create({ fileId: driveParentId, requestBody: { role: 'reader', type: 'anyone' }, supportsAllDrives: true }); } catch (_) {}
         const galleryId = `party-${crypto.randomUUID()}`;
-        const publicSlug = `${slugifyAlbumName(galleryName)}-${galleryId.slice(-6).toLowerCase()}`;
+        const publicSlug = slugifyAlbumName(`${galleryName}-${galleryId.slice(-6)}`);
         const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: driveParentId, galleryName, sectionName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
         const tokenPath = LOCAL_TOKEN_PATH;
         if (fs.existsSync(tokenPath)) {
@@ -1165,7 +1165,9 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
         await drive.permissions.create({ fileId: googleDriveFolderId, requestBody: { role: 'reader', type: 'anyone' } });
         
-        const publicSlug = `${slugifyAlbumName(folderNameOnDrive)}-${String(googleDriveFolderId).slice(-6).toLowerCase()}`;
+        // Drive ids may contain `_`; normalize the complete slug so the API
+        // resolver and the generated client link always use the same value.
+        const publicSlug = slugifyAlbumName(`${folderNameOnDrive}-${String(googleDriveFolderId).slice(-6)}`);
         const wmPayload = JSON.stringify({
             isEnabled: watermarkToggle,
             text: watermarkText,

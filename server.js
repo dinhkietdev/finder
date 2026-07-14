@@ -346,12 +346,21 @@ function slugifyAlbumName(value = '') {
         .slice(0, 64) || 'album';
 }
 
+// Older desktop builds appended the raw last characters of a Drive id. Drive
+// ids may contain `_`, which is intentionally normalized by slugifyAlbumName;
+// compare the stored value in the same canonical form so existing links keep
+// working after the desktop is updated.
+function canonicalPublicSlug(value = '') {
+    return slugifyAlbumName(value);
+}
+
 app.get('/api/album-by-slug/:slug', async (req, res) => {
     await loadPersistentState();
-    const requested = slugifyAlbumName(req.params.slug);
-    const match = Object.entries(albumSettingsDatabase).find(([, settings]) => settings?.publicSlug === requested);
+    const requested = canonicalPublicSlug(req.params.slug);
+    const match = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
     if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
-    res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(match[1]) });
+    const settings = { ...match[1], publicSlug: requested };
+    res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(settings) });
 });
 
 app.get('/a/:slug', (req, res) => {
@@ -490,7 +499,7 @@ app.post('/api/party-gallery', async (req, res) => {
     const galleryName = String(req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
     const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
     const requestedSlug = slugifyAlbumName(req.body?.publicSlug || galleryName);
-    const publicSlug = `${requestedSlug}-${String(folderId).slice(-6).toLowerCase()}`;
+    const publicSlug = canonicalPublicSlug(`${requestedSlug}-${String(folderId).slice(-6)}`);
     const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
