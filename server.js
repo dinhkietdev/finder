@@ -1181,11 +1181,15 @@ app.get('/api/album/:folderId', async (req, res) => {
         }
 
         albumStage = 'drive-branding';
-        const driveStudioName = await readDriveBranding(drive, folderId);
+        const brandingFolderId = currentSettings.galleryType === 'party'
+            ? normalizeDriveFolderId(currentSettings.originalFolderId, '')
+            : folderId;
+        const driveStudioName = brandingFolderId ? await readDriveBranding(drive, brandingFolderId) : null;
         if (driveStudioName) {
             currentSettings = { ...currentSettings, studioName: driveStudioName };
             albumSettingsDatabase[folderId] = currentSettings;
         }
+        albumStage = 'after-drive-branding';
 
         // Recover albums created by older desktop builds when the settings
         // write was interrupted after the Drive upload. The ORIGINAL child
