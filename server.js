@@ -382,6 +382,29 @@ async function findDriveFolderByLegacySlug(requested, rawSlug) {
     const tail = canonicalPublicSlug(rawTail);
     if (tail.length < 4) return null;
     const baseSlug = canonicalPublicSlug(raw.includes('-') ? raw.slice(0, raw.lastIndexOf('-')) : '');
+    // The desktop stores a per-album OAuth token in Firebase. When the folder
+    // is not visible in the service account's Drive corpus, use that index to
+    // recover the exact id without asking the user to upload again.
+    if (firebaseDb) {
+        try {
+            const tokenSnapshot = await firebaseDb.ref('driveTokens').once('value');
+            const tokenIds = Object.keys(tokenSnapshot.val() || {}).filter(id => id.slice(-6).toLowerCase() === rawTail.toLowerCase());
+            for (const folderId of tokenIds) {
+                try {
+                    const auth = await getAlbumDriveAuth(folderId);
+                    if (!auth) continue;
+                    const drive = google.drive({ version: 'v3', auth });
+                    const metadata = await drive.files.get({ fileId: folderId, fields: 'id,name,mimeType', supportsAllDrives: true });
+                    const nameSlug = canonicalPublicSlug(metadata.data.name || '');
+                    if (!baseSlug || nameSlug === baseSlug) return { folderId, folderName: metadata.data.name || 'Album khách hàng' };
+                } catch (error) {
+                    console.warn('Không thể đọc folder Drive từ token album:', error.message);
+                }
+            }
+        } catch (error) {
+            console.warn('Không thể đọc chỉ mục driveTokens:', error.message);
+        }
+    }
     const authCandidates = [];
     const serviceAuth = getServiceAccountAuth();
     if (serviceAuth) authCandidates.push(serviceAuth);
