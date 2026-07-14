@@ -1057,6 +1057,7 @@ app.post('/api/internal/firebase-migration/rollback', async (req, res) => {
 });
 
 app.get('/api/album/:folderId', async (req, res) => {
+    let albumStage = 'load-state';
     try {
         await loadPersistentState();
         let { folderId } = req.params;
@@ -1077,6 +1078,7 @@ app.get('/api/album/:folderId', async (req, res) => {
             return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
         }
 
+        albumStage = 'drive-auth';
         const albumOAuth = await getAlbumDriveAuth(folderId);
         const serviceAccountAuth = albumOAuth ? null : getServiceAccountAuth();
         let drive;
@@ -1091,6 +1093,7 @@ app.get('/api/album/:folderId', async (req, res) => {
             drive = google.drive({ version: 'v3', auth: oauth2Client });
         }
 
+        albumStage = 'drive-branding';
         const driveStudioName = await readDriveBranding(drive, folderId);
         if (driveStudioName) {
             currentSettings = { ...currentSettings, studioName: driveStudioName };
@@ -1156,14 +1159,19 @@ app.get('/api/album/:folderId', async (req, res) => {
         const sections = configuredSections.length
             ? configuredSections
             : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
+        albumStage = 'list-gallery-images';
         const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
         const files = sectionFiles.flat();
+        albumStage = 'list-check-images';
         const checkFiles = hasCheckFolder ? await listDriveImages(safeCheckFolderId) : [];
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
         res.json({ success: true, folderId, files, checkFiles, gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        console.error('Album load failed:', JSON.stringify({ folderId: req.params.folderId, stage: albumStage, message: error.message }));
+        res.status(500).json({ error: error.message, stage: albumStage, folderId: req.params.folderId });
+    }
 });
 
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
