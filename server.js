@@ -139,7 +139,8 @@ app.get('/api/health', (req, res) => {
         storage: isSupabaseConfigured() ? 'supabase' : (REQUIRE_SUPABASE_STORAGE ? 'missing' : 'legacy-local'),
         oauthStateSecret: Boolean(getOAuthStateSecret()),
         tokenEncryptionKey: Boolean(getTokenEncryptionKey()),
-        distributedRateLimit: Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+        distributedRateLimit: Boolean(isSupabaseConfigured() || (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)),
+        rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback')
     });
 });
 
