@@ -306,6 +306,28 @@
         .party-download-queue.visible { display:flex; }
         .party-download-queue strong { flex:1 1 100%; }
         .party-download-queue button { min-height:40px; }
+        .developer-footer {
+            width: min(1200px, 100%);
+            margin: 4px auto 0;
+            padding: 14px 16px max(14px, env(safe-area-inset-bottom));
+            color: var(--text-muted);
+            text-align: center;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .developer-footer a {
+            color: #bfc8ff;
+            font-weight: 800;
+            text-decoration: underline;
+            text-decoration-color: rgba(191,200,255,.55);
+            text-underline-offset: 3px;
+            transition: color .18s ease, text-decoration-color .18s ease;
+        }
+        .developer-footer a:hover,
+        .developer-footer a:focus-visible {
+            color: #fff;
+            text-decoration-color: currentColor;
+        }
         @media (max-width:700px) {
             .header-panel { grid-template-columns:1fr; gap:12px; }
             .brand-identity { justify-self:start; }
@@ -403,6 +425,11 @@
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
+
+    <footer class="developer-footer" aria-label="Thông tin nhà phát triển">
+        Website được phát triển bởi Đình Kiệt Photography · Liên hệ
+        <a href="https://www.facebook.com/inhkiet.704955" target="_blank" rel="noopener noreferrer">Đình Kiệt</a>
+    </footer>
 
     <div id="imageLightbox" class="image-lightbox" aria-hidden="true">
         <img id="lightboxImage" class="lightbox-image" alt="Xem ảnh phóng to">
