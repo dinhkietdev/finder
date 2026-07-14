@@ -9,7 +9,6 @@
   },
   "dependencies": {
     "electron-updater": "^6.6.2",
-    "firebase-admin": "^14.1.0",
     "googleapis": "^144.0.0",
     "sharp": "^0.35.3"
   },
@@ -22,6 +21,15 @@
   "build": {
     "appId": "com.finder.desktop",
     "productName": "Finder",
+    "files": [
+      "**/*",
+      "!firabase.json",
+      "!oauth-credentials.json",
+      "!oauth-desktop-credentials.json",
+      "!firebase-auth-config.js",
+      "!finderpicture-session.json",
+      "!database.json"
+    ],
     "publish": {
       "provider": "github",
       "owner": "dinhkietdev",

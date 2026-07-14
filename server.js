@@ -64,6 +64,7 @@ let checkNotesDatabase = {};
 let albumCacheDatabase = {}; 
 let albumCheckCacheDatabase = {};
 let albumSettingsDatabase = {}; 
+let albumHistoryDatabase = {};
 let bannedAlbums = [];
 let finalizedDatabase = {}; 
 let firebaseDb = null;
@@ -105,7 +106,11 @@ function buildSupabaseAlbumRow(folderId) {
         original_folder_id: settings.originalFolderId || null,
         settings: stripUndefined(settings),
         state: stripUndefined(partition),
-        history: stripUndefined({ checkHistory: settings.checkHistory || [], gallerySections: settings.gallerySections || [] }),
+        history: stripUndefined({
+            desktop: albumHistoryDatabase[folderId] || null,
+            checkHistory: settings.checkHistory || [],
+            gallerySections: settings.gallerySections || []
+        }),
         is_finalized: Boolean(finalizedDatabase[folderId]),
         workflow_status: settings.workflowStatus || null,
         updated_at: new Date().toISOString()
@@ -303,6 +308,7 @@ async function loadPersistentState() {
         supabaseLoadPromise = (async () => {
             const rows = await supabaseRequest('albums?select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at');
             const liked = {}, notes = {}, settings = {}, finalized = {}, banned = [];
+            const history = {};
             for (const row of Array.isArray(rows) ? rows : []) {
                 const folderId = String(row?.id || '');
                 if (!folderId) continue;
@@ -314,12 +320,16 @@ async function loadPersistentState() {
                 liked[folderId] = deserializeLikedImages({ [folderId]: partition.likedImages || {} })[folderId] || {};
                 notes[folderId] = deserializeLikedImages({ [folderId]: partition.checkNotes || {} })[folderId] || {};
                 if (Object.keys(rowSettings).length) settings[folderId] = rowSettings;
+                if (row.history && typeof row.history === 'object') {
+                    history[folderId] = row.history.desktop || (row.history.id ? row.history : null);
+                }
                 if (row.is_finalized || partition.finalized === true) finalized[folderId] = true;
                 if (partition.banned) banned.push(folderId);
             }
             likedImagesDatabase = liked;
             checkNotesDatabase = notes;
             albumSettingsDatabase = settings;
+            albumHistoryDatabase = history;
             finalizedDatabase = finalized;
             bannedAlbums = banned;
         })().finally(() => { supabaseLoadPromise = null; });
@@ -1117,11 +1127,11 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     } catch (error) {
         console.warn('Không thể lưu tên Studio vào Drive:', JSON.stringify({ message: error.message, code: error.code }));
     }
-    if (firebaseDb) {
+    if (firebaseDb || isSupabaseConfigured()) {
         try {
             await Promise.race([
                 persistAlbumSettings(folderId),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase settings write timeout')), 7000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Settings write timeout')), 7000))
             ]);
         } catch (error) {
             persistencePending = true;
@@ -1129,6 +1139,44 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         }
     }
     res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending, driveBrandingSaved });
+});
+
+// Desktop history is cached locally for responsiveness, but its durable copy
+// now lives in Supabase instead of the legacy Firebase studioAlbumHistory node.
+app.post('/api/album/:folderId/manager-history', async (req, res) => {
+    await loadPersistentState();
+    const { folderId } = req.params;
+    if (!requireAlbumManagement(req, res, folderId)) return;
+    if (!isSupabaseConfigured()) return res.status(503).json({ success: false, error: 'Supabase chưa được cấu hình.' });
+    const incoming = req.body?.history;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        return res.status(400).json({ success: false, error: 'Dữ liệu lịch sử album không hợp lệ.' });
+    }
+    const { managementToken, ...safeHistory } = incoming;
+    albumHistoryDatabase[folderId] = {
+        ...(albumHistoryDatabase[folderId] || {}),
+        ...stripUndefined(safeHistory),
+        id: String(safeHistory.id || folderId),
+        updatedAt: new Date().toISOString()
+    };
+    if (!albumSettingsDatabase[folderId]) {
+        albumSettingsDatabase[folderId] = {
+            isEnabled: true,
+            text: 'FINDERPICTURE STUDIO',
+            maxSelections: Number(safeHistory.maxSelections) || 0,
+            publicSlug: safeHistory.publicSlug || `album-${String(folderId).slice(-6).toLowerCase()}`,
+            clientName: safeHistory.clientName || safeHistory.name || 'Album khách hàng',
+            displayName: safeHistory.displayName || 'Finder',
+            originalFolderId: safeHistory.originalFolderId || null,
+            galleryType: safeHistory.galleryType || 'selection',
+            partyGallery: safeHistory.galleryType === 'party',
+            gallerySections: Array.isArray(safeHistory.gallerySections) ? safeHistory.gallerySections : [],
+            studioName: String(safeHistory.studioName || 'Finder').trim().toUpperCase(),
+            managementToken: createManagementToken()
+        };
+    }
+    await persistState(folderId);
+    res.json({ success: true });
 });
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive

@@ -15,33 +15,7 @@ app.setName('Finder');
 if (process.platform === 'win32') app.setAppUserModelId('com.finder.desktop');
 
 // ---------------------------------------------------------
-// 1. KHỞI TẠO FIREBASE BẰNG CÚ PHÁP MODULAR (CHUẨN MỚI)
-// ---------------------------------------------------------
-const { initializeApp, cert } = require('firebase-admin/app');
-const { getDatabase } = require('firebase-admin/database');
-
-// Service Account chỉ dành cho server.  Bản cài cho khách không được (và cũng
-// không nên) chứa khóa quản trị Firebase. Nếu có file này khi phát triển cục
-// bộ thì vẫn hỗ trợ đồng bộ phụ trợ; khi đóng gói app sẽ tiếp tục hoạt động
-// bình thường thông qua API server đã xác thực.
-let db = null;
-const serviceAccountPath = path.join(__dirname, 'firabase.json');
-if (fs.existsSync(serviceAccountPath)) {
-    try {
-        const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
-        const firebaseApp = initializeApp({
-            credential: cert(serviceAccount),
-            databaseURL: "https://finder-76adb-default-rtdb.asia-southeast1.firebasedatabase.app"
-        });
-        db = getDatabase(firebaseApp);
-        console.log("✅ Firebase Admin đã khởi tạo cho môi trường phát triển.");
-    } catch (error) {
-        console.warn("Firebase Admin cục bộ không khả dụng:", error.message);
-    }
-}
-
-// ---------------------------------------------------------
-// 2. CẤU HÌNH BIẾN MÔI TRƯỜNG & ĐƯỜNG DẪN
+// 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & ĐƯỜNG DẪN
 // ---------------------------------------------------------
 let mainWindow;
 let oauth2Client = null;
@@ -178,6 +152,15 @@ function postServerJson(pathname, payload, headers = {}) {
 function albumManagementHeaders(folderId) {
     const album = getAlbumHistory().find(item => String(item.id) === String(folderId));
     return album?.managementToken ? { 'x-finder-management-token': album.managementToken } : {};
+}
+
+function syncHistoryToServer(albumData) {
+    if (!albumData?.id) return;
+    const { managementToken, ...history } = albumData;
+    postServerJson(`/api/album/${encodeURIComponent(albumData.id)}/manager-history`, { history }, {
+        ...serverAuthHeaders(),
+        ...albumManagementHeaders(albumData.id)
+    }).catch(error => console.warn('Không thể đồng bộ lịch sử album lên Supabase:', error.message));
 }
 
 function loadAuthSession() {
@@ -340,11 +323,8 @@ function saveAlbumToHistory(albumData) {
     // Lưu vào máy tính để UI app chạy mượt mà
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
 
-    // Đẩy lên Firebase để đồng bộ với Server Vercel
-    if (db && currentAuthSession?.uid) {
-        const { managementToken, ...syncAlbum } = albumData;
-        db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${albumData.id}`).set(syncAlbum).catch(e => console.log(e));
-    }
+    // Đồng bộ lịch sử lên Server/Supabase; Firebase không còn là kho lịch sử.
+    syncHistoryToServer(albumData);
 }
 
 function updateAlbumStatus(folderId, newStatus) {
@@ -362,10 +342,8 @@ function updateAlbumStatus(folderId, newStatus) {
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
     }
 
-    // Cập nhật trạng thái trên Firebase
-    if (db && currentAuthSession?.uid) {
-        db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ status: newStatus }).catch(e => console.log(e));
-    }
+    const updated = history.find(item => item.id === folderId);
+    if (updated) syncHistoryToServer(updated);
 }
 
 // ---------------------------------------------------------
@@ -469,7 +447,7 @@ ipcMain.handle('update-payment-status', (event, { id, paymentStatus, paymentTota
     history[index].paymentStatus = received <= 0 ? 'unpaid' : (total > 0 && received >= total ? 'paid' : 'deposit');
     history[index].paymentUpdatedAt = new Date().toISOString();
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${id}`).update({ paymentStatus: history[index].paymentStatus, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote, paymentUpdatedAt: history[index].paymentUpdatedAt }).catch(() => {});
+    syncHistoryToServer(history[index]);
     postServerJson(`/api/album/${id}/settings`, { paymentStatus: history[index].paymentStatus, paymentAmount: total, paymentTotal: total, paymentDeposit: deposit, paymentPaid: paid, paymentBalance: history[index].paymentBalance, paymentPayer: history[index].paymentPayer, paymentNote: history[index].paymentNote }, { ...serverAuthHeaders(), ...albumManagementHeaders(id) }).catch(() => {});
     return { success: true, paymentStatus: history[index].paymentStatus, paymentBalance: history[index].paymentBalance };
 });
@@ -481,9 +459,6 @@ ipcMain.handle('delete-album', async (event, folderId) => {
     history = history.filter(a => a.id !== folderId);
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
     
-    // Xóa trên Firebase (nếu có)
-    if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).remove().catch(e => console.log(e));
-
     try {
         await new Promise((resolve) => {
             const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${folderId}`, method: 'DELETE', headers: albumManagementHeaders(folderId) }, (res) => { res.on('data',()=>{}); res.on('end', resolve); });
@@ -531,13 +506,7 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
         if (history[index].statusHistory.at(-1)?.status !== history[index].status) history[index].statusHistory.push({ status: history[index].status, at: new Date().toISOString(), source: 'limit-change' });
         history[index].statusHistory = history[index].statusHistory.slice(-30);
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-        if (db && currentAuthSession?.uid) {
-            db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({
-                maxSelections: history[index].maxSelections,
-                status: history[index].status,
-                statusHistory: history[index].statusHistory
-            }).catch(e => console.log(e));
-        }
+        syncHistoryToServer(history[index]);
     }
     return { success: true };
 });
@@ -1106,7 +1075,7 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         const index = history.findIndex(item => item.id === album.id);
         const sections = Array.isArray(history[index].gallerySections) ? history[index].gallerySections : [];
         sections.push({ id: sectionFolderId, name: sectionName, driveFolderId: sectionFolderId, createdAt: new Date().toISOString() });
-        if (index >= 0) { history[index].gallerySections = sections; history[index].status = 'Đã cập nhật · Gallery tiệc'; history[index].statusUpdatedAt = new Date().toISOString(); history[index].drivePath = `${history[index].driveParentPath || 'Drive của tôi'} / ${history[index].driveFolderName || history[index].clientName || history[index].name || 'Ảnh tiệc'} / ${sectionName}`; fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8'); }
+        if (index >= 0) { history[index].gallerySections = sections; history[index].status = 'Đã cập nhật · Gallery tiệc'; history[index].statusUpdatedAt = new Date().toISOString(); history[index].drivePath = `${history[index].driveParentPath || 'Drive của tôi'} / ${history[index].driveFolderName || history[index].clientName || history[index].name || 'Ảnh tiệc'} / ${sectionName}`; fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8'); syncHistoryToServer(history[index]); }
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: `Đã hoàn tất ${sectionName}.`, completed: imageFiles.length, total: imageFiles.length, failed: 0 });
         return { success: true, completed, failed, folderLink: album.link, gallerySections: response.gallerySections || sections };
     } catch (error) { logDriveDiagnostic('append-party-gallery', error); return { success: false, error: friendlyDriveError(error) }; }
@@ -1400,7 +1369,7 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
                 history[index].statusHistory = history[index].statusHistory.slice(-30);
             }
             fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-            if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ ...checkData, statusHistory: history[index].statusHistory }).catch(error => console.log(error));
+            syncHistoryToServer(history[index]);
         }
         mainWindow.webContents.send('check-upload-progress', { progress: 100, currentFile: 'Đã hoàn tất thư mục CHECK.' });
         return { success: true, count: imageFiles.length, selectedCount, countMatched: selectedCount === null || selectedCount === imageFiles.length, checkFolderId };
@@ -1487,7 +1456,7 @@ ipcMain.handle('auto-sync-raw', async (event, { folderId, likedList }) => {
         if (history[historyIndex].statusHistory.at(-1)?.status !== rawSyncData.status) history[historyIndex].statusHistory.push({ status: rawSyncData.status, at: rawSyncData.rawSyncedAt, source: 'raw-sync' });
         history[historyIndex].statusHistory = history[historyIndex].statusHistory.slice(-30);
         fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
-        if (db && currentAuthSession?.uid) db.ref(`studioAlbumHistory/${currentAuthSession.uid}/${folderId}`).update({ ...rawSyncData, statusHistory: history[historyIndex].statusHistory }).catch(error => console.log(error));
+        syncHistoryToServer(history[historyIndex]);
     }
     return { success: true, msg: `Đã bốc thành công ${copiedCount} file RAW!` };
 });
