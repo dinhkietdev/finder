@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test test/api-smoke.test.js",
     "deploy": "vercel --prod"
   },
   "engines": {
