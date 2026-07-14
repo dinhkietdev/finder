@@ -375,6 +375,18 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
     await loadPersistentState();
     const requested = canonicalPublicSlug(req.params.slug);
     let match = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
+    // If an older upload never saved its custom name, the old desktop link
+    // still contains the final Drive-id fragment while the server-generated
+    // fallback is `album-<fragment>`. Accept that safe, unique legacy form.
+    if (!match) {
+        const tail = requested.split('-').pop() || '';
+        const candidates = Object.entries(albumSettingsDatabase).filter(([folderId, settings]) =>
+            tail.length >= 4
+            && canonicalPublicSlug(settings?.publicSlug) === `album-${tail}`
+            && canonicalPublicSlug(folderId).endsWith(tail)
+        );
+        if (candidates.length === 1) match = candidates[0];
+    }
     if (!match) {
         const history = await findStudioHistoryBySlug(requested);
         const folderId = String(history?.id || history?.folderId || '');
@@ -757,7 +769,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
-        const currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
+        let currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
         // expiresAt hiện chỉ là mốc tham khảo để hiển thị cho khách hàng.
         // Không khóa link, không xóa album và không xóa file Google Drive tự động.
         const isFinalized = !!finalizedDatabase[folderId];
@@ -779,6 +791,22 @@ app.get('/api/album/:folderId', async (req, res) => {
             if (!oauth2Client) return res.status(503).json({ error: 'Thiếu cấu hình Google Drive trên Server.' });
             oauth2Client.setCredentials(tokens);
             drive = google.drive({ version: 'v3', auth: oauth2Client });
+        }
+
+        // Recover albums created by older desktop builds when the settings
+        // write was interrupted after the Drive upload. The ORIGINAL child
+        // folder is deterministic and avoids showing an empty root folder.
+        if (!currentSettings.originalFolderId && currentSettings.galleryType !== 'party') {
+            const original = await drive.files.list({
+                q: `'${folderId}' in parents and name = 'ORIGINAL' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+                fields: 'files(id)', pageSize: 10, supportsAllDrives: true, includeItemsFromAllDrives: true
+            });
+            const recoveredOriginal = original.data.files?.[0]?.id;
+            if (recoveredOriginal) {
+                currentSettings = { ...currentSettings, originalFolderId: recoveredOriginal };
+                albumSettingsDatabase[folderId] = currentSettings;
+                try { await persistState(folderId); } catch (error) { console.warn('Không thể lưu lại thư mục ORIGINAL:', error.message); }
+            }
         }
 
         // Drive tạo thumbnail theo kích thước được yêu cầu, nên trang khách chỉ tải
