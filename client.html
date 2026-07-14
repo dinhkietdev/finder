@@ -315,7 +315,7 @@
         <div class="panel header-panel">
             <div></div>
             <div class="intro">
-                <div class="brand-title" id="brandTitle">Finder</div>
+                <div class="brand-title" id="brandTitle">FINDER</div>
             </div>
             <div class="header-tools">
                 <div class="share-actions"><button id="copyShareBtn" type="button">🔗 Sao chép link</button><button id="showQrBtn" type="button">▦ QR chia sẻ</button></div>
@@ -584,7 +584,11 @@
         }
 
         function renderBranding() {
-            elements.brandTitle.textContent = state.displayName || state.studioName || 'Finder';
+            // The public gallery header is the studio identity in every
+            // workflow state (selection, CHECK, confirmation and FINAL).
+            // Album/gallery names stay metadata and must not replace branding.
+            const studioName = String(state.studioName || 'Finder').trim() || 'Finder';
+            elements.brandTitle.textContent = studioName.toUpperCase();
             elements.albumStatusPill.textContent = state.workflowStatus === 'completed' ? '● Hoàn thành' : state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
             elements.checkReadyBanner.textContent = state.workflowStatus === 'completed'
                 ? '✅ Ảnh đã chỉnh sửa xong, hãy lưu ảnh sớm nhé. Link ảnh sẽ tự hủy trong vòng 60 ngày.'
@@ -1365,7 +1369,8 @@
                 state.selectionReopenedAt = data.settings?.selectionReopenedAt || null;
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
-                state.studioName = data.settings?.studioName && data.settings.studioName !== 'Finder Studio' ? data.settings.studioName : 'Finder';
+                const configuredStudio = String(data.settings?.studioName || '').trim();
+                state.studioName = configuredStudio && configuredStudio.toLowerCase() !== 'finder studio' ? configuredStudio : 'Finder';
                 state.displayName = String(data.settings?.displayName || state.studioName || 'Finder').trim() || 'Finder';
 
                 const likedList = data.liked_list || {};
