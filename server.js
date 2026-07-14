@@ -695,9 +695,18 @@ async function getAlbumDriveAuth(folderId) {
     client.setCredentials(tokens);
     if (tokens.refresh_token && (!tokens.expiry_date || tokens.expiry_date < Date.now() + 60000)) {
         const refreshed = await client.getAccessToken();
-        if (refreshed?.token) { const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000 }; await firebaseDb.ref(`driveTokens/${folderId}`).set(next); client.setCredentials(next); }
+        if (refreshed?.token) {
+            // Keep the Drive-root metadata when rotating an expired token;
+            // without it a cold Vercel instance falls back to the internal
+            // `party-...` id and the gallery can no longer be resolved.
+            const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000, ...(Object.keys(metadata).length ? { _finderMeta: metadata } : {}) };
+            await firebaseDb.ref(`driveTokens/${folderId}`).set(next);
+            client.setCredentials(next);
+        }
     }
     if (metadata.driveFolderId) client.finderDriveFolderId = metadata.driveFolderId;
+    if (metadata.galleryType) client.finderGalleryType = metadata.galleryType;
+    if (Array.isArray(metadata.gallerySections)) client.finderGallerySections = metadata.gallerySections;
     return client;
 }
 
@@ -729,20 +738,63 @@ async function recoverDriveStructureBySlug(drive, slug) {
     const tail = separator >= 0 ? canonicalPublicSlug(raw.slice(separator + 1)) : '';
     const baseName = canonicalPublicSlug(separator >= 0 ? raw.slice(0, separator) : raw);
     if (!tail || tail.length < 4 || !baseName) return null;
-    const response = await drive.files.list({
-        q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-        fields: 'files(id,name)', pageSize: 1000,
-        includeItemsFromAllDrives: true, supportsAllDrives: true
-    });
-    const root = (response.data.files || []).find(folder =>
-        canonicalPublicSlug(folder.name || '') === baseName
-        && canonicalPublicSlug(String(folder.id || '').slice(-6)) === tail
-    );
+    let root;
+    let pageToken;
+    do {
+        const response = await drive.files.list({
+            q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+            fields: 'nextPageToken,files(id,name)', pageSize: 1000, pageToken,
+            includeItemsFromAllDrives: true, supportsAllDrives: true
+        });
+        root = (response.data.files || []).find(folder =>
+            canonicalPublicSlug(folder.name || '') === baseName
+            && canonicalPublicSlug(String(folder.id || '').slice(-6)) === tail
+        );
+        pageToken = root ? undefined : (response.data.nextPageToken || undefined);
+    } while (!root && pageToken);
     if (!root?.id) return null;
     const childResponse = await drive.files.list({
         q: `'${root.id}' in parents and trashed = false`,
         fields: 'files(id,name,mimeType)', pageSize: 1000,
         supportsAllDrives: true, includeItemsFromAllDrives: true
+    });
+    const children = childResponse.data.files || [];
+    const original = children.find(item => item.mimeType === 'application/vnd.google-apps.folder' && String(item.name || '').toUpperCase() === 'ORIGINAL');
+    if (original?.id) {
+        return { folderId: root.id, folderName: root.name || 'Album khách hàng', galleryType: 'selection', originalFolderId: original.id, gallerySections: [] };
+    }
+    const sections = children
+        .filter(item => item.mimeType === 'application/vnd.google-apps.folder' && item.id)
+        .map(item => ({ id: item.id, name: item.name || 'Ngày', driveFolderId: item.id }));
+    return {
+        folderId: root.id,
+        folderName: root.name || 'Gallery tiệc',
+        galleryType: 'party',
+        originalFolderId: root.id,
+        gallerySections: sections.length ? sections : [{ id: root.id, name: 'Tất cả', driveFolderId: root.id }]
+    };
+}
+
+// Prefer the Drive root saved alongside the OAuth token. This is both faster
+// and more reliable than scanning every folder in Drive, especially for party
+// galleries whose Firebase settings may be missing after a serverless cold
+// start. The root id is never the internal `party-...` album id.
+async function recoverDriveStructureFromRoot(drive, rootId) {
+    const safeRootId = normalizeDriveFolderId(rootId, '');
+    if (!drive || !safeRootId) return null;
+    const rootResponse = await drive.files.get({
+        fileId: safeRootId,
+        fields: 'id,name,mimeType',
+        supportsAllDrives: true
+    });
+    const root = rootResponse.data;
+    if (!root?.id || root.mimeType !== 'application/vnd.google-apps.folder') return null;
+    const childResponse = await drive.files.list({
+        q: `'${root.id}' in parents and trashed = false`,
+        fields: 'files(id,name,mimeType)',
+        pageSize: 1000,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true
     });
     const children = childResponse.data.files || [];
     const original = children.find(item => item.mimeType === 'application/vnd.google-apps.folder' && String(item.name || '').toUpperCase() === 'ORIGINAL');
@@ -1151,12 +1203,15 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         const requestedSlug = canonicalPublicSlug(req.query?.slug || '');
         const configuredRootForRecovery = normalizeDriveFolderId(currentSettings.originalFolderId, '');
+        const tokenRootForRecovery = normalizeDriveFolderId(/** @type {any} */ (albumOAuth)?.finderDriveFolderId, '');
         const hasUsableGalleryStructure = currentSettings.galleryType === 'party'
             ? Boolean(configuredRootForRecovery && Array.isArray(currentSettings.gallerySections) && currentSettings.gallerySections.some(section => normalizeDriveFolderId(section?.driveFolderId || section?.id, '')))
             : Boolean(configuredRootForRecovery);
         if (requestedSlug && (canonicalPublicSlug(currentSettings.publicSlug) !== requestedSlug || !hasUsableGalleryStructure)) {
             albumStage = 'drive-structure-recovery';
-            const recovered = await recoverDriveStructureBySlug(drive, requestedSlug);
+            const recovered = tokenRootForRecovery
+                ? await recoverDriveStructureFromRoot(drive, tokenRootForRecovery)
+                : await recoverDriveStructureBySlug(drive, requestedSlug);
             if (recovered) {
                 currentSettings = {
                     ...currentSettings,
