@@ -537,6 +537,21 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
         );
         if (candidates.length === 1) match = candidates[0];
     }
+    // Gallery links created by older desktop builds could contain a stale
+    // six-character Drive suffix after the customer folder was recreated.
+    // If the readable customer slug is unique, keep that link alive and let
+    // the album endpoint resolve the current Drive root from its settings.
+    if (!match) {
+        const requestedBase = requested.slice(0, requested.lastIndexOf('-'));
+        if (requestedBase) {
+            const candidates = Object.entries(albumSettingsDatabase).filter(([, settings]) => {
+                const candidate = canonicalPublicSlug(settings?.publicSlug || '');
+                const candidateBase = candidate.slice(0, candidate.lastIndexOf('-'));
+                return candidateBase === requestedBase && settings?.galleryType === 'party';
+            });
+            if (candidates.length === 1) match = candidates[0];
+        }
+    }
     if (!match) {
         const history = await findStudioHistoryBySlug(requested);
         const folderId = String(history?.id || history?.folderId || '');
