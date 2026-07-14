@@ -1067,7 +1067,11 @@ app.get('/api/album/:folderId', async (req, res) => {
         // expiresAt hiện chỉ là mốc tham khảo để hiển thị cho khách hàng.
         // Không khóa link, không xóa album và không xóa file Google Drive tự động.
         const isFinalized = !!finalizedDatabase[folderId];
-        const hasCheckFolder = Boolean(currentSettings.checkReady && currentSettings.checkFolderId);
+        // Gallery/PSC never reads a CHECK folder. Older records may still
+        // contain a stale `checkFolderId` (including `.`), which otherwise
+        // makes Drive return `File not found: .` and blocks the whole gallery.
+        const safeCheckFolderId = normalizeDriveFolderId(currentSettings.checkFolderId, '');
+        const hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
@@ -1154,7 +1158,7 @@ app.get('/api/album/:folderId', async (req, res) => {
             : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
         const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
         const files = sectionFiles.flat();
-        const checkFiles = hasCheckFolder ? await listDriveImages(currentSettings.checkFolderId) : [];
+        const checkFiles = hasCheckFolder ? await listDriveImages(safeCheckFolderId) : [];
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
