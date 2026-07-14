@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FinderPicture - Bàn giao & Chọn Ảnh</title>
-    <meta property="og:title" content="FINDER">
-    <meta property="og:description" content="Gallery ảnh Finder">
+    <title>Finder - Ứng dụng bàn giao và chọn ảnh</title>
+    <meta name="description" content="Finder - Ứng dụng bàn giao và chọn ảnh">
+    <meta property="og:title" content="Finder - Ứng dụng bàn giao và chọn ảnh">
+    <meta property="og:description" content="Mở gallery, chọn ảnh và kiểm tra ảnh chỉnh sửa trên Finder">
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="FINDER">
+    <meta property="og:site_name" content="Finder">
     <meta name="twitter:card" content="summary">
     <style>
         :root {
@@ -26,6 +27,9 @@
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { background: linear-gradient(135deg, var(--bg-dark), #111827); color: var(--text-main); padding: 20px 16px 100px; user-select: none; }
         button, textarea { font: inherit; }
+        button, input, select, textarea { touch-action: manipulation; }
+        button:disabled { opacity:.52; cursor:not-allowed; transform:none !important; filter:saturate(.65); }
+        button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:3px solid rgba(124,140,255,.42); outline-offset:3px; }
 
         .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
         .panel { background: rgba(17, 24, 39, 0.95); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 12px 32px rgba(0,0,0,0.28); }
@@ -125,7 +129,10 @@
         @keyframes robotGlow { 0%,100% { box-shadow:0 10px 24px rgba(37,99,235,.35); } 50% { box-shadow:0 14px 34px rgba(124,140,255,.65); } }
         @keyframes robotWave { 0%,72%,100% { transform:rotate(0); } 78% { transform:rotate(-4deg); } 84% { transform:rotate(4deg); } 90% { transform:rotate(-2deg); } }
         @keyframes robotMessageIn { from { opacity:0; transform:translateY(7px) scale(.96); } to { opacity:1; transform:translateY(0) scale(1); } }
-        @media (prefers-reduced-motion:reduce) { .robot-button, .robot-avatar .robot-body, .robot-message { animation:none; } }
+        @media (prefers-reduced-motion:reduce) {
+            *, *::before, *::after { animation-duration:.001ms !important; animation-iteration-count:1 !important; scroll-behavior:auto !important; transition-duration:.001ms !important; }
+            .robot-button, .robot-avatar .robot-body, .robot-message { animation:none; }
+        }
 
         /* Finder client visual system — quiet, editorial, touch-first */
         :root { --bg-dark:#070b14; --bg-card:rgba(16,22,35,.88); --bg-soft:#182235; --text-main:#f7f9fc; --text-muted:#9aa9c0; --accent:#7c8cff; --accent-2:#3bd9a0; --border:rgba(181,198,224,.14); --surface:rgba(255,255,255,.055); }
@@ -295,6 +302,10 @@
         .gallery-sections-nav { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
         .gallery-section-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-main); border-radius:999px; padding:8px 13px; cursor:pointer; font-weight:750; font-size:12px; }
         .gallery-section-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+        .party-download-queue { display:none; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 12px; margin:0 0 12px; border:1px solid rgba(59,130,246,.35); border-radius:12px; background:rgba(30,64,175,.16); color:#dbeafe; font-size:12px; }
+        .party-download-queue.visible { display:flex; }
+        .party-download-queue strong { flex:1 1 100%; }
+        .party-download-queue button { min-height:40px; }
         @media (max-width:700px) {
             .header-panel { grid-template-columns:1fr; gap:12px; }
             .brand-identity { justify-self:start; }
@@ -304,6 +315,8 @@
             .share-actions button { flex:1; }
             .stats { justify-self:stretch; }
             .stat-chip { flex:1; }
+            .party-download-queue { position:sticky; bottom:max(8px,env(safe-area-inset-bottom)); z-index:20; box-shadow:0 8px 24px rgba(0,0,0,.28); }
+            .party-download-queue button { flex:1; min-width:130px; }
         }
     </style>
 </head>
@@ -327,8 +340,7 @@
                 <div class="album-status-pill" id="albumStatusPill">● Đang mở lựa chọn</div>
             <div class="stats">
                         <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại"><strong id="photoIndexLabel">0/0</strong><span>Ảnh hiện tại</span></button>
-                        <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn"><strong id="selectedCountLabel">0</strong><span>Đã chọn</span></button>
-                        <div class="stat-chip selection-capacity" id="selectionCapacityStat" title="Tổng số ảnh khách có thể chọn"><strong id="selectionCapacityLabel">0</strong><span>Có thể chọn</span></div>
+                        <button type="button" class="stat-chip" id="jumpToSelected" title="Số ảnh đã chọn trên tổng số ảnh được phép chọn"><strong id="selectedCountLabel">0/0</strong><span>Đã chọn</span></button>
                     </div>
             </div>
         </div>
@@ -361,7 +373,7 @@
                     <label for="noteInput" class="hint" style="display:block; margin-top:12px;">Ghi chú cho ảnh hiện tại</label>
                     <textarea id="noteInput" class="note-box" placeholder="Ví dụ cần chỉnh sửa hoặc ưu tiên..."></textarea>
                 </div>
-                <div id="statusMessage" class="status-message">Đang tải dữ liệu album...</div>
+                <div id="statusMessage" class="status-message" role="status" aria-live="polite">Đang tải dữ liệu album...</div>
             </div>
 
             <div class="panel sidebar-panel" id="selectedImagesSection" tabindex="-1">
@@ -382,6 +394,11 @@
             <div id="partyGalleryActions" style="display:none;gap:8px;flex-wrap:wrap;margin:0 0 12px;">
                 <button id="partySelectAllBtn" type="button" class="gallery-section-btn">Chọn tất cả phần này</button>
                 <button id="partyDownloadBtn" type="button" class="gallery-section-btn">⬇️ Tải ảnh đã chọn (0)</button>
+            </div>
+            <div id="partyDownloadQueue" class="party-download-queue" aria-live="polite">
+                <strong id="partyDownloadQueueText">Đang chuẩn bị tải ảnh…</strong>
+                <button id="partyDownloadNextBtn" type="button" class="gallery-section-btn">Tải ảnh tiếp theo</button>
+                <button id="partyDownloadCancelBtn" type="button" class="gallery-section-btn">Hủy</button>
             </div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
@@ -477,8 +494,6 @@
             photoName: document.getElementById('photoName'),
             photoIndexLabel: document.getElementById('photoIndexLabel'),
             selectedCountLabel: document.getElementById('selectedCountLabel'),
-            selectionCapacityStat: document.getElementById('selectionCapacityStat'),
-            selectionCapacityLabel: document.getElementById('selectionCapacityLabel'),
             photoStatusBadge: document.getElementById('photoStatusBadge'),
             swipeHint: document.getElementById('swipeHint'),
             noteInput: document.getElementById('noteInput'),
@@ -514,7 +529,7 @@
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
             ,gallerySectionsNav: document.getElementById('gallerySectionsNav')
-            ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn')
+            ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn'), partyDownloadQueue: document.getElementById('partyDownloadQueue'), partyDownloadQueueText: document.getElementById('partyDownloadQueueText'), partyDownloadNextBtn: document.getElementById('partyDownloadNextBtn'), partyDownloadCancelBtn: document.getElementById('partyDownloadCancelBtn')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
@@ -524,6 +539,8 @@
             ,selectionReopenModal: document.getElementById('selectionReopenModal'), reopenOriginalBtn: document.getElementById('reopenOriginalBtn'), reopenCheckBtn: document.getElementById('reopenCheckBtn')
         };
         const partySelected = new Set();
+        let partyDownloadQueue = [];
+        let partyDownloadIndex = 0;
         let zoomScale = 1;
         let robotMessageTimeout = null;
         let robotMessageInterval = null;
@@ -597,24 +614,77 @@
             link.remove();
         }
 
+        function isMobileDownloadDevice() {
+            return window.matchMedia?.('(pointer: coarse)').matches
+                || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+        }
+
+        function triggerPartyDownload(image) {
+            if (!image?.id) return;
+            const link = document.createElement('a');
+            link.href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(image.id)}`;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.download = image.fullName || 'finder-gallery-image';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        function updatePartyDownloadQueue() {
+            const queue = elements.partyDownloadQueue;
+            if (!queue) return;
+            const remaining = Math.max(0, partyDownloadQueue.length - partyDownloadIndex);
+            if (!remaining) {
+                queue.classList.remove('visible');
+                return;
+            }
+            queue.classList.add('visible');
+            elements.partyDownloadQueueText.textContent = `Đã tải ${partyDownloadIndex}/${partyDownloadQueue.length}. Nhấn từng lần để tải tiếp trên điện thoại.`;
+            elements.partyDownloadNextBtn.textContent = `Tải ảnh tiếp theo (${partyDownloadIndex + 1}/${partyDownloadQueue.length})`;
+            elements.partyDownloadNextBtn.disabled = false;
+        }
+
+        function downloadNextPartyImage() {
+            if (state.galleryType !== 'party' || partyDownloadIndex >= partyDownloadQueue.length) return;
+            // One click creates one browser download. This is intentional on
+            // mobile because Safari/Chrome block a burst of automatic tabs.
+            triggerPartyDownload(partyDownloadQueue[partyDownloadIndex]);
+            partyDownloadIndex += 1;
+            updatePartyDownloadQueue();
+        }
+
+        function cancelPartyDownloadQueue() {
+            partyDownloadQueue = [];
+            partyDownloadIndex = 0;
+            updatePartyDownloadQueue();
+        }
+
         function downloadPartySelection() {
             if (state.galleryType !== 'party') return;
             const selected = state.originalImages.filter(image => partySelected.has(image.fullName));
             if (!selected.length) { setMessage('Hãy tích chọn ít nhất một ảnh để tải xuống.', 'error'); return; }
-            selected.forEach((image, index) => window.setTimeout(() => {
-                const link = document.createElement('a');
-                link.href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(image.id)}`;
-                link.target = '_blank'; link.rel = 'noopener'; link.download = image.fullName || 'finder-gallery-image';
-                document.body.appendChild(link); link.click(); link.remove();
-            }, index * 180));
+            if (isMobileDownloadDevice()) {
+                partyDownloadQueue = selected;
+                partyDownloadIndex = 0;
+                setMessage(`Đã chuẩn bị ${selected.length} ảnh. Trên điện thoại, hãy nhấn tải từng ảnh để trình duyệt cho phép tải xuống.`, 'success');
+                updatePartyDownloadQueue();
+                // The first download still happens directly inside the user's
+                // tap, so mobile browsers do not classify it as a popup.
+                downloadNextPartyImage();
+                return;
+            }
+            selected.forEach((image, index) => window.setTimeout(() => triggerPartyDownload(image), index * 180));
+            setMessage(`Đang mở ${selected.length} lượt tải ảnh…`, 'success');
         }
 
         function renderBranding() {
-            // The public gallery header is the studio identity in every
-            // workflow state (selection, CHECK, confirmation and FINAL).
-            // Album/gallery names stay metadata and must not replace branding.
-            const studioName = String(state.studioName || 'Finder').trim() || 'Finder';
-            elements.brandTitle.textContent = studioName.toUpperCase();
+            // Selection/CHECK/FINAL albums use the Studio identity. Gallery /
+            // PSC uses the configured gallery name as its public title.
+            const publicName = state.galleryType === 'party'
+                ? (state.displayName || state.clientName || 'Finder')
+                : (state.studioName || 'Finder');
+            elements.brandTitle.textContent = String(publicName).trim().toUpperCase() || 'FINDER';
             elements.albumStatusPill.textContent = state.workflowStatus === 'completed' ? '● Hoàn thành' : state.checkNeedsRevision ? '● Khách yêu cầu sửa thêm' : state.checkReady ? '● CHECK ' + (state.checkVersion || 1) + ' · chờ kiểm tra' : state.isFinalized ? '● Đã chốt lựa chọn' : '● Đang mở lựa chọn';
             elements.checkReadyBanner.textContent = state.workflowStatus === 'completed'
                 ? '✅ Ảnh đã chỉnh sửa xong, hãy lưu ảnh sớm nhé. Link ảnh sẽ tự hủy trong vòng 60 ngày.'
@@ -813,11 +883,7 @@
                 elements.mainImage.src = '';
                 elements.photoName.textContent = 'Không có ảnh nào';
                 elements.photoIndexLabel.textContent = '0/0';
-                elements.selectedCountLabel.textContent = '0';
-                elements.selectionCapacityLabel.textContent = state.maxSelections > 0
-                    ? Math.min(state.maxSelections, state.originalImages.length)
-                    : state.originalImages.length;
-                elements.selectionCapacityStat.style.display = state.viewMode === 'check' || state.galleryType === 'party' ? 'none' : '';
+                elements.selectedCountLabel.textContent = `0/${state.maxSelections > 0 ? state.maxSelections : state.originalImages.length}`;
                 elements.photoStatusBadge.textContent = 'Trống';
                 elements.selectionList.innerHTML = '<div class="empty-state">Không có ảnh nào để hiển thị.</div>';
                 elements.thumbStrip.innerHTML = '';
@@ -833,29 +899,45 @@
             if (isFinalView) state.compareEnabled = false;
             const canEditSelection = !isCheckView && !state.isFinalized && !isPartyGallery;
             const canEditNote = !state.workflowStatus || state.workflowStatus !== 'completed' ? (isCheckView || canEditSelection) : false;
-            const imgUrl = current.preview || current.thumbnail || current.originalUrl;
-            if (elements.mainImage.dataset.imageId !== String(current.id || current.fullName)) {
+            // Paint the small Drive thumbnail first, then replace it with the
+            // larger preview in the background. This makes the first image
+            // visible quickly on slower mobile networks without changing the
+            // high-resolution lightbox flow.
+            const imageId = String(current.id || current.fullName);
+            const thumbnailUrl = current.thumbnail || current.preview || current.originalUrl || '';
+            const previewUrl = current.preview || current.thumbnail || current.originalUrl || '';
+            const imageChanged = elements.mainImage.dataset.imageId !== imageId;
+            if (imageChanged) {
                 elements.viewerShell.classList.add('loading');
-                elements.mainImage.dataset.imageId = String(current.id || current.fullName);
-                elements.mainImage.src = imgUrl || '';
+                elements.mainImage.dataset.imageId = imageId;
+                elements.mainImage.dataset.previewUrl = previewUrl;
             }
             elements.mainImage.decoding = 'async';
             elements.mainImage.loading = 'eager';
             elements.mainImage.fetchPriority = 'high';
             elements.mainImage.alt = current.shortName || current.fullName || 'Ảnh';
+            if (imageChanged) {
+                elements.mainImage.src = thumbnailUrl;
+            }
+            if (previewUrl && previewUrl !== thumbnailUrl && elements.mainImage.dataset.previewLoaded !== imageId) {
+                elements.mainImage.dataset.previewLoaded = imageId;
+                const preview = new Image();
+                preview.decoding = 'async';
+                preview.fetchPriority = 'high';
+                preview.onload = () => {
+                    if (elements.mainImage.dataset.imageId === imageId && elements.mainImage.dataset.previewUrl === previewUrl) {
+                        elements.mainImage.src = previewUrl;
+                    }
+                };
+                preview.src = previewUrl;
+            }
             elements.photoName.textContent = current.shortName || current.fullName || 'Ảnh';
             elements.photoIndexLabel.textContent = `${state.currentIndex + 1}/${state.images.length}`;
             const currentSelectedCount = selectedCount();
-            elements.selectedCountLabel.textContent = state.maxSelections > 0
-                ? `${currentSelectedCount}/${state.maxSelections}`
-                : currentSelectedCount;
-            // Hiển thị rõ hạn mức lựa chọn ngay trên trang khách. Khi album
-            // không giới hạn, mọi ảnh gốc đều có thể được chọn.
-            const selectableTotal = state.maxSelections > 0
-                ? Math.min(state.maxSelections, state.originalImages.length)
-                : state.originalImages.length;
-            elements.selectionCapacityLabel.textContent = selectableTotal;
-            elements.selectionCapacityStat.style.display = isCheckView || isPartyGallery ? 'none' : '';
+            // Gộp số lượng đã chọn và hạn mức ngay trên nút hiện có để khách
+            // luôn thấy dạng `đã chọn/tối đa` mà không cần một ô thống kê riêng.
+            const selectionLimit = state.maxSelections > 0 ? state.maxSelections : state.originalImages.length;
+            elements.selectedCountLabel.textContent = `${currentSelectedCount}/${selectionLimit}`;
             elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';
@@ -1645,6 +1727,8 @@
             updatePartyActions();
         });
         elements.partyDownloadBtn?.addEventListener('click', downloadPartySelection);
+        elements.partyDownloadNextBtn?.addEventListener('click', downloadNextPartyImage);
+        elements.partyDownloadCancelBtn?.addEventListener('click', cancelPartyDownloadQueue);
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();

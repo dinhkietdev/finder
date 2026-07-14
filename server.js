@@ -686,16 +686,17 @@ app.get('/a/:slug', async (req, res) => {
         await loadPersistentState();
         const requested = canonicalPublicSlug(req.params.slug);
         const match = Object.values(albumSettingsDatabase).find(settings => canonicalPublicSlug(settings?.publicSlug) === requested);
-        const studio = String(match?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
-        const title = `${studio} · Gallery ảnh`;
+        const title = 'Finder - Ứng dụng bàn giao và chọn ảnh';
         const description = match?.galleryType === 'party' ? 'Gallery ảnh tiệc / PSC trên Finder' : 'Gallery ảnh khách hàng trên Finder';
         const source = fs.readFileSync(path.join(__dirname, 'client.html'), 'utf8');
         const canonicalUrl = `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${encodeURIComponent(req.params.slug)}`;
-        const meta = `<meta property="og:title" content="${escapeHtmlAttribute(title)}"><meta property="og:description" content="${escapeHtmlAttribute(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="FINDER"><meta property="og:url" content="${escapeHtmlAttribute(canonicalUrl)}"><meta name="twitter:card" content="summary">`;
+        const meta = `<meta name="description" content="${escapeHtmlAttribute(title)}"><meta property="og:title" content="${escapeHtmlAttribute(title)}"><meta property="og:description" content="${escapeHtmlAttribute(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="Finder"><meta property="og:url" content="${escapeHtmlAttribute(canonicalUrl)}"><meta property="og:locale" content="vi_VN"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="${escapeHtmlAttribute(title)}"><meta name="twitter:description" content="${escapeHtmlAttribute(description)}">`;
         const withoutStaticSocialMeta = source
             .replace(/\s*<meta property="og:[^"]+" content="[^"]*">/g, '')
-            .replace(/\s*<meta name="twitter:card" content="[^"]*">/g, '');
-        return res.type('html').send(withoutStaticSocialMeta.replace('</head>', `${meta}</head>`));
+            .replace(/\s*<meta name="twitter:[^"]+" content="[^"]*">/g, '')
+            .replace(/\s*<meta name="description" content="[^"]*">/g, '');
+        const withSocialTitle = withoutStaticSocialMeta.replace(/<title>[^<]*<\/title>/i, `<title>${escapeHtmlAttribute(title)}</title>`);
+        return res.type('html').send(withSocialTitle.replace('</head>', `${meta}</head>`));
     } catch (_) {
         return res.sendFile(path.join(__dirname, 'client.html'));
     }
