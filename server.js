@@ -670,13 +670,22 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         delete finalizedDatabase[folderId];
         albumSettingsDatabase[folderId].selectionReopenedAt = new Date().toISOString();
     }
-    // Firebase writes can occasionally remain open on a cold Vercel instance
-    // even though the in-memory update is valid. Never hold the desktop upload
-    // on that network write: return the management token immediately and let
-    // the partition persist in the background. The slug resolver has a Drive
-    // token fallback if this particular write is interrupted.
-    persistAlbumSettings(folderId).catch(error => console.warn('Không thể lưu settings album:', JSON.stringify({ message: error.message, code: error.code })));
-    res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending: Boolean(firebaseDb) });
+    // Keep the request alive briefly so Vercel can finish the small settings
+    // write before freezing the function, but never let a Firebase network
+    // stall block Desktop indefinitely.
+    let persistencePending = false;
+    if (firebaseDb) {
+        try {
+            await Promise.race([
+                persistAlbumSettings(folderId),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Firebase settings write timeout')), 7000))
+            ]);
+        } catch (error) {
+            persistencePending = true;
+            console.warn('Không thể lưu settings album:', JSON.stringify({ message: error.message, code: error.code }));
+        }
+    }
+    res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending });
 });
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
