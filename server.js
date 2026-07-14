@@ -658,7 +658,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // the partition persist in the background. The slug resolver has a Drive
     // token fallback if this particular write is interrupted.
     persistState(folderId).catch(error => console.warn('Không thể lưu settings album:', error.message));
-    res.json({ success: true, settings: albumSettingsDatabase[folderId], managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending: Boolean(firebaseDb) });
+    res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending: Boolean(firebaseDb) });
 });
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
