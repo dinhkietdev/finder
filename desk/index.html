@@ -303,11 +303,6 @@
                     <input type="text" id="studio-name-input" placeholder="Mặc định: Finder">
                 </div>
                 <div class="input-group">
-                    <label>Tên hiển thị album/gallery <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label>
-                    <input type="text" id="album-display-name-input" placeholder="Ví dụ: NGỌC & MINH · 12.10.2026">
-                    <small style="display:block;margin-top:5px;color:#64748b;">Nếu bỏ trống, gallery sẽ hiển thị tên thương hiệu hoặc FINDER.</small>
-                </div>
-                <div class="input-group">
                     <label>Ngày giao dự kiến <span style="font-weight:400;color:#64748b;">(tùy chọn, dùng cho dashboard)</span>:</label>
                     <input type="date" id="album-due-date-input">
                 </div>
@@ -356,7 +351,7 @@
             </div>
             <div class="input-group"><label>Tên thư mục trên Drive (Tên khách hàng):</label><input id="party-folder-name" type="text" placeholder="Ví dụ: NGOC-MINH-2026"></div>
             <div class="input-group"><label>Tên gallery hiển thị cho khách <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label><input id="party-gallery-name" type="text" placeholder="Mặc định dùng tên thư mục khách hàng"></div>
-            <div class="input-group"><label>Tên ngày/đợt ảnh:</label><input id="party-section-name" type="text" placeholder="Ví dụ: Vu quy hoặc Thành hôn" value="Vu quy"></div>
+            <div class="input-group"><label>Tên ngày/đợt ảnh <span style="font-weight:400;color:#64748b;">(để trống để upload thẳng vào thư mục khách hàng)</span>:</label><input id="party-section-name" type="text" placeholder="Ví dụ: Vu quy hoặc Thành hôn" value=""></div>
             <div class="input-group"><label>Thư mục đích trên Google Drive:</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="party-drive-parent-path" type="text" value="Drive của tôi (thư mục gốc)" readonly style="flex:1;min-width:260px;"><button id="btn-party-choose-drive-folder" type="button" class="btn-outline">☁️ Chọn thư mục Drive</button></div></div>
             <div class="input-group"><label>Thời hạn hiển thị thông báo (ngày):</label><input id="party-expires-days" type="number" min="1" max="3650" value="60" placeholder="Mặc định 60 ngày"></div>
             <button id="btn-party-upload" type="button" class="btn-success" disabled>🎉 Upload gallery tiệc</button>
@@ -471,7 +466,7 @@
             <p id="drive-folder-breadcrumb" style="font-size:13px; color:#2563eb; overflow-wrap:anywhere; margin-bottom:12px;"></p>
             <div id="drive-folder-list" style="max-height:360px; overflow:auto; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:16px;"></div>
             <div class="custom-modal-actions" style="justify-content:space-between;">
-                <button type="button" id="btn-drive-back" class="btn-outline">← Quay lại</button>
+                <div style="display:flex;gap:8px;"><button type="button" id="btn-drive-back" class="btn-outline">← Quay lại</button><button type="button" id="btn-drive-create-folder" class="btn-outline">＋ Tạo thư mục mới</button></div>
                 <div style="display:flex; gap:10px;">
                     <button type="button" id="btn-drive-cancel" class="btn-outline">Hủy</button>
                     <button type="button" id="btn-drive-select-current" class="btn-success">Chọn thư mục này</button>
@@ -1086,7 +1081,7 @@
             const status = document.getElementById('party-upload-status');
             const folderName = document.getElementById('party-folder-name').value.trim() || partyFolderPath.split(/[\\/]/).filter(Boolean).pop() || 'Ảnh tiệc';
             const galleryName = document.getElementById('party-gallery-name').value.trim() || folderName;
-            const sectionName = document.getElementById('party-section-name').value.trim() || (partyAppendAlbumId ? 'Thành hôn' : 'Vu quy');
+            const sectionName = document.getElementById('party-section-name').value.trim() || (partyAppendAlbumId ? 'Thành hôn' : '');
             const expiresDays = Math.min(3650, Math.max(1, Number(document.getElementById('party-expires-days').value) || 60));
             button.disabled = true;
             partyUploadInProgress = true;
@@ -1096,9 +1091,8 @@
                     ? await ipcRenderer.invoke('append-party-gallery', { folderId: partyAppendAlbumId, folderPath: partyFolderPath, imageFiles: partyImageFiles, sectionName })
                     : await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, folderName, galleryName, sectionName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
                 if (!result.success) throw new Error(result.error || 'Upload gallery tiệc thất bại.');
-                status.innerHTML = `🎉 <b style="color:#059669;">Đã upload ${result.completed} ảnh.</b> <button type="button" class="btn-outline" id="party-copy-link">Sao chép link gallery</button>`;
-                const copy = document.getElementById('party-copy-link');
-                copy?.addEventListener('click', async () => { await navigator.clipboard.writeText(result.folderLink); copy.textContent = 'Đã sao chép ✓'; });
+                status.innerHTML = `🎉 <b style="color:#059669;">Đã upload ${result.completed} ảnh.</b>`;
+                showUploadSuccess(result.folderLink);
                 await loadAlbumHistory();
                 await loadDashboard();
             } catch (error) { status.innerHTML = `<span style="color:#dc2626;">Không thể upload: ${escapeHtml(error.message)}</span>`; }
@@ -1243,7 +1237,7 @@
             const watermarkText = document.getElementById('watermark-text-input').value.trim();
             const maxSelections = document.getElementById('max-selections-input').value.trim(); 
             const studioName = (document.getElementById('studio-name-input').value.trim() || 'Finder').toUpperCase();
-            const displayName = document.getElementById('album-display-name-input').value.trim() || studioName || 'Finder';
+            const displayName = studioName || 'Finder';
             const dueDate = document.getElementById('album-due-date-input').value || '';
 
             document.getElementById('progress-container').style.display = "block";
@@ -1562,6 +1556,20 @@
                 driveNavigation.pop();
                 await loadDriveFolders();
             }
+        });
+
+        document.getElementById('btn-drive-create-folder').addEventListener('click', async () => {
+            const current = driveNavigation[driveNavigation.length - 1];
+            const name = window.prompt('Nhập tên thư mục Google Drive mới:');
+            if (!name?.trim()) return;
+            const button = document.getElementById('btn-drive-create-folder');
+            button.disabled = true;
+            try {
+                const result = await ipcRenderer.invoke('create-drive-folder', { parentId: current.id || 'root', name: name.trim() });
+                if (!result.success) throw new Error(result.error || 'Không thể tạo thư mục.');
+                await loadDriveFolders();
+            } catch (error) { showToast(`Không thể tạo thư mục: ${error.message}`, 'error'); }
+            finally { button.disabled = false; }
         });
 
         document.getElementById('btn-drive-cancel').addEventListener('click', () => {

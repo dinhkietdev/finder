@@ -950,6 +950,24 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
     }
 });
 
+ipcMain.handle('create-drive-folder', async (event, payload = {}) => {
+    const parentId = payload.parentId || 'root';
+    const name = String(payload.name || '').trim();
+    if (!name) return { success: false, error: 'Tên thư mục không được để trống.' };
+    try {
+        const auth = await authenticateCasi(true);
+        const drive = google.drive({ version: 'v3', auth });
+        const result = await drive.files.create({
+            resource: { name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] },
+            fields: 'id,name', supportsAllDrives: true
+        });
+        return { success: true, folder: result.data };
+    } catch (error) {
+        logDriveDiagnostic('create-drive-folder', error);
+        return { success: false, error: friendlyDriveError(error) };
+    }
+});
+
 // Upload gallery tiệc/PSC: không chạy AI culling. Mỗi gallery có một thư mục
 // khách hàng riêng bên dưới thư mục đích, rồi mỗi ngày/đợt ảnh là một thư mục
 // con (Vu quy, Thành hôn...). Nhờ vậy các lần bổ sung vẫn dùng cùng một link.
@@ -959,7 +977,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
     const driveParentId = payload.driveParentId || 'root';
     const folderName = String(payload.folderName || payload.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
     const galleryName = String(payload.galleryName || folderName).trim() || folderName;
-    const sectionName = String(payload.sectionName || 'Vu quy').trim() || 'Vu quy';
+    const sectionName = String(payload.sectionName || '').trim();
     const studioName = String(payload.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
     const expiresDays = Math.min(3650, Math.max(1, Number(payload.expiresDays) || 60));
     if (!folderPath || !fs.existsSync(folderPath)) return { success: false, error: 'Không tìm thấy thư mục ảnh tiệc.' };
@@ -976,12 +994,15 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         });
         const customerFolderId = customerFolder.data.id;
         if (!customerFolderId) throw new Error('Không thể tạo thư mục khách hàng trên Google Drive.');
-        const sectionFolder = await drive.files.create({
-            resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [customerFolderId] },
-            fields: 'id,name', supportsAllDrives: true
-        });
-        const sectionFolderId = sectionFolder.data.id;
-        if (!sectionFolderId) throw new Error('Không thể tạo thư mục ngày/đợt ảnh trên Google Drive.');
+        let sectionFolderId = customerFolderId;
+        if (sectionName) {
+            const sectionFolder = await drive.files.create({
+                resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [customerFolderId] },
+                fields: 'id,name', supportsAllDrives: true
+            });
+            sectionFolderId = sectionFolder.data.id;
+            if (!sectionFolderId) throw new Error('Không thể tạo thư mục ngày/đợt ảnh trên Google Drive.');
+        }
         const existingFiles = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
         const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
         const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
@@ -1016,7 +1037,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
             try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }, metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {}); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
         }
         const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
-        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: folderName, driveFolderName: folderName, studioName, galleryType: 'party', managementToken: metadata.managementToken || null, originalFolderId: customerFolderId, gallerySections: [{ id: sectionFolderId, name: sectionName, driveFolderId: sectionFolderId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId: customerFolderId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: `${payload.driveParentPath || 'Drive của tôi'} / ${folderName} / ${sectionName}` });
+        saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: folderName, driveFolderName: folderName, studioName, galleryType: 'party', managementToken: metadata.managementToken || null, originalFolderId: customerFolderId, gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId: customerFolderId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: `${payload.driveParentPath || 'Drive của tôi'} / ${folderName}${sectionName ? ` / ${sectionName}` : ''}` });
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: 'Đã hoàn tất gallery tiệc.', completed: imageFiles.length, total: imageFiles.length, failed: 0 });
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
     } catch (error) {

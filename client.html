@@ -1430,8 +1430,11 @@
                     if (state.checkImages.includes(item) && checkNotes[item.fullName] !== undefined) item.note = checkNotes[item.fullName] || '';
                 });
 
-                state.viewMode = state.checkReady ? 'check' : 'original';
-                state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
+                // Khi khách được mở lại để chọn bổ sung, mặc định trở về ảnh
+                // gốc; tab CHECK vẫn được giữ trên thanh chuyển chế độ để xem
+                // các bản chỉnh sửa trước đó.
+                state.viewMode = 'original';
+                state.images = state.originalImages;
                 state.currentIndex = 0;
                 state.aiGroups = [];
                 render();

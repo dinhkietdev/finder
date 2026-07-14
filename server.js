@@ -775,7 +775,7 @@ app.post('/api/party-gallery', async (req, res) => {
     const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
-    const sectionName = String(req.body?.sectionName || 'Vu quy').trim() || 'Vu quy';
+    const sectionName = String(req.body?.sectionName || '').trim();
     const managementToken = createManagementToken();
     albumSettingsDatabase[folderId] = {
         ...(albumSettingsDatabase[folderId] || {}),
@@ -787,7 +787,7 @@ app.post('/api/party-gallery', async (req, res) => {
         displayName: galleryName,
         originalFolderId: driveFolderId,
         driveFolderName: folderName,
-        gallerySections: [{ id: sectionDriveFolderId, name: sectionName, driveFolderId: sectionDriveFolderId, createdAt }],
+        gallerySections: [{ id: sectionDriveFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionDriveFolderId, createdAt }],
         studioName,
         galleryType: 'party',
         partyGallery: true,
