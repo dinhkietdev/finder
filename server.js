@@ -371,6 +371,44 @@ async function findStudioHistoryBySlug(requested) {
     return null;
 }
 
+// Legacy desktop builds generated public links from the local folder name and
+// the last six characters of the Drive folder id, but an interrupted settings
+// write could leave no Firebase slug mapping. Resolve that link directly from
+// Drive as a compatibility fallback. This path is only used after the normal
+// Firebase lookup fails, so normal client requests remain cheap.
+async function findDriveFolderByLegacySlug(requested, rawSlug) {
+    const auth = getServiceAccountAuth();
+    if (!auth) return null;
+    const raw = String(rawSlug || '').trim();
+    const rawTail = raw.includes('-') ? raw.slice(raw.lastIndexOf('-') + 1) : '';
+    const tail = canonicalPublicSlug(rawTail);
+    if (tail.length < 4) return null;
+    const baseSlug = canonicalPublicSlug(raw.includes('-') ? raw.slice(0, raw.lastIndexOf('-')) : '');
+    const drive = google.drive({ version: 'v3', auth });
+    let pageToken;
+    do {
+        const response = await drive.files.list({
+            q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+            fields: 'nextPageToken,files(id,name,parents)',
+            pageSize: 1000,
+            pageToken,
+            corpora: 'allDrives',
+            includeItemsFromAllDrives: true,
+            supportsAllDrives: true
+        });
+        for (const folder of response.data.files || []) {
+            const id = String(folder.id || '');
+            const idTail = id.slice(-6).toLowerCase();
+            const nameSlug = canonicalPublicSlug(folder.name || '');
+            if (!id || idTail !== rawTail.toLowerCase() && canonicalPublicSlug(idTail) !== tail) continue;
+            if (baseSlug && nameSlug !== baseSlug) continue;
+            return { folderId: id, folderName: folder.name || 'Album khách hàng' };
+        }
+        pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+    return null;
+}
+
 app.get('/api/album-by-slug/:slug', async (req, res) => {
     await loadPersistentState();
     const requested = canonicalPublicSlug(req.params.slug);
@@ -417,6 +455,39 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
             albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...restored };
             try { await persistState(folderId); } catch (error) { console.warn('Không thể khôi phục settings album từ lịch sử:', error.message); }
             match = [folderId, albumSettingsDatabase[folderId]];
+        }
+    }
+    if (!match) {
+        try {
+            const recovered = await findDriveFolderByLegacySlug(requested, req.params.slug);
+            if (recovered) {
+                const folderId = recovered.folderId;
+                const restored = {
+                    isEnabled: true,
+                    text: 'FINDERPICTURE STUDIO',
+                    maxSelections: 0,
+                    publicSlug: requested,
+                    clientName: recovered.folderName,
+                    displayName: 'Finder',
+                    originalFolderId: null,
+                    studioName: 'FINDER',
+                    studioLogo: '',
+                    accentColor: '#7c8cff',
+                    checkReady: false,
+                    checkVersion: 0,
+                    checkNeedsRevision: false,
+                    workflowStatus: 'selection_open'
+                };
+                albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...restored };
+                // Do not hold the client response on a best-effort Firebase
+                // repair. The next request will use the persisted partition if
+                // the write succeeds; otherwise this resolver can recover it
+                // again from Drive without returning a false 404.
+                persistState(folderId).catch(error => console.warn('Không thể lưu slug legacy từ Drive:', error.message));
+                match = [folderId, albumSettingsDatabase[folderId]];
+            }
+        } catch (error) {
+            console.warn('Không thể tìm thư mục Drive theo slug legacy:', error.message);
         }
     }
     if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
