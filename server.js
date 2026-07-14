@@ -68,6 +68,58 @@ let bannedAlbums = [];
 let finalizedDatabase = {}; 
 let firebaseDb = null;
 let firebaseMigrationPromise = null;
+// Supabase is the primary store when configured. Firebase remains a legacy
+// fallback until the migration is explicitly completed and verified.
+let supabaseUrl = '';
+let supabaseServiceKey = '';
+let supabaseLoadPromise = null;
+
+function isSupabaseConfigured() {
+    return Boolean(supabaseUrl && supabaseServiceKey);
+}
+
+async function supabaseRequest(resource, options = {}) {
+    if (!isSupabaseConfigured()) return null;
+    const response = await fetch(`${supabaseUrl}/rest/v1/${resource}`, {
+        ...options,
+        headers: {
+            apikey: supabaseServiceKey,
+            Authorization: `Bearer ${supabaseServiceKey}`,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        }
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 400)}`);
+    return text ? JSON.parse(text) : null;
+}
+
+function buildSupabaseAlbumRow(folderId) {
+    const settings = albumSettingsDatabase[folderId] || {};
+    const partition = buildAlbumPartition(folderId);
+    return {
+        id: String(folderId),
+        public_slug: settings.publicSlug ? canonicalPublicSlug(settings.publicSlug) : `album-${String(folderId).slice(-6).toLowerCase()}`,
+        gallery_type: settings.galleryType || (settings.partyGallery ? 'party' : 'selection'),
+        drive_folder_id: settings.originalFolderId || null,
+        original_folder_id: settings.originalFolderId || null,
+        settings: stripUndefined(settings),
+        state: stripUndefined(partition),
+        history: stripUndefined({ checkHistory: settings.checkHistory || [], gallerySections: settings.gallerySections || [] }),
+        is_finalized: Boolean(finalizedDatabase[folderId]),
+        workflow_status: settings.workflowStatus || null,
+        updated_at: new Date().toISOString()
+    };
+}
+
+async function persistSupabaseAlbum(folderId) {
+    if (!isSupabaseConfigured()) return;
+    await supabaseRequest('albums', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(buildSupabaseAlbumRow(folderId))
+    });
+}
 
 function createManagementToken() {
     return crypto.randomBytes(32).toString('hex');
@@ -185,6 +237,15 @@ try {
     console.error('Không thể khởi tạo Firebase:', error.message);
 }
 
+supabaseUrl = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+supabaseServiceKey = String(
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+    || process.env.SUPABASE_SECRET_KEY
+    || process.env.SUPABASE_SERVICE_KEY
+    || ''
+).trim();
+if (isSupabaseConfigured()) console.log('Supabase primary storage đã được cấu hình.');
+
 if (fs.existsSync(DB_PATH)) {
     try { 
         const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); 
@@ -210,6 +271,10 @@ function stripUndefined(value) {
 // partition. Write only the settings child so a large liked-image partition or
 // an aggregate-node update cannot delay the Desktop response.
 async function persistAlbumSettings(folderId) {
+    if (isSupabaseConfigured()) {
+        await persistSupabaseAlbum(folderId);
+        return;
+    }
     if (!firebaseDb) return;
     const key = `finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`;
     const settings = albumSettingsDatabase[folderId] || null;
@@ -233,6 +298,33 @@ async function persistAlbumSettings(folderId) {
 }
 
 async function loadPersistentState() {
+    if (isSupabaseConfigured()) {
+        if (supabaseLoadPromise) return supabaseLoadPromise;
+        supabaseLoadPromise = (async () => {
+            const rows = await supabaseRequest('albums?select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at');
+            const liked = {}, notes = {}, settings = {}, finalized = {}, banned = [];
+            for (const row of Array.isArray(rows) ? rows : []) {
+                const folderId = String(row?.id || '');
+                if (!folderId) continue;
+                const partition = row.state && typeof row.state === 'object' ? row.state : {};
+                const rowSettings = row.settings && typeof row.settings === 'object' ? { ...row.settings } : {};
+                if (!rowSettings.publicSlug && row.public_slug) rowSettings.publicSlug = row.public_slug;
+                if (!rowSettings.galleryType && row.gallery_type) rowSettings.galleryType = row.gallery_type;
+                if (!rowSettings.originalFolderId && row.original_folder_id) rowSettings.originalFolderId = row.original_folder_id;
+                liked[folderId] = deserializeLikedImages({ [folderId]: partition.likedImages || {} })[folderId] || {};
+                notes[folderId] = deserializeLikedImages({ [folderId]: partition.checkNotes || {} })[folderId] || {};
+                if (Object.keys(rowSettings).length) settings[folderId] = rowSettings;
+                if (row.is_finalized || partition.finalized === true) finalized[folderId] = true;
+                if (partition.banned) banned.push(folderId);
+            }
+            likedImagesDatabase = liked;
+            checkNotesDatabase = notes;
+            albumSettingsDatabase = settings;
+            finalizedDatabase = finalized;
+            bannedAlbums = banned;
+        })().finally(() => { supabaseLoadPromise = null; });
+        return supabaseLoadPromise;
+    }
     if (!firebaseDb) return;
     await ensureFirebaseMigration();
     // Read album partitions first. The old aggregate node is retained as a
@@ -301,6 +393,20 @@ function deserializeLikedImages(likedImages) {
 
 async function persistState(changedFolderId = null, options = {}) {
     saveDB();
+    if (isSupabaseConfigured()) {
+        if (options.clearAll) {
+            await supabaseRequest('albums', { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+            return;
+        }
+        if (changedFolderId) {
+            if (options.deletePartition) {
+                await supabaseRequest(`albums?id=eq.${encodeURIComponent(changedFolderId)}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+            } else {
+                await persistSupabaseAlbum(changedFolderId);
+            }
+        }
+        return;
+    }
     if (firebaseDb) {
         // Keep the aggregate node immutable as a migration/rollback snapshot.
         // All normal writes go to one album partition, preventing unrelated
@@ -737,9 +843,15 @@ function getServiceAccountAuth() {
 }
 
 async function getAlbumDriveAuth(folderId) {
-    if (!firebaseDb) return null;
-    const snapshot = await firebaseDb.ref(`driveTokens/${folderId}`).once('value');
-    const stored = snapshot.val();
+    let stored = null;
+    if (isSupabaseConfigured()) {
+        const rows = await supabaseRequest(`drive_tokens?album_id=eq.${encodeURIComponent(folderId)}&select=token`);
+        stored = rows?.[0]?.token || null;
+    } else {
+        if (!firebaseDb) return null;
+        const snapshot = await firebaseDb.ref(`driveTokens/${folderId}`).once('value');
+        stored = snapshot.val();
+    }
     const metadata = stored?._finderMeta || {};
     const tokens = stored ? { ...stored } : null;
     if (tokens) delete tokens._finderMeta;
@@ -756,7 +868,15 @@ async function getAlbumDriveAuth(folderId) {
             // without it a cold Vercel instance falls back to the internal
             // `party-...` id and the gallery can no longer be resolved.
             const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000, ...(Object.keys(metadata).length ? { _finderMeta: metadata } : {}) };
-            await firebaseDb.ref(`driveTokens/${folderId}`).set(next);
+            if (isSupabaseConfigured()) {
+                await supabaseRequest('drive_tokens', {
+                    method: 'POST',
+                    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+                    body: JSON.stringify({ album_id: String(folderId), token: next, updated_at: new Date().toISOString() })
+                });
+            } else {
+                await firebaseDb.ref(`driveTokens/${folderId}`).set(next);
+            }
             client.setCredentials(next);
         }
     }
@@ -888,6 +1008,7 @@ app.get('/api/health', (req, res) => {
     res.json({
         ok: true,
         firebaseConfigured: Boolean(firebaseDb),
+        supabaseConfigured: isSupabaseConfigured(),
         googleDriveServiceAccountConfigured: Boolean(getServiceAccountAuth())
     });
 });
@@ -1390,11 +1511,20 @@ app.get('/api/album/:folderId', async (req, res) => {
 
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
     if (!requireAlbumManagement(req, res, req.params.folderId)) return;
-    if (!firebaseDb || !req.body?.tokens) return res.status(503).json({ error: 'Firebase chưa cấu hình hoặc thiếu token.' });
+    if ((!firebaseDb && !isSupabaseConfigured()) || !req.body?.tokens) return res.status(503).json({ error: 'Chưa cấu hình kho dữ liệu hoặc thiếu token.' });
     const metadata = req.body?.driveFolderId || req.body?.galleryType || req.body?.gallerySections
         ? { driveFolderId: normalizeDriveFolderId(req.body.driveFolderId, ''), galleryType: req.body.galleryType || 'selection', gallerySections: Array.isArray(req.body.gallerySections) ? req.body.gallerySections : [] }
         : null;
-    await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set({ ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) });
+    const stored = { ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) };
+    if (isSupabaseConfigured()) {
+        await supabaseRequest('drive_tokens', {
+            method: 'POST',
+            headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+            body: JSON.stringify({ album_id: String(req.params.folderId), token: stored, updated_at: new Date().toISOString() })
+        });
+    } else {
+        await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set(stored);
+    }
     res.json({ success: true });
 });
 
