@@ -412,9 +412,9 @@ async function findDriveFolderByLegacySlug(requested, rawSlug) {
                     const auth = await getAlbumDriveAuth(folderId);
                     if (!auth) continue;
                     const drive = google.drive({ version: 'v3', auth });
-                    const metadata = await drive.files.get({ fileId: folderId, fields: 'id,name,mimeType', supportsAllDrives: true });
+                    const metadata = await drive.files.get({ fileId: folderId, fields: 'id,name,mimeType,appProperties', supportsAllDrives: true });
                     const nameSlug = canonicalPublicSlug(metadata.data.name || '');
-                    if (!baseSlug || nameSlug === baseSlug) return { folderId, folderName: metadata.data.name || 'Album khách hàng' };
+                    if (!baseSlug || nameSlug === baseSlug) return { folderId, folderName: metadata.data.name || 'Album khách hàng', appProperties: metadata.data.appProperties || {} };
                 } catch (error) {
                     console.warn('Không thể đọc folder Drive từ token album:', error.message);
                 }
@@ -438,7 +438,7 @@ async function findDriveFolderByLegacySlug(requested, rawSlug) {
             do {
                 const response = await drive.files.list({
                     q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-                    fields: 'nextPageToken,files(id,name,parents)',
+                    fields: 'nextPageToken,files(id,name,parents,appProperties)',
                     pageSize: 1000,
                     pageToken,
                     corpora: 'allDrives',
@@ -451,7 +451,7 @@ async function findDriveFolderByLegacySlug(requested, rawSlug) {
                     const nameSlug = canonicalPublicSlug(folder.name || '');
                     if (!id || (idTail !== rawTail.toLowerCase() && canonicalPublicSlug(idTail) !== tail)) continue;
                     if (baseSlug && nameSlug !== baseSlug) continue;
-                    return { folderId: id, folderName: folder.name || 'Album khách hàng' };
+                    return { folderId: id, folderName: folder.name || 'Album khách hàng', appProperties: folder.appProperties || {} };
                 }
                 pageToken = response.data.nextPageToken || undefined;
             } while (pageToken);
@@ -523,7 +523,7 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
                     clientName: recovered.folderName,
                     displayName: 'Finder',
                     originalFolderId: null,
-                    studioName: 'FINDER',
+                    studioName: recovered.appProperties?.finderStudioName || 'FINDER',
                     studioLogo: '',
                     accentColor: '#7c8cff',
                     checkReady: false,
@@ -544,7 +544,12 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
         }
     }
     if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
-    const settings = { ...match[1], publicSlug: requested };
+    let resolvedSettings = { ...match[1] };
+    if (!resolvedSettings.studioName || /^finder( studio)?$/i.test(String(resolvedSettings.studioName).trim())) {
+        const driveStudioName = await readDriveBranding(await getAlbumDriveClient(match[0]), match[0]);
+        if (driveStudioName) resolvedSettings.studioName = driveStudioName;
+    }
+    const settings = { ...resolvedSettings, publicSlug: requested };
     res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(settings) });
 });
 
@@ -588,6 +593,37 @@ async function getAlbumDriveAuth(folderId) {
         if (refreshed?.token) { const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000 }; await firebaseDb.ref(`driveTokens/${folderId}`).set(next); client.setCredentials(next); }
     }
     return client;
+}
+
+async function getAlbumDriveClient(folderId) {
+    const oauth = await getAlbumDriveAuth(folderId);
+    if (oauth) return google.drive({ version: 'v3', auth: oauth });
+    const serviceAccount = getServiceAccountAuth();
+    return serviceAccount ? google.drive({ version: 'v3', auth: serviceAccount }) : null;
+}
+
+async function readDriveBranding(drive, folderId) {
+    if (!drive) return null;
+    try {
+        const response = await drive.files.get({ fileId: folderId, fields: 'id,appProperties', supportsAllDrives: true });
+        const value = response.data?.appProperties?.finderStudioName;
+        return value ? String(value).trim().toUpperCase() : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function saveDriveBranding(folderId, studioName) {
+    const drive = await getAlbumDriveClient(folderId);
+    if (!drive) return false;
+    const value = String(studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+    await drive.files.update({
+        fileId: folderId,
+        requestBody: { appProperties: { finderStudioName: value } },
+        fields: 'id,appProperties',
+        supportsAllDrives: true
+    });
+    return true;
 }
 
 // Endpoint không lộ bí mật, dùng sau khi deploy để phân biệt lỗi
@@ -674,6 +710,15 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // write before freezing the function, but never let a Firebase network
     // stall block Desktop indefinitely.
     let persistencePending = false;
+    let driveBrandingSaved = false;
+    try {
+        driveBrandingSaved = await Promise.race([
+            saveDriveBranding(folderId, albumSettingsDatabase[folderId].studioName),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Drive branding write timeout')), 7000))
+        ]);
+    } catch (error) {
+        console.warn('Không thể lưu tên Studio vào Drive:', JSON.stringify({ message: error.message, code: error.code }));
+    }
     if (firebaseDb) {
         try {
             await Promise.race([
@@ -685,7 +730,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             console.warn('Không thể lưu settings album:', JSON.stringify({ message: error.message, code: error.code }));
         }
     }
-    res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending });
+    res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending, driveBrandingSaved });
 });
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
@@ -929,6 +974,12 @@ app.get('/api/album/:folderId', async (req, res) => {
             if (!oauth2Client) return res.status(503).json({ error: 'Thiếu cấu hình Google Drive trên Server.' });
             oauth2Client.setCredentials(tokens);
             drive = google.drive({ version: 'v3', auth: oauth2Client });
+        }
+
+        const driveStudioName = await readDriveBranding(drive, folderId);
+        if (driveStudioName) {
+            currentSettings = { ...currentSettings, studioName: driveStudioName };
+            albumSettingsDatabase[folderId] = currentSettings;
         }
 
         // Recover albums created by older desktop builds when the settings
