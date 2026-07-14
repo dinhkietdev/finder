@@ -100,6 +100,10 @@ function firebaseAlbumKey(folderId) {
 
 function buildAlbumPartition(folderId) {
     return {
+        // Keep the logical album id inside the partition. The Firebase key is
+        // encoded to support arbitrary ids, so the loader cannot otherwise
+        // reconstruct this value after a Vercel cold start.
+        folderId: String(folderId),
         likedImages: serializeLikedImages({ [folderId]: likedImagesDatabase[folderId] || {} })[folderId] || {},
         checkNotes: serializeLikedImages({ [folderId]: checkNotesDatabase[folderId] || {} })[folderId] || {},
         settings: albumSettingsDatabase[folderId] || null,
@@ -197,6 +201,7 @@ async function persistAlbumSettings(folderId) {
     const key = `finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`;
     const settings = albumSettingsDatabase[folderId] || null;
     const updates = {
+        [`${key}/folderId`]: String(folderId),
         [`${key}/settings`]: stripUndefined(settings),
         [`${key}/updatedAt`]: new Date().toISOString()
     };
@@ -223,8 +228,14 @@ async function loadPersistentState() {
     const partitions = partitionsSnapshot.val();
     if (partitions && Object.keys(partitions).length) {
         const liked = {}, notes = {}, settings = {}, finalized = {}, banned = [];
-        for (const partition of Object.values(partitions)) {
-            const folderId = String(partition?.folderId || '');
+        for (const [encodedKey, partition] of Object.entries(partitions)) {
+            // Partitions written by an earlier build did not store folderId;
+            // decode their base64url Firebase key so existing albums remain
+            // readable instead of silently falling back to empty state.
+            let folderId = String(partition?.folderId || '');
+            if (!folderId) {
+                try { folderId = Buffer.from(String(encodedKey), 'base64url').toString('utf8'); } catch (_) {}
+            }
             if (!folderId) continue;
             liked[folderId] = deserializeLikedImages({ [folderId]: partition.likedImages || {} })[folderId] || {};
             notes[folderId] = deserializeLikedImages({ [folderId]: partition.checkNotes || {} })[folderId] || {};
