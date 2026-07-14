@@ -89,8 +89,21 @@ function requireAlbumManagement(req, res, folderId) {
     return false;
 }
 
+function isDefaultStudioName(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return !normalized || normalized === 'finder' || normalized === 'finder studio';
+}
+
 function publicAlbumSettings(settings = {}) {
     const { managementToken, ...safeSettings } = settings;
+    // Keep the public contract stable for older albums whose settings were
+    // written before maxSelections was introduced. A missing value means the
+    // album is intentionally unlimited; clients should not have to infer it
+    // from an absent JSON property.
+    safeSettings.maxSelections = Number.isFinite(Number(safeSettings.maxSelections))
+        ? Number(safeSettings.maxSelections)
+        : 0;
+    safeSettings.studioName = String(safeSettings.studioName || 'FINDER').trim().toUpperCase() || 'FINDER';
     return safeSettings;
 }
 
@@ -899,9 +912,21 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     const { folderId } = req.params;
     if (!requireAlbumManagement(req, res, folderId)) return;
     const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote, galleryType, partyGallery, gallerySections, expiresDays, expiresAt } = req.body;
+    const isBackgroundSync = req.get('x-finder-background-sync') === '1';
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
-    const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
+    const parsedLimit = hasLimitUpdate
+        ? (String(maxSelections ?? '').trim() === '' ? 0 : (parseInt(maxSelections, 10) || 0))
+        : previousLimit;
+    // An older Desktop history may not know about a limit that was configured
+    // online. Its background sync sends 0; never let that erase a real limit.
+    const preserveBackgroundLimit = isBackgroundSync && hasLimitUpdate && parsedLimit === 0 && Number(previousLimit) > 0;
+    const nextLimit = preserveBackgroundLimit ? Number(previousLimit) : parsedLimit;
+    const incomingStudioName = String(studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+    const existingStudioName = String(albumSettingsDatabase[folderId]?.studioName || '').trim();
+    // The same protection applies to the brand: a legacy local record with no
+    // custom brand must not replace an existing Studio name on the server.
+    const preserveBackgroundStudio = isBackgroundSync && isDefaultStudioName(incomingStudioName) && !isDefaultStudioName(existingStudioName);
     
     if(!albumSettingsDatabase[folderId]) {
         albumSettingsDatabase[folderId] = { 
@@ -927,7 +952,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (!albumSettingsDatabase[folderId].managementToken) albumSettingsDatabase[folderId].managementToken = createManagementToken();
         if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
-        if (maxSelections !== undefined) albumSettingsDatabase[folderId].maxSelections = nextLimit;
+        if (maxSelections !== undefined && !preserveBackgroundLimit) albumSettingsDatabase[folderId].maxSelections = nextLimit;
         if (publicSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
         if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
@@ -945,14 +970,13 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (paymentBalance !== undefined) albumSettingsDatabase[folderId].paymentBalance = Number(paymentBalance) || 0;
         if (paymentPayer !== undefined) albumSettingsDatabase[folderId].paymentPayer = paymentPayer;
         if (paymentNote !== undefined) albumSettingsDatabase[folderId].paymentNote = String(paymentNote || '');
-        if (studioName !== undefined) albumSettingsDatabase[folderId].studioName = String(studioName || 'Finder').trim().toUpperCase();
+        if (studioName !== undefined && !preserveBackgroundStudio) albumSettingsDatabase[folderId].studioName = incomingStudioName;
         if (studioLogo !== undefined) albumSettingsDatabase[folderId].studioLogo = studioLogo;
         if (accentColor !== undefined) albumSettingsDatabase[folderId].accentColor = accentColor;
     }
     // Khi admin thay đổi hạn mức, khách cần được mở lại album để bổ sung
     // lựa chọn. Dữ liệu likedImagesDatabase vẫn giữ nguyên, chỉ bỏ trạng thái
     // đã chốt; vì vậy các ảnh cũ không bị mất và server nhận được ảnh mới.
-    const isBackgroundSync = req.get('x-finder-background-sync') === '1';
     // Explicit admin edits (including older desktop builds that do not send
     // reopenSelection) reopen the album. Startup/background sync must not.
     if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) {

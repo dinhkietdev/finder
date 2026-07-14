@@ -375,10 +375,9 @@ function syncDataToServer() {
     try {
         const history = getAlbumHistory();
         history.forEach(album => {
-            const payload = JSON.stringify({ 
+            const payloadData = {
                 isEnabled: album.watermarkToggle !== false, 
                 text: album.watermarkText || "FINDERPICTURE STUDIO", 
-                maxSelections: album.maxSelections || 0,
                 publicSlug: album.publicSlug,
                 clientName: album.clientName || album.name,
                 originalFolderId: album.originalFolderId || null,
@@ -387,10 +386,23 @@ function syncDataToServer() {
                 gallerySections: Array.isArray(album.gallerySections) ? album.gallerySections : [],
                 expiresDays: Number(album.expiresDays) || 60,
                 expiresAt: album.expiresAt || null,
-                studioName: album.studioName && album.studioName !== 'Finder Studio' ? album.studioName : 'Finder',
                 studioLogo: album.studioLogo || '',
                 accentColor: album.accentColor || '#7c8cff'
-            });
+            };
+            // Do not turn an unknown/legacy local value into an instruction to
+            // erase a limit that is already stored on the server. Explicit
+            // limit edits use update-album-settings and still send zero when
+            // the user intentionally chooses “unlimited”.
+            if (album.maxSelections !== undefined && album.maxSelections !== null && String(album.maxSelections).trim() !== '' && Number(album.maxSelections) > 0) {
+                payloadData.maxSelections = Number(album.maxSelections);
+            }
+            // Only sync a custom brand. The API preserves an existing custom
+            // brand when a legacy Desktop record has no brand configured.
+            const configuredStudio = String(album.studioName || '').trim();
+            if (configuredStudio && !/^(finder|finder studio)$/i.test(configuredStudio)) {
+                payloadData.studioName = configuredStudio.toUpperCase();
+            }
+            const payload = JSON.stringify(payloadData);
             const req = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${album.id}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'X-Finder-Background-Sync': '1', ...serverAuthHeaders(), ...albumManagementHeaders(album.id) } });
             req.write(payload); req.end();
         });

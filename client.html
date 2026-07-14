@@ -1548,7 +1548,9 @@
                 state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
                 state.publicSlug = data.settings?.publicSlug || state.publicSlug;
                 const configuredStudio = String(data.settings?.studioName || '').trim();
-                state.studioName = configuredStudio && configuredStudio.toLowerCase() !== 'finder studio' ? configuredStudio : 'Finder';
+                state.studioName = configuredStudio && !/^(finder|finder studio)$/i.test(configuredStudio)
+                    ? configuredStudio.toUpperCase()
+                    : 'FINDER';
                 state.displayName = String(data.settings?.displayName || state.studioName || 'Finder').trim() || 'Finder';
 
                 const likedList = data.liked_list || {};
