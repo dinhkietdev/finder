@@ -354,10 +354,59 @@ function canonicalPublicSlug(value = '') {
     return slugifyAlbumName(value);
 }
 
+async function findStudioHistoryBySlug(requested) {
+    if (!firebaseDb) return null;
+    try {
+        const snapshot = await firebaseDb.ref('studioAlbumHistory').once('value');
+        const studios = snapshot.val() || {};
+        for (const albums of Object.values(studios)) {
+            for (const album of Object.values(albums || {})) {
+                const candidate = album?.publicSlug || String(album?.link || '').match(/\/a\/([^/?#]+)/)?.[1];
+                if (candidate && canonicalPublicSlug(candidate) === requested) return album;
+            }
+        }
+    } catch (error) {
+        console.warn('Không đọc được lịch sử studio để resolve slug:', error.message);
+    }
+    return null;
+}
+
 app.get('/api/album-by-slug/:slug', async (req, res) => {
     await loadPersistentState();
     const requested = canonicalPublicSlug(req.params.slug);
-    const match = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
+    let match = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
+    if (!match) {
+        const history = await findStudioHistoryBySlug(requested);
+        const folderId = String(history?.id || history?.folderId || '');
+        if (history && folderId) {
+            // Some older desktop builds wrote the local studio history even
+            // when the settings request was rejected by an existing token.
+            // Rehydrate the minimum public settings so that the already sent
+            // client link remains usable instead of returning a false 404.
+            const restored = {
+                isEnabled: history.watermarkToggle !== false,
+                text: history.watermarkText || 'FINDERPICTURE STUDIO',
+                maxSelections: Number(history.maxSelections) || 0,
+                publicSlug: requested,
+                clientName: history.clientName || history.name || 'Album khách hàng',
+                displayName: history.displayName || 'Finder',
+                originalFolderId: history.originalFolderId || null,
+                studioName: String(history.studioName || 'Finder').trim().toUpperCase(),
+                studioLogo: history.studioLogo || '',
+                accentColor: history.accentColor || '#7c8cff',
+                galleryType: history.galleryType,
+                partyGallery: history.partyGallery,
+                gallerySections: history.gallerySections,
+                checkFolderId: history.checkFolderId || null,
+                checkVersion: Number(history.checkVersion) || 0,
+                checkReady: Boolean(history.checkReady),
+                workflowStatus: history.workflowStatus || 'selection_open'
+            };
+            albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...restored };
+            try { await persistState(folderId); } catch (error) { console.warn('Không thể khôi phục settings album từ lịch sử:', error.message); }
+            match = [folderId, albumSettingsDatabase[folderId]];
+        }
+    }
     if (!match) return res.status(404).json({ success: false, error: 'Không tìm thấy album với đường dẫn này.' });
     const settings = { ...match[1], publicSlug: requested };
     res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(settings) });

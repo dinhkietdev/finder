@@ -1180,12 +1180,20 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
         });
-        const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders() } };
+        const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders(), ...albumManagementHeaders(googleDriveFolderId) } };
         let settingsResult = {};
-        await new Promise((resolve) => {
+        await new Promise((resolve, reject) => {
             let body = '';
-            const wmReq = https.request(wmOptions, (res) => { res.on('data', chunk => body += chunk); res.on('end', () => { try { settingsResult = JSON.parse(body || '{}'); } catch (_) {} resolve(); }); });
-            wmReq.on('error', resolve); wmReq.write(wmPayload); wmReq.end();
+            const wmReq = https.request(wmOptions, (res) => {
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                    try { settingsResult = JSON.parse(body || '{}'); }
+                    catch (_) { return reject(new Error(`Không thể lưu cấu hình album (HTTP ${res.statusCode}).`)); }
+                    if (res.statusCode >= 400 || !settingsResult.success) return reject(new Error(settingsResult.error || `Không thể lưu cấu hình album (HTTP ${res.statusCode}).`));
+                    resolve();
+                });
+            });
+            wmReq.on('error', reject); wmReq.write(wmPayload); wmReq.end();
         });
 
         const publicLink = `https://${ONLINE_DOMAIN}/a/${publicSlug}`;
