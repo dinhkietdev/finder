@@ -325,10 +325,11 @@
             <div class="header-tools">
                 <div class="share-actions"><button id="copyShareBtn" type="button">🔗 Sao chép link</button><button id="showQrBtn" type="button">▦ QR chia sẻ</button></div>
                 <div class="album-status-pill" id="albumStatusPill">● Đang mở lựa chọn</div>
-                <div class="stats">
-                    <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại"><strong id="photoIndexLabel">0/0</strong><span>Ảnh hiện tại</span></button>
-                    <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn"><strong id="selectedCountLabel">0</strong><span>Đã chọn</span></button>
-                </div>
+            <div class="stats">
+                        <button type="button" class="stat-chip" id="jumpToCurrent" title="Đi tới ảnh hiện tại"><strong id="photoIndexLabel">0/0</strong><span>Ảnh hiện tại</span></button>
+                        <button type="button" class="stat-chip" id="jumpToSelected" title="Đi tới ảnh đã chọn"><strong id="selectedCountLabel">0</strong><span>Đã chọn</span></button>
+                        <div class="stat-chip selection-capacity" id="selectionCapacityStat" title="Tổng số ảnh khách có thể chọn"><strong id="selectionCapacityLabel">0</strong><span>Có thể chọn</span></div>
+                    </div>
             </div>
         </div>
 
@@ -476,6 +477,8 @@
             photoName: document.getElementById('photoName'),
             photoIndexLabel: document.getElementById('photoIndexLabel'),
             selectedCountLabel: document.getElementById('selectedCountLabel'),
+            selectionCapacityStat: document.getElementById('selectionCapacityStat'),
+            selectionCapacityLabel: document.getElementById('selectionCapacityLabel'),
             photoStatusBadge: document.getElementById('photoStatusBadge'),
             swipeHint: document.getElementById('swipeHint'),
             noteInput: document.getElementById('noteInput'),
@@ -811,6 +814,10 @@
                 elements.photoName.textContent = 'Không có ảnh nào';
                 elements.photoIndexLabel.textContent = '0/0';
                 elements.selectedCountLabel.textContent = '0';
+                elements.selectionCapacityLabel.textContent = state.maxSelections > 0
+                    ? Math.min(state.maxSelections, state.originalImages.length)
+                    : state.originalImages.length;
+                elements.selectionCapacityStat.style.display = state.viewMode === 'check' || state.galleryType === 'party' ? 'none' : '';
                 elements.photoStatusBadge.textContent = 'Trống';
                 elements.selectionList.innerHTML = '<div class="empty-state">Không có ảnh nào để hiển thị.</div>';
                 elements.thumbStrip.innerHTML = '';
@@ -842,6 +849,13 @@
             elements.selectedCountLabel.textContent = state.maxSelections > 0
                 ? `${currentSelectedCount}/${state.maxSelections}`
                 : currentSelectedCount;
+            // Hiển thị rõ hạn mức lựa chọn ngay trên trang khách. Khi album
+            // không giới hạn, mọi ảnh gốc đều có thể được chọn.
+            const selectableTotal = state.maxSelections > 0
+                ? Math.min(state.maxSelections, state.originalImages.length)
+                : state.originalImages.length;
+            elements.selectionCapacityLabel.textContent = selectableTotal;
+            elements.selectionCapacityStat.style.display = isCheckView || isPartyGallery ? 'none' : '';
             elements.photoStatusBadge.textContent = isCheckView ? 'Ảnh chỉnh sửa' : (current.selected ? 'Đã chọn' : 'Chưa chọn');
             elements.photoStatusBadge.style.background = current.selected ? 'rgba(34,197,94,0.18)' : 'rgba(59,130,246,0.18)';
             elements.photoStatusBadge.style.color = current.selected ? '#bbf7d0' : '#bfdbfe';

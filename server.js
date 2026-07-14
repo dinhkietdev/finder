@@ -195,10 +195,23 @@ function stripUndefined(value) {
 async function persistAlbumSettings(folderId) {
     if (!firebaseDb) return;
     const key = `finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`;
-    await firebaseDb.ref(key).update({
-        settings: stripUndefined(albumSettingsDatabase[folderId] || null),
-        updatedAt: new Date().toISOString()
-    });
+    const settings = albumSettingsDatabase[folderId] || null;
+    const updates = {
+        [`${key}/settings`]: stripUndefined(settings),
+        [`${key}/updatedAt`]: new Date().toISOString()
+    };
+    if (settings?.publicSlug) {
+        const publicSlug = canonicalPublicSlug(settings.publicSlug);
+        updates[`finderPictureSlugIndex/${firebaseAlbumKey(publicSlug)}`] = stripUndefined({
+            folderId: String(folderId),
+            publicSlug,
+            driveFolderId: settings.originalFolderId || null,
+            galleryType: settings.galleryType || (settings.partyGallery ? 'party' : 'selection'),
+            settings: { ...settings, managementToken: undefined },
+            updatedAt: new Date().toISOString()
+        });
+    }
+    await firebaseDb.ref().update(updates);
 }
 
 async function loadPersistentState() {
@@ -271,9 +284,26 @@ async function persistState(changedFolderId = null, options = {}) {
         const updates = { 'finderPictureStateMeta/bannedAlbums': bannedAlbums };
         if (changedFolderId) {
             const key = `finderPictureStateByAlbum/${firebaseAlbumKey(changedFolderId)}`;
+            const settings = albumSettingsDatabase[changedFolderId] || null;
             updates[key] = options.deletePartition ? null : buildAlbumPartition(changedFolderId);
+            // Keep a small, durable public-link index. The album settings are
+            // partitioned by the internal id, while clients enter the stable
+            // slug; indexing both prevents a valid Gallery/PSC link becoming
+            // a false 404 after a serverless instance is recycled.
+            if (!options.deletePartition && settings?.publicSlug) {
+                const publicSlug = canonicalPublicSlug(settings.publicSlug);
+                updates[`finderPictureSlugIndex/${firebaseAlbumKey(publicSlug)}`] = stripUndefined({
+                    folderId: String(changedFolderId),
+                    publicSlug,
+                    driveFolderId: settings.originalFolderId || null,
+                    galleryType: settings.galleryType || (settings.partyGallery ? 'party' : 'selection'),
+                    settings: { ...settings, managementToken: undefined },
+                    updatedAt: new Date().toISOString()
+                });
+            }
         } else if (options.clearAll) {
             updates.finderPictureStateByAlbum = null;
+            updates.finderPictureSlugIndex = null;
         }
         await firebaseDb.ref().update(updates);
     }
@@ -508,6 +538,49 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
             albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...restored };
             try { await persistState(folderId); } catch (error) { console.warn('Không thể khôi phục settings album từ lịch sử:', error.message); }
             match = [folderId, albumSettingsDatabase[folderId]];
+        }
+    }
+    // Resolve from the durable slug index before attempting the legacy Drive
+    // scan. This is especially important for Gallery/PSC albums whose internal
+    // id is a party UUID, not the customer Drive folder id encoded in the URL.
+    if (!match && firebaseDb) {
+        try {
+            const indexSnapshot = await firebaseDb.ref(`finderPictureSlugIndex/${firebaseAlbumKey(requested)}`).once('value');
+            const indexed = indexSnapshot.val();
+            const indexedFolderId = String(indexed?.folderId || '');
+            if (indexedFolderId) {
+                const indexedSettings = indexed.settings || {};
+                albumSettingsDatabase[indexedFolderId] = {
+                    ...(albumSettingsDatabase[indexedFolderId] || {}),
+                    ...indexedSettings,
+                    publicSlug: requested,
+                    originalFolderId: indexedSettings.originalFolderId || indexed.driveFolderId || null,
+                    galleryType: indexedSettings.galleryType || indexed.galleryType || 'selection',
+                    partyGallery: indexedSettings.partyGallery || indexed.galleryType === 'party'
+                };
+                match = [indexedFolderId, albumSettingsDatabase[indexedFolderId]];
+            }
+        } catch (error) {
+            console.warn('Không thể đọc chỉ mục public slug:', error.message);
+        }
+    }
+    // Older records may predate the slug index. Read the partition directly as
+    // a one-time compatibility lookup so a valid stored publicSlug is enough
+    // to recover the album even when the in-memory cache was cold.
+    if (!match && firebaseDb) {
+        try {
+            const partitions = (await firebaseDb.ref('finderPictureStateByAlbum').once('value')).val() || {};
+            for (const partition of Object.values(partitions)) {
+                const candidate = partition?.settings?.publicSlug;
+                if (!candidate || canonicalPublicSlug(candidate) !== requested) continue;
+                const folderId = String(partition.folderId || '');
+                if (!folderId) continue;
+                albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...partition.settings };
+                match = [folderId, albumSettingsDatabase[folderId]];
+                break;
+            }
+        } catch (error) {
+            console.warn('Không thể đọc partition để khôi phục public slug:', error.message);
         }
     }
     if (!match) {
