@@ -553,8 +553,31 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
     res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(settings) });
 });
 
-app.get('/a/:slug', (req, res) => {
-    res.sendFile(path.join(__dirname, 'client.html'));
+function escapeHtmlAttribute(value = '') {
+    return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+}
+
+// Social crawlers (Messenger/Zalo) do not execute the client JavaScript. Add
+// server-rendered Open Graph values so a shared album is presented as Finder
+// instead of an opaque URL. The gallery page itself remains unchanged.
+app.get('/a/:slug', async (req, res) => {
+    try {
+        await loadPersistentState();
+        const requested = canonicalPublicSlug(req.params.slug);
+        const match = Object.values(albumSettingsDatabase).find(settings => canonicalPublicSlug(settings?.publicSlug) === requested);
+        const studio = String(match?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+        const title = `${studio} · Gallery ảnh`;
+        const description = match?.galleryType === 'party' ? 'Gallery ảnh tiệc / PSC trên Finder' : 'Gallery ảnh khách hàng trên Finder';
+        const source = fs.readFileSync(path.join(__dirname, 'client.html'), 'utf8');
+        const canonicalUrl = `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${encodeURIComponent(req.params.slug)}`;
+        const meta = `<meta property="og:title" content="${escapeHtmlAttribute(title)}"><meta property="og:description" content="${escapeHtmlAttribute(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="FINDER"><meta property="og:url" content="${escapeHtmlAttribute(canonicalUrl)}"><meta name="twitter:card" content="summary">`;
+        const withoutStaticSocialMeta = source
+            .replace(/\s*<meta property="og:[^"]+" content="[^"]*">/g, '')
+            .replace(/\s*<meta name="twitter:card" content="[^"]*">/g, '');
+        return res.type('html').send(withoutStaticSocialMeta.replace('</head>', `${meta}</head>`));
+    } catch (_) {
+        return res.sendFile(path.join(__dirname, 'client.html'));
+    }
 });
 
 app.post('/api/auth/drive-exchange', async (req, res) => {
@@ -740,14 +763,19 @@ app.post('/api/party-gallery', async (req, res) => {
     const driveFolderId = typeof req.body?.driveFolderId === 'string' ? req.body.driveFolderId.trim() : (typeof req.body?.folderId === 'string' ? req.body.folderId.trim() : '');
     const folderId = typeof req.body?.galleryId === 'string' && req.body.galleryId.trim() ? req.body.galleryId.trim() : driveFolderId;
     if (!driveFolderId) return res.status(400).json({ success: false, error: 'Thiếu thư mục Google Drive.' });
-    const galleryName = String(req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const folderName = String(req.body?.folderName || req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const galleryName = String(req.body?.galleryName || folderName).trim() || folderName;
+    const sectionDriveFolderId = String(req.body?.sectionDriveFolderId || driveFolderId).trim();
     const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
-    const requestedSlug = slugifyAlbumName(req.body?.publicSlug || galleryName);
-    const publicSlug = canonicalPublicSlug(`${requestedSlug}-${String(folderId).slice(-6)}`);
+    const requestedSlug = slugifyAlbumName(req.body?.publicSlug || folderName);
+    // The slug contains the customer Drive root suffix, so it can be recovered
+    // from Drive even if the local/Firebase mapping is unavailable.
+    const driveTail = String(driveFolderId).slice(-6);
+    const publicSlug = canonicalPublicSlug(requestedSlug.endsWith(`-${canonicalPublicSlug(driveTail)}`) ? requestedSlug : `${requestedSlug}-${driveTail}`);
     const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
-    const sectionName = String(req.body?.sectionName || 'Ngày 1').trim() || 'Ngày 1';
+    const sectionName = String(req.body?.sectionName || 'Vu quy').trim() || 'Vu quy';
     const managementToken = createManagementToken();
     albumSettingsDatabase[folderId] = {
         ...(albumSettingsDatabase[folderId] || {}),
@@ -755,10 +783,11 @@ app.post('/api/party-gallery', async (req, res) => {
         text: 'ẢNH TIỆC',
         maxSelections: 0,
         publicSlug,
-        clientName: galleryName,
+        clientName: folderName,
         displayName: galleryName,
         originalFolderId: driveFolderId,
-        gallerySections: [{ id: driveFolderId, name: sectionName, driveFolderId, createdAt }],
+        driveFolderName: folderName,
+        gallerySections: [{ id: sectionDriveFolderId, name: sectionName, driveFolderId: sectionDriveFolderId, createdAt }],
         studioName,
         galleryType: 'party',
         partyGallery: true,

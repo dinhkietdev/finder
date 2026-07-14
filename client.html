@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>FinderPicture - Bàn giao & Chọn Ảnh</title>
+    <meta property="og:title" content="FINDER">
+    <meta property="og:description" content="Gallery ảnh Finder">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="FINDER">
+    <meta name="twitter:card" content="summary">
     <style>
         :root {
             --bg-dark: #060816;
@@ -373,6 +378,10 @@
         <div class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
             <div id="gallerySectionsNav" class="gallery-sections-nav" style="display:none;"></div>
+            <div id="partyGalleryActions" style="display:none;gap:8px;flex-wrap:wrap;margin:0 0 12px;">
+                <button id="partySelectAllBtn" type="button" class="gallery-section-btn">Chọn tất cả phần này</button>
+                <button id="partyDownloadBtn" type="button" class="gallery-section-btn">⬇️ Tải ảnh đã chọn (0)</button>
+            </div>
             <div class="thumb-strip" id="thumbStrip"></div>
         </div>
     </div>
@@ -502,6 +511,7 @@
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
             ,gallerySectionsNav: document.getElementById('gallerySectionsNav')
+            ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
@@ -510,6 +520,7 @@
             qrModal: document.getElementById('qrModal'), qrImage: document.getElementById('qrImage'), qrLinkText: document.getElementById('qrLinkText'), closeQrBtn: document.getElementById('closeQrBtn')
             ,selectionReopenModal: document.getElementById('selectionReopenModal'), reopenOriginalBtn: document.getElementById('reopenOriginalBtn'), reopenCheckBtn: document.getElementById('reopenCheckBtn')
         };
+        const partySelected = new Set();
         let zoomScale = 1;
         let robotMessageTimeout = null;
         let robotMessageInterval = null;
@@ -583,6 +594,18 @@
             link.remove();
         }
 
+        function downloadPartySelection() {
+            if (state.galleryType !== 'party') return;
+            const selected = state.originalImages.filter(image => partySelected.has(image.fullName));
+            if (!selected.length) { setMessage('Hãy tích chọn ít nhất một ảnh để tải xuống.', 'error'); return; }
+            selected.forEach((image, index) => window.setTimeout(() => {
+                const link = document.createElement('a');
+                link.href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(image.id)}`;
+                link.target = '_blank'; link.rel = 'noopener'; link.download = image.fullName || 'finder-gallery-image';
+                document.body.appendChild(link); link.click(); link.remove();
+            }, index * 180));
+        }
+
         function renderBranding() {
             // The public gallery header is the studio identity in every
             // workflow state (selection, CHECK, confirmation and FINAL).
@@ -643,11 +666,13 @@
             if (!nav) return;
             const sections = state.galleryType === 'party' ? state.gallerySections : [];
             nav.innerHTML = '';
-            if (sections.length < 2) { nav.style.display = 'none'; return; }
+            if (sections.length < 2) { nav.style.display = 'none'; if (elements.partyGalleryActions) elements.partyGalleryActions.style.display = state.galleryType === 'party' ? 'flex' : 'none'; return; }
             nav.style.display = 'flex';
-            const all = document.createElement('button'); all.type = 'button'; all.className = 'gallery-section-btn'; all.textContent = `Tất cả (${state.originalImages.length})`;
-            all.classList.toggle('active', state.activeGallerySection === 'all'); all.onclick = () => setGallerySection('all'); nav.appendChild(all);
-            sections.forEach(section => {
+            const orderedSections = sections.slice().sort((a, b) => {
+                const rank = value => { const name = String(value?.name || '').toLowerCase(); return name.includes('vu quy') ? 0 : name.includes('thành hôn') || name.includes('thanh hon') ? 1 : 2; };
+                return rank(a) - rank(b) || naturalImageCompare({ fullName: a?.name }, { fullName: b?.name });
+            });
+            orderedSections.forEach(section => {
                 const button = document.createElement('button'); button.type = 'button'; button.className = 'gallery-section-btn';
                 const count = state.originalImages.filter(image => String(image.gallerySectionId || '') === String(section.id || section.driveFolderId)).length;
                 button.textContent = `${section.name || 'Ngày'} (${count})`;
@@ -655,6 +680,9 @@
                 button.onclick = () => setGallerySection(section.id || section.driveFolderId);
                 nav.appendChild(button);
             });
+            const all = document.createElement('button'); all.type = 'button'; all.className = 'gallery-section-btn'; all.textContent = `Tất cả (${state.originalImages.length})`;
+            all.classList.toggle('active', state.activeGallerySection === 'all'); all.onclick = () => setGallerySection('all'); nav.appendChild(all);
+            if (elements.partyGalleryActions) elements.partyGalleryActions.style.display = state.galleryType === 'party' ? 'flex' : 'none';
         }
 
         const visualSignatureCache = new WeakMap();
@@ -855,6 +883,7 @@
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.lightboxDownloadBtn.style.display = isCheckView || isPartyGallery ? '' : 'none';
+            if (elements.partyGalleryActions) elements.partyGalleryActions.style.display = isPartyGallery ? 'flex' : 'none';
             if (isFinalView) {
                 elements.compareToggleBtn.style.display = 'none';
                 elements.compareStage.classList.remove('visible');
@@ -874,6 +903,14 @@
                 thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
                 thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
                 thumbBtn.appendChild(thumbImg);
+                if (isPartyGallery) {
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox'; checkbox.checked = partySelected.has(img.fullName); checkbox.title = 'Chọn ảnh tải xuống';
+                    checkbox.style.cssText = 'position:absolute;top:7px;left:7px;width:19px;height:19px;z-index:2;accent-color:#22c55e;';
+                    checkbox.addEventListener('click', event => event.stopPropagation());
+                    checkbox.addEventListener('change', () => { checkbox.checked ? partySelected.add(img.fullName) : partySelected.delete(img.fullName); updatePartyActions(); });
+                    thumbBtn.appendChild(checkbox);
+                }
                 thumbBtn.onclick = () => {
                     state.currentIndex = index;
                     render();
@@ -886,6 +923,15 @@
             renderSelectionList();
             preloadNearbyImages();
             renderAiPicks();
+            updatePartyActions();
+        }
+
+        function updatePartyActions() {
+            if (!elements.partyGalleryActions || state.galleryType !== 'party') return;
+            const visible = state.images.filter(image => image);
+            const allSelected = visible.length > 0 && visible.every(image => partySelected.has(image.fullName));
+            if (elements.partySelectAllBtn) elements.partySelectAllBtn.textContent = allSelected ? 'Bỏ chọn phần này' : 'Chọn tất cả phần này';
+            if (elements.partyDownloadBtn) elements.partyDownloadBtn.textContent = `⬇️ Tải ảnh đã chọn (${partySelected.size})`;
         }
 
         function preloadNearbyImages() {
@@ -1564,6 +1610,15 @@
         }
         elements.jumpToCurrent.addEventListener('click', () => jumpToSection(elements.currentImageSection));
         elements.jumpToSelected.addEventListener('click', () => jumpToSection(elements.selectedImagesSection));
+        elements.partySelectAllBtn?.addEventListener('click', () => {
+            if (state.galleryType !== 'party') return;
+            const visible = state.images || [];
+            const allSelected = visible.length > 0 && visible.every(image => partySelected.has(image.fullName));
+            visible.forEach(image => allSelected ? partySelected.delete(image.fullName) : partySelected.add(image.fullName));
+            render();
+            updatePartyActions();
+        });
+        elements.partyDownloadBtn?.addEventListener('click', downloadPartySelection);
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && elements.imageLightbox.classList.contains('open')) return closeLightbox();
             if (event.key === 'ArrowRight') nextImage();

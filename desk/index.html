@@ -345,7 +345,7 @@
 
         <div class="box" id="party-upload-section" style="display:none;">
             <h3>Upload gallery tiệc / PSC</h3>
-            <p style="margin-top:-4px;color:#64748b;font-size:13px;max-width:720px;">Upload trực tiếp vào thư mục Google Drive đã chọn. Luồng này không chạy AI culling và không tạo thư mục con.</p>
+            <p style="margin-top:-4px;color:#64748b;font-size:13px;max-width:720px;">Finder sẽ tạo một thư mục khách hàng trên Drive, sau đó tự tách từng ngày/đợt ảnh thành thư mục con. Luồng này không chạy AI culling.</p>
             <div class="input-group">
                 <label>Thư mục ảnh tiệc trên máy:</label>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
@@ -354,8 +354,9 @@
                 </div>
                 <p id="party-folder-status" style="margin:7px 0 0;color:#64748b;font-size:12px;">Chỉ nhận JPG, PNG và WebP.</p>
             </div>
-            <div class="input-group"><label>Tên gallery hiển thị cho khách:</label><input id="party-gallery-name" type="text" placeholder="Ví dụ: Tiệc cưới Ngọc & Kiet"></div>
-            <div class="input-group"><label>Tên ngày/đợt ảnh:</label><input id="party-section-name" type="text" placeholder="Ví dụ: Vu quy hoặc Thành hôn" value="Ngày 1"></div>
+            <div class="input-group"><label>Tên thư mục trên Drive (Tên khách hàng):</label><input id="party-folder-name" type="text" placeholder="Ví dụ: NGOC-MINH-2026"></div>
+            <div class="input-group"><label>Tên gallery hiển thị cho khách <span style="font-weight:400;color:#64748b;">(tùy chọn)</span>:</label><input id="party-gallery-name" type="text" placeholder="Mặc định dùng tên thư mục khách hàng"></div>
+            <div class="input-group"><label>Tên ngày/đợt ảnh:</label><input id="party-section-name" type="text" placeholder="Ví dụ: Vu quy hoặc Thành hôn" value="Vu quy"></div>
             <div class="input-group"><label>Thư mục đích trên Google Drive:</label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="party-drive-parent-path" type="text" value="Drive của tôi (thư mục gốc)" readonly style="flex:1;min-width:260px;"><button id="btn-party-choose-drive-folder" type="button" class="btn-outline">☁️ Chọn thư mục Drive</button></div></div>
             <div class="input-group"><label>Thời hạn hiển thị thông báo (ngày):</label><input id="party-expires-days" type="number" min="1" max="3650" value="60" placeholder="Mặc định 60 ngày"></div>
             <button id="btn-party-upload" type="button" class="btn-success" disabled>🎉 Upload gallery tiệc</button>
@@ -663,8 +664,11 @@
             switchView('view-upload', document.querySelector('.nav-item[data-view="view-upload"]'));
             const history = await ipcRenderer.invoke('get-history');
             const album = history.find(item => item.id === folderId);
+            document.getElementById('party-folder-name').value = album?.driveFolderName || album?.clientName || album?.name || '';
             document.getElementById('party-gallery-name').value = album?.name || '';
-            document.getElementById('party-section-name').value = '';
+            document.getElementById('party-section-name').value = Array.isArray(album?.gallerySections) && album.gallerySections.length === 1
+                ? 'Thành hôn'
+                : `Đợt ${(album?.gallerySections?.length || 1) + 1}`;
             document.getElementById('party-upload-status').textContent = 'Đang thêm ngày/đợt ảnh vào gallery hiện tại. Link khách sẽ giữ nguyên.';
             document.getElementById('btn-party-upload').textContent = '➕ Upload thêm ngày/đợt ảnh';
         }
@@ -1080,8 +1084,9 @@
             if (!partyFolderPath || !partyImageFiles.length) return;
             const button = document.getElementById('btn-party-upload');
             const status = document.getElementById('party-upload-status');
-            const galleryName = document.getElementById('party-gallery-name').value.trim() || partyFolderPath.split(/[\\/]/).filter(Boolean).pop() || 'Ảnh tiệc';
-            const sectionName = document.getElementById('party-section-name').value.trim() || 'Ngày 1';
+            const folderName = document.getElementById('party-folder-name').value.trim() || partyFolderPath.split(/[\\/]/).filter(Boolean).pop() || 'Ảnh tiệc';
+            const galleryName = document.getElementById('party-gallery-name').value.trim() || folderName;
+            const sectionName = document.getElementById('party-section-name').value.trim() || (partyAppendAlbumId ? 'Thành hôn' : 'Vu quy');
             const expiresDays = Math.min(3650, Math.max(1, Number(document.getElementById('party-expires-days').value) || 60));
             button.disabled = true;
             partyUploadInProgress = true;
@@ -1089,7 +1094,7 @@
             try {
                 const result = partyAppendAlbumId
                     ? await ipcRenderer.invoke('append-party-gallery', { folderId: partyAppendAlbumId, folderPath: partyFolderPath, imageFiles: partyImageFiles, sectionName })
-                    : await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, galleryName, sectionName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
+                    : await ipcRenderer.invoke('upload-party-gallery', { folderPath: partyFolderPath, imageFiles: partyImageFiles, folderName, galleryName, sectionName, expiresDays, driveParentId: selectedDriveFolder.id, driveParentPath: selectedDriveFolder.path });
                 if (!result.success) throw new Error(result.error || 'Upload gallery tiệc thất bại.');
                 status.innerHTML = `🎉 <b style="color:#059669;">Đã upload ${result.completed} ảnh.</b> <button type="button" class="btn-outline" id="party-copy-link">Sao chép link gallery</button>`;
                 const copy = document.getElementById('party-copy-link');
