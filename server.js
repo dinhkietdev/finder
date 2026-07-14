@@ -1150,7 +1150,11 @@ app.get('/api/album/:folderId', async (req, res) => {
         }
 
         const requestedSlug = canonicalPublicSlug(req.query?.slug || '');
-        if (requestedSlug && !albumSettingsDatabase[folderId]) {
+        const configuredRootForRecovery = normalizeDriveFolderId(currentSettings.originalFolderId, '');
+        const hasUsableGalleryStructure = currentSettings.galleryType === 'party'
+            ? Boolean(configuredRootForRecovery && Array.isArray(currentSettings.gallerySections) && currentSettings.gallerySections.some(section => normalizeDriveFolderId(section?.driveFolderId || section?.id, '')))
+            : Boolean(configuredRootForRecovery);
+        if (requestedSlug && (canonicalPublicSlug(currentSettings.publicSlug) !== requestedSlug || !hasUsableGalleryStructure)) {
             albumStage = 'drive-structure-recovery';
             const recovered = await recoverDriveStructureBySlug(drive, requestedSlug);
             if (recovered) {
