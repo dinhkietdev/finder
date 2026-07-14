@@ -683,7 +683,10 @@ function getServiceAccountAuth() {
 async function getAlbumDriveAuth(folderId) {
     if (!firebaseDb) return null;
     const snapshot = await firebaseDb.ref(`driveTokens/${folderId}`).once('value');
-    const tokens = snapshot.val();
+    const stored = snapshot.val();
+    const metadata = stored?._finderMeta || {};
+    const tokens = stored ? { ...stored } : null;
+    if (tokens) delete tokens._finderMeta;
     if (!tokens?.refresh_token && !tokens?.access_token) return null;
     const credentials = process.env.GOOGLE_OAUTH_CREDENTIALS;
     if (!credentials) return null;
@@ -694,6 +697,7 @@ async function getAlbumDriveAuth(folderId) {
         const refreshed = await client.getAccessToken();
         if (refreshed?.token) { const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000 }; await firebaseDb.ref(`driveTokens/${folderId}`).set(next); client.setCredentials(next); }
     }
+    if (metadata.driveFolderId) client.finderDriveFolderId = metadata.driveFolderId;
     return client;
 }
 
@@ -713,6 +717,48 @@ async function readDriveBranding(drive, folderId) {
     } catch (_) {
         return null;
     }
+}
+
+// Recover the Drive root for older Gallery/PSC records whose Firebase
+// settings were not written. The public slug contains the customer folder
+// name and the last six characters of that Drive id.
+async function recoverDriveStructureBySlug(drive, slug) {
+    if (!drive || !slug) return null;
+    const raw = String(slug).trim();
+    const separator = raw.lastIndexOf('-');
+    const tail = separator >= 0 ? canonicalPublicSlug(raw.slice(separator + 1)) : '';
+    const baseName = canonicalPublicSlug(separator >= 0 ? raw.slice(0, separator) : raw);
+    if (!tail || tail.length < 4 || !baseName) return null;
+    const response = await drive.files.list({
+        q: "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+        fields: 'files(id,name)', pageSize: 1000,
+        corpora: 'allDrives', includeItemsFromAllDrives: true, supportsAllDrives: true
+    });
+    const root = (response.data.files || []).find(folder =>
+        canonicalPublicSlug(folder.name || '') === baseName
+        && canonicalPublicSlug(String(folder.id || '').slice(-6)) === tail
+    );
+    if (!root?.id) return null;
+    const childResponse = await drive.files.list({
+        q: `'${root.id}' in parents and trashed = false`,
+        fields: 'files(id,name,mimeType)', pageSize: 1000,
+        supportsAllDrives: true, includeItemsFromAllDrives: true
+    });
+    const children = childResponse.data.files || [];
+    const original = children.find(item => item.mimeType === 'application/vnd.google-apps.folder' && String(item.name || '').toUpperCase() === 'ORIGINAL');
+    if (original?.id) {
+        return { folderId: root.id, folderName: root.name || 'Album khách hàng', galleryType: 'selection', originalFolderId: original.id, gallerySections: [] };
+    }
+    const sections = children
+        .filter(item => item.mimeType === 'application/vnd.google-apps.folder' && item.id)
+        .map(item => ({ id: item.id, name: item.name || 'Ngày', driveFolderId: item.id }));
+    return {
+        folderId: root.id,
+        folderName: root.name || 'Gallery tiệc',
+        galleryType: 'party',
+        originalFolderId: root.id,
+        gallerySections: sections.length ? sections : [{ id: root.id, name: 'Tất cả', driveFolderId: root.id }]
+    };
 }
 
 async function saveDriveBranding(folderId, studioName) {
@@ -757,7 +803,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
     if (!requireAlbumManagement(req, res, folderId)) return;
-    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote } = req.body;
+    const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote, galleryType, partyGallery, gallerySections, expiresDays, expiresAt } = req.body;
     const hasLimitUpdate = maxSelections !== undefined;
     const previousLimit = albumSettingsDatabase[folderId]?.maxSelections;
     const nextLimit = hasLimitUpdate ? (parseInt(maxSelections) || 0) : previousLimit;
@@ -771,6 +817,11 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
             clientName: clientName || text || 'Album khách hàng',
             displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId: originalFolderId || null,
+            galleryType: galleryType || (partyGallery ? 'party' : 'selection'),
+            partyGallery: Boolean(partyGallery || galleryType === 'party'),
+            gallerySections: Array.isArray(gallerySections) ? gallerySections : [],
+            expiresDays: Number(expiresDays) || 60,
+            expiresAt: expiresAt || null,
             paymentStatus: paymentStatus || 'unpaid', paymentAmount: Number(paymentAmount) || 0, paymentTotal: Number(paymentTotal ?? paymentAmount) || 0, paymentDeposit: Number(paymentDeposit) || 0, paymentPaid: Number(paymentPaid) || 0, paymentBalance: Number(paymentBalance) || 0, paymentPayer: paymentPayer || 'client', paymentNote: String(paymentNote || ''),
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
@@ -786,6 +837,11 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
         if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
         if (originalFolderId !== undefined) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
+        if (galleryType !== undefined) albumSettingsDatabase[folderId].galleryType = galleryType;
+        if (partyGallery !== undefined) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
+        if (Array.isArray(gallerySections)) albumSettingsDatabase[folderId].gallerySections = gallerySections;
+        if (expiresDays !== undefined) albumSettingsDatabase[folderId].expiresDays = Number(expiresDays) || 60;
+        if (expiresAt !== undefined) albumSettingsDatabase[folderId].expiresAt = expiresAt || null;
         if (paymentStatus !== undefined) albumSettingsDatabase[folderId].paymentStatus = paymentStatus;
         if (paymentAmount !== undefined) albumSettingsDatabase[folderId].paymentAmount = Number(paymentAmount) || 0;
         if (paymentTotal !== undefined) albumSettingsDatabase[folderId].paymentTotal = Number(paymentTotal) || 0;
@@ -1067,12 +1123,12 @@ app.get('/api/album/:folderId', async (req, res) => {
         let currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
         // expiresAt hiện chỉ là mốc tham khảo để hiển thị cho khách hàng.
         // Không khóa link, không xóa album và không xóa file Google Drive tự động.
-        const isFinalized = !!finalizedDatabase[folderId];
+        let isFinalized = !!finalizedDatabase[folderId];
         // Gallery/PSC never reads a CHECK folder. Older records may still
         // contain a stale `checkFolderId` (including `.`), which otherwise
         // makes Drive return `File not found: .` and blocks the whole gallery.
         const safeCheckFolderId = normalizeDriveFolderId(currentSettings.checkFolderId, '');
-        const hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
+        let hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
@@ -1091,6 +1147,33 @@ app.get('/api/album/:folderId', async (req, res) => {
             if (!oauth2Client) return res.status(503).json({ error: 'Thiếu cấu hình Google Drive trên Server.' });
             oauth2Client.setCredentials(tokens);
             drive = google.drive({ version: 'v3', auth: oauth2Client });
+        }
+
+        const requestedSlug = canonicalPublicSlug(req.query?.slug || '');
+        if (requestedSlug && !albumSettingsDatabase[folderId]) {
+            albumStage = 'drive-structure-recovery';
+            const recovered = await recoverDriveStructureBySlug(drive, requestedSlug);
+            if (recovered) {
+                currentSettings = {
+                    ...currentSettings,
+                    publicSlug: requestedSlug,
+                    clientName: recovered.folderName,
+                    displayName: recovered.folderName,
+                    originalFolderId: recovered.originalFolderId,
+                    galleryType: recovered.galleryType,
+                    partyGallery: recovered.galleryType === 'party',
+                    gallerySections: recovered.gallerySections,
+                    checkReady: false,
+                    checkFolderId: null,
+                    workflowStatus: recovered.galleryType === 'party' ? 'completed' : 'selection_open'
+                };
+                albumSettingsDatabase[folderId] = currentSettings;
+                if (recovered.galleryType === 'party') {
+                    finalizedDatabase[folderId] = true;
+                    isFinalized = true;
+                }
+                await persistState(folderId);
+            }
         }
 
         albumStage = 'drive-branding';
@@ -1159,6 +1242,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         const sections = configuredSections.length
             ? configuredSections
             : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
+        hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
         albumStage = 'list-gallery-images';
         const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
         const files = sectionFiles.flat();
@@ -1177,7 +1261,10 @@ app.get('/api/album/:folderId', async (req, res) => {
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
     if (!requireAlbumManagement(req, res, req.params.folderId)) return;
     if (!firebaseDb || !req.body?.tokens) return res.status(503).json({ error: 'Firebase chưa cấu hình hoặc thiếu token.' });
-    await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set(req.body.tokens);
+    const metadata = req.body?.driveFolderId || req.body?.galleryType || req.body?.gallerySections
+        ? { driveFolderId: normalizeDriveFolderId(req.body.driveFolderId, ''), galleryType: req.body.galleryType || 'selection', gallerySections: Array.isArray(req.body.gallerySections) ? req.body.gallerySections : [] }
+        : null;
+    await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set({ ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) });
     res.json({ success: true });
 });
 

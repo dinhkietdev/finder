@@ -1407,7 +1407,8 @@
             if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
 
             try {
-                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}`, { cache: 'no-store' }, 3);
+                const albumQuery = albumSlug ? `?slug=${encodeURIComponent(albumSlug)}` : '';
+                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}${albumQuery}`, { cache: 'no-store' }, 3);
                 const data = await readApiJson(response, 'Không thể tải album');
 
                 state.galleryType = data.settings?.galleryType || (data.settings?.partyGallery ? 'party' : 'selection');

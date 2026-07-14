@@ -382,6 +382,11 @@ function syncDataToServer() {
                 publicSlug: album.publicSlug,
                 clientName: album.clientName || album.name,
                 originalFolderId: album.originalFolderId || null,
+                galleryType: album.galleryType || 'selection',
+                partyGallery: album.galleryType === 'party',
+                gallerySections: Array.isArray(album.gallerySections) ? album.gallerySections : [],
+                expiresDays: Number(album.expiresDays) || 60,
+                expiresAt: album.expiresAt || null,
                 studioName: album.studioName && album.studioName !== 'Finder Studio' ? album.studioName : 'Finder',
                 studioLogo: album.studioLogo || '',
                 accentColor: album.accentColor || '#7c8cff'
@@ -1034,7 +1039,10 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: customerFolderId, sectionDriveFolderId: sectionFolderId, folderName, galleryName, sectionName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
         const tokenPath = LOCAL_TOKEN_PATH;
         if (fs.existsSync(tokenPath)) {
-            try { const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8')); await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens }, metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {}); } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
+            try {
+                const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+                await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens, driveFolderId: customerFolderId, galleryType: 'party', gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }] }, metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {});
+            } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
         }
         const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
         saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: folderName, driveFolderName: folderName, studioName, galleryType: 'party', managementToken: metadata.managementToken || null, originalFolderId: customerFolderId, gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId: customerFolderId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: `${payload.driveParentPath || 'Drive của tôi'} / ${folderName}${sectionName ? ` / ${sectionName}` : ''}` });
