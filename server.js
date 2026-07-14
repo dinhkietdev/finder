@@ -10,7 +10,46 @@ const { getDatabase } = require('firebase-admin/database');
 
 const app = express();
 app.disable('x-powered-by');
-const driveOAuthStates = new Map();
+const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
+    || process.env.NODE_ENV === 'production';
+const REQUEST_ID_HEADER = 'x-request-id';
+
+function createRequestId() {
+    return crypto.randomUUID();
+}
+
+function logStructuredEvent(event, data = {}) {
+    const record = { at: new Date().toISOString(), event, ...data };
+    // Never include Authorization headers, refresh tokens, or request bodies.
+    console.log(JSON.stringify(record));
+    const endpoint = String(process.env.FINDER_LOG_ENDPOINT || '').trim();
+    if (!endpoint) return;
+    fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(process.env.FINDER_LOG_TOKEN ? { authorization: `Bearer ${process.env.FINDER_LOG_TOKEN}` } : {}) },
+        body: JSON.stringify(record),
+        signal: AbortSignal.timeout(1500)
+    }).catch(() => {});
+}
+
+app.use((req, res, next) => {
+    const incoming = String(req.get(REQUEST_ID_HEADER) || '').trim();
+    const requestId = /^[A-Za-z0-9._:-]{8,120}$/.test(incoming) ? incoming : createRequestId();
+    req.requestId = requestId;
+    res.set(REQUEST_ID_HEADER, requestId);
+    const startedAt = Date.now();
+    res.on('finish', () => {
+        if (!req.path.startsWith('/api/')) return;
+        const status = res.statusCode;
+        const entry = { requestId, method: req.method, path: req.path, status, durationMs: Date.now() - startedAt, ip: req.ip || 'unknown' };
+        logStructuredEvent(status >= 500 ? 'api.error' : status >= 400 ? 'api.client_error' : 'api.request', entry);
+        if (status >= 500 || status === 429) {
+            const alertEndpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
+            if (alertEndpoint) fetch(alertEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...entry, alert: true }), signal: AbortSignal.timeout(1500) }).catch(() => {});
+        }
+    });
+    next();
+});
 const allowedOrigins = String(process.env.FINDER_ALLOWED_ORIGINS || 'https://finder-swart-pi.vercel.app,http://localhost:5000,http://localhost:3000')
     .split(',').map(origin => origin.trim()).filter(Boolean);
 app.use(cors({ origin(origin, callback) {
@@ -20,19 +59,54 @@ app.use(cors({ origin(origin, callback) {
 } }));
 app.use(bodyParser.json({ limit: process.env.FINDER_JSON_LIMIT || '256kb' }));
 
-// Lightweight per-instance rate limiting. Vercel instances are ephemeral, so
-// this is not a replacement for an edge/WAF limit, but it prevents accidental
-// request storms and repeated OAuth attempts on a single instance.
+// Upstash is used when configured so the limit is shared across Vercel
+// instances. The in-memory bucket remains a short-lived safety net for local
+// development and for an unavailable Redis endpoint.
 const requestBuckets = new Map();
-app.use('/api/', (req, res, next) => {
+async function checkDistributedRateLimit(key, limit) {
+    if (isSupabaseConfigured()) {
+        try {
+            const data = await supabaseRequest('rpc/consume_rate_limit', {
+                method: 'POST',
+                body: JSON.stringify({ p_bucket: `finder:rate:${key}`, p_limit: limit, p_window_seconds: 60 })
+            });
+            if (data && typeof data === 'object' && typeof data.allowed === 'boolean') return data;
+        } catch (error) {
+            logStructuredEvent('rate_limit.storage_error', { message: error.message });
+        }
+    }
+    const redisUrl = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
+    const redisToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
+    if (!redisUrl || !redisToken) return null;
+    try {
+        const response = await fetch(`${redisUrl}/pipeline`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${redisToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify([['INCR', key], ['EXPIRE', key, 60]]),
+            signal: AbortSignal.timeout(400)
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        const count = Number(data?.[0]?.result);
+        return Number.isFinite(count) ? { allowed: count <= limit, count } : null;
+    } catch (_) { return null; }
+}
+
+app.use('/api/', async (req, res, next) => {
     const key = `${req.ip || 'unknown'}:${req.path.startsWith('/auth/') ? 'auth' : 'api'}`;
     const now = Date.now();
+    const limit = key.endsWith(':auth') ? 30 : 240;
+    const distributed = await checkDistributedRateLimit(`finder:rate:${key}`, limit);
+    if (distributed && !distributed.allowed) return res.status(429).json({ success: false, requestId: req.requestId, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
     const bucket = requestBuckets.get(key) || { start: now, count: 0 };
     if (now - bucket.start > 60_000) { bucket.start = now; bucket.count = 0; }
     bucket.count += 1;
     requestBuckets.set(key, bucket);
-    if (bucket.count > (key.endsWith(':auth') ? 30 : 240)) return res.status(429).json({ success: false, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
+    if (bucket.count > limit) return res.status(429).json({ success: false, requestId: req.requestId, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
     if (requestBuckets.size > 5000) for (const [entry, value] of requestBuckets) if (now - value.start > 120_000) requestBuckets.delete(entry);
+    if (REQUIRE_SUPABASE_STORAGE && !isSupabaseConfigured() && req.path !== '/health' && !req.path.startsWith('/auth/')) {
+        return res.status(503).json({ success: false, code: 'SUPABASE_REQUIRED', requestId: req.requestId, error: 'Máy chủ production chưa cấu hình Supabase.' });
+    }
     next();
 });
 
@@ -40,7 +114,8 @@ app.use('/api/', (req, res, next) => {
 // the public static file handler even if a local deployment directory contains
 // one by mistake.
 app.use((req, res, next) => {
-    if (/^\/(?:oauth-credentials|session-token|database)\.json$/.test(req.path)) {
+    if (/^\/(?:oauth-credentials|session-token|database)\.json$/i.test(req.path)
+        || /^\/desk\/(?:oauth-credentials|oauth-desktop-credentials|firabase|firebase-auth-config|session-token|database)\.(?:json|js)$/i.test(req.path)) {
         return res.status(404).json({ error: 'Not found' });
     }
     next();
@@ -54,6 +129,18 @@ app.use((req, res, next) => {
 
 app.get('/', (req, res) => {
     res.send('🚀 Hệ thống Server Cloud của FinderPicture Studio đang hoạt động ổn định!');
+});
+
+app.get('/api/health', (req, res) => {
+    const ready = isSupabaseConfigured() && Boolean(getOAuthStateSecret()) && Boolean(getTokenEncryptionKey());
+    res.status(ready ? 200 : 503).json({
+        success: ready,
+        requestId: req.requestId,
+        storage: isSupabaseConfigured() ? 'supabase' : (REQUIRE_SUPABASE_STORAGE ? 'missing' : 'legacy-local'),
+        oauthStateSecret: Boolean(getOAuthStateSecret()),
+        tokenEncryptionKey: Boolean(getTokenEncryptionKey()),
+        distributedRateLimit: Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+    });
 });
 
 const TOKEN_PATH = path.join(__dirname, 'session-token.json');
@@ -77,6 +164,129 @@ let supabaseLoadPromise = null;
 
 function isSupabaseConfigured() {
     return Boolean(supabaseUrl && supabaseServiceKey);
+}
+
+// OAuth callbacks may land on a different serverless instance than the one
+// that created the authorization URL. Keep the state stateless: it is a
+// short-lived, signed envelope rather than an in-memory Map entry. Set an
+// explicit FINDER_OAUTH_STATE_SECRET in Vercel; the credential fallbacks keep
+// existing local deployments working while they are being migrated.
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+function getOAuthStateSecret() {
+    const configured = String(process.env.FINDER_OAUTH_STATE_SECRET || '').trim();
+    const fallback = configured
+        || supabaseServiceKey
+        || String(process.env.GOOGLE_OAUTH_CREDENTIALS || '')
+        || String(process.env.FIREBASE_SERVICE_ACCOUNT || '');
+    if (!fallback) return null;
+    return crypto.createHash('sha256').update(fallback, 'utf8').digest();
+}
+
+function createOAuthState() {
+    const secret = getOAuthStateSecret();
+    if (!secret) throw new Error('OAUTH_STATE_SECRET_NOT_CONFIGURED');
+    const payload = {
+        v: 1,
+        purpose: 'drive',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + OAUTH_STATE_TTL_MS,
+        nonce: crypto.randomBytes(24).toString('base64url')
+    };
+    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const signature = crypto.createHmac('sha256', secret).update(encoded).digest('base64url');
+    return `${encoded}.${signature}`;
+}
+
+function verifyOAuthState(state) {
+    if (typeof state !== 'string') return false;
+    const parts = state.split('.');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+    const secret = getOAuthStateSecret();
+    if (!secret) return false;
+    const expected = crypto.createHmac('sha256', secret).update(parts[0]).digest();
+    let received;
+    try { received = Buffer.from(parts[1], 'base64url'); } catch (_) { return false; }
+    if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) return false;
+    try {
+        const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+        const now = Date.now();
+        return payload?.v === 1
+            && payload?.purpose === 'drive'
+            && Number.isFinite(payload.issuedAt)
+            && Number.isFinite(payload.expiresAt)
+            && payload.expiresAt > now
+            && payload.issuedAt <= now + 60_000
+            && payload.expiresAt - payload.issuedAt <= OAUTH_STATE_TTL_MS;
+    } catch (_) { return false; }
+}
+
+// OAuth refresh tokens are encrypted before they enter Supabase/Firebase. A
+// dedicated 32-byte hex key can be supplied through FINDER_TOKEN_ENCRYPTION_KEY;
+// server-only Supabase/OAuth credentials are compatibility fallbacks so an
+// existing deployment does not suddenly lose the ability to refresh Drive.
+function getTokenEncryptionKey() {
+    const configured = String(process.env.FINDER_TOKEN_ENCRYPTION_KEY || '').trim();
+    const source = configured
+        || supabaseServiceKey
+        || String(process.env.GOOGLE_OAUTH_CREDENTIALS || '')
+        || String(process.env.FIREBASE_SERVICE_ACCOUNT || '');
+    if (!source) return null;
+    if (/^[0-9a-f]{64}$/i.test(source)) return Buffer.from(source, 'hex');
+    return crypto.createHash('sha256').update(source, 'utf8').digest();
+}
+
+function isEncryptedDriveTokenRecord(value) {
+    return Boolean(value && typeof value === 'object' && value._finderEncrypted === true && value.version === 1);
+}
+
+function encryptDriveTokenRecord(value) {
+    const key = getTokenEncryptionKey();
+    if (!key) throw new Error('TOKEN_ENCRYPTION_NOT_CONFIGURED');
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+    return {
+        _finderEncrypted: true,
+        version: 1,
+        algorithm: 'aes-256-gcm',
+        iv: iv.toString('base64url'),
+        tag: cipher.getAuthTag().toString('base64url'),
+        ciphertext: ciphertext.toString('base64url')
+    };
+}
+
+function decryptDriveTokenRecord(value) {
+    if (!value) return null;
+    // Read legacy plaintext once so it can be transparently re-encrypted on
+    // the next server write. New writes never use this branch.
+    if (!isEncryptedDriveTokenRecord(value)) return { value, legacy: true };
+    const key = getTokenEncryptionKey();
+    if (!key) throw new Error('TOKEN_ENCRYPTION_NOT_CONFIGURED');
+    try {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(value.iv, 'base64url'));
+        decipher.setAuthTag(Buffer.from(value.tag, 'base64url'));
+        const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(value.ciphertext, 'base64url')),
+            decipher.final()
+        ]).toString('utf8');
+        return { value: JSON.parse(plaintext), legacy: false };
+    } catch (_) {
+        throw new Error('TOKEN_DECRYPT_FAILED');
+    }
+}
+
+async function persistDriveTokenRecord(folderId, value) {
+    const encrypted = encryptDriveTokenRecord(value);
+    if (isSupabaseConfigured()) {
+        await supabaseRequest('drive_tokens', {
+            method: 'POST',
+            headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+            body: JSON.stringify({ album_id: String(folderId), token: encrypted, updated_at: new Date().toISOString() })
+        });
+        return;
+    }
+    if (firebaseDb) await firebaseDb.ref(`driveTokens/${folderId}`).set(encrypted);
+    else throw new Error('TOKEN_STORAGE_NOT_CONFIGURED');
 }
 
 async function supabaseRequest(resource, options = {}) {
@@ -132,18 +342,42 @@ function createManagementToken() {
 
 function hasAlbumManagementAccess(req, folderId) {
     const settings = albumSettingsDatabase[folderId];
-    // Legacy albums created before management tokens remain compatible. New
-    // albums receive a token on their first desktop settings write.
-    if (!settings?.managementToken) return true;
-    const supplied = String(req.get('x-finder-management-token') || req.body?.managementToken || '');
-    return supplied.length === settings.managementToken.length
-        && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(settings.managementToken));
+    // Management routes must fail closed. Previously, legacy albums without a
+    // token were treated as authenticated, which allowed anyone who knew an
+    // album id to change its settings, status, payment data, or Drive token.
+    // New albums receive a token when they are created/first configured; old
+    // records must be explicitly bootstrapped before they can be modified.
+    const expected = typeof settings?.managementToken === 'string'
+        ? settings.managementToken.trim()
+        : '';
+    if (!expected) return false;
+
+    const supplied = String(req.get('x-finder-management-token') || req.body?.managementToken || '').trim();
+    if (!supplied || supplied.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
 }
 
 function requireAlbumManagement(req, res, folderId) {
     if (hasAlbumManagementAccess(req, folderId)) return true;
-    res.status(403).json({ success: false, error: 'Không có quyền quản lý album này.' });
+    const settings = albumSettingsDatabase[folderId];
+    const code = settings?.managementToken ? 'INVALID_MANAGEMENT_TOKEN' : 'MANAGEMENT_TOKEN_REQUIRED';
+    const error = settings?.managementToken
+        ? 'Management token không hợp lệ.'
+        : 'Album chưa có management token. Hãy mở album bằng desktop để khởi tạo khóa quản lý.';
+    res.status(403).json({ success: false, code, error });
     return false;
+}
+
+// Legacy records may not have a token yet. Allow the owner of the connected
+// Google Drive account to bootstrap that token once; after it is generated,
+// all subsequent calls use the per-album token path above.
+async function requireAlbumManagementOrDriveBootstrap(req, res, folderId) {
+    if (albumSettingsDatabase[folderId]?.managementToken) return requireAlbumManagement(req, res, folderId);
+    const verified = await requireDriveCreationProof(req, res);
+    if (verified && albumSettingsDatabase[folderId]) {
+        albumSettingsDatabase[folderId].managementToken = createManagementToken();
+    }
+    return verified;
 }
 
 function isDefaultStudioName(value) {
@@ -225,21 +459,23 @@ async function ensureFirebaseMigration() {
     return firebaseMigrationPromise;
 }
 
-// Vercel không giữ được file giữa các lần chạy. Khi cấu hình Firebase, toàn bộ
-// trạng thái album sẽ được lưu bền vững; máy local vẫn có thể dùng database.json.
-try {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
-        ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-        : null;
-    const databaseURL = process.env.FIREBASE_DATABASE_URL;
-    if (serviceAccount && databaseURL) {
-        const firebaseApp = getApps().length
-            ? getApps()[0]
-            : initializeApp({ credential: cert(serviceAccount), databaseURL });
-        firebaseDb = getDatabase(firebaseApp);
+// Vercel không giữ được file giữa các lần chạy. Firebase/database.json chỉ là
+// compatibility cho local; production luôn buộc phải dùng Supabase.
+if (!REQUIRE_SUPABASE_STORAGE) {
+    try {
+        const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT
+            ? JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
+            : null;
+        const databaseURL = process.env.FIREBASE_DATABASE_URL;
+        if (serviceAccount && databaseURL) {
+            const firebaseApp = getApps().length
+                ? getApps()[0]
+                : initializeApp({ credential: cert(serviceAccount), databaseURL });
+            firebaseDb = getDatabase(firebaseApp);
+        }
+    } catch (error) {
+        console.error('Không thể khởi tạo Firebase:', error.message);
     }
-} catch (error) {
-    console.error('Không thể khởi tạo Firebase:', error.message);
 }
 
 supabaseUrl = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
@@ -251,7 +487,7 @@ supabaseServiceKey = String(
 ).trim();
 if (isSupabaseConfigured()) console.log('Supabase primary storage đã được cấu hình.');
 
-if (fs.existsSync(DB_PATH)) {
+if (!REQUIRE_SUPABASE_STORAGE && fs.existsSync(DB_PATH)) {
     try { 
         const db = JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); 
         likedImagesDatabase = db.likedImagesDatabase || {};
@@ -263,6 +499,7 @@ if (fs.existsSync(DB_PATH)) {
 }
 
 function saveDB() {
+    if (REQUIRE_SUPABASE_STORAGE) return;
     try { fs.writeFileSync(DB_PATH, JSON.stringify({ likedImagesDatabase, checkNotesDatabase, albumSettingsDatabase, bannedAlbums, finalizedDatabase }), 'utf8'); } catch (e) {}
 }
 
@@ -280,6 +517,7 @@ async function persistAlbumSettings(folderId) {
         await persistSupabaseAlbum(folderId);
         return;
     }
+    if (REQUIRE_SUPABASE_STORAGE) throw new Error('SUPABASE_REQUIRED');
     if (!firebaseDb) return;
     const key = `finderPictureStateByAlbum/${firebaseAlbumKey(folderId)}`;
     const settings = albumSettingsDatabase[folderId] || null;
@@ -335,6 +573,7 @@ async function loadPersistentState() {
         })().finally(() => { supabaseLoadPromise = null; });
         return supabaseLoadPromise;
     }
+    if (REQUIRE_SUPABASE_STORAGE) throw new Error('SUPABASE_REQUIRED');
     if (!firebaseDb) return;
     await ensureFirebaseMigration();
     // Read album partitions first. The old aggregate node is retained as a
@@ -417,6 +656,7 @@ async function persistState(changedFolderId = null, options = {}) {
         }
         return;
     }
+    if (REQUIRE_SUPABASE_STORAGE) throw new Error('SUPABASE_REQUIRED');
     if (firebaseDb) {
         // Keep the aggregate node immutable as a migration/rollback snapshot.
         // All normal writes go to one album partition, preventing unrelated
@@ -475,13 +715,17 @@ app.post('/api/auth/drive-authorize', (req, res) => {
     try {
         const client = getOAuth2Client();
         if (!client) return res.status(503).json({ error: 'Server chưa cấu hình GOOGLE_OAUTH_CREDENTIALS.' });
-        const state = require('crypto').randomBytes(24).toString('hex');
-        driveOAuthStates.set(state, Date.now() + 10 * 60 * 1000);
+        const state = createOAuthState();
         // Do not force Google's consent page on every recovery attempt. The
         // first grant still returns an offline refresh token; later attempts
         // only select the account unless Google genuinely needs consent again.
         res.json({ success: true, clientId: client._clientId, authUrl: client.generateAuthUrl({ access_type:'offline', prompt:'select_account', state, scope:['https://www.googleapis.com/auth/drive'] }) });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        if (error.message === 'OAUTH_STATE_SECRET_NOT_CONFIGURED') {
+            return res.status(503).json({ code: error.message, error: 'Server chưa cấu hình FINDER_OAUTH_STATE_SECRET.' });
+        }
+        res.status(500).json({ error: error.message });
+    }
 });
 app.get('/api/auth/drive-client', (req, res) => {
     try { const client = getOAuth2Client(); if (!client) return res.status(503).json({ error:'Server chưa cấu hình OAuth.' }); res.json({ success:true, clientId:client._clientId }); }
@@ -833,8 +1077,7 @@ app.get('/a/:slug', async (req, res) => {
 
 app.post('/api/auth/drive-exchange', async (req, res) => {
     const { code, state } = req.body || {};
-    if (!code || !driveOAuthStates.has(state) || driveOAuthStates.get(state) < Date.now()) return res.status(400).json({ error: 'Yêu cầu OAuth không hợp lệ hoặc đã hết hạn.' });
-    driveOAuthStates.delete(state);
+    if (!code || !verifyOAuthState(state)) return res.status(400).json({ code: 'OAUTH_STATE_INVALID', error: 'Yêu cầu OAuth không hợp lệ hoặc đã hết hạn.' });
     try { const client = getOAuth2Client(); const result = await client.getToken(code); res.json({ success:true, tokens:result.tokens, clientId:client._clientId }); }
     catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -853,19 +1096,26 @@ function getServiceAccountAuth() {
 }
 
 async function getAlbumDriveAuth(folderId) {
-    let stored = null;
+    let storedRecord = null;
     if (isSupabaseConfigured()) {
         const rows = await supabaseRequest(`drive_tokens?album_id=eq.${encodeURIComponent(folderId)}&select=token`);
-        stored = rows?.[0]?.token || null;
+        storedRecord = rows?.[0]?.token || null;
     } else {
         if (!firebaseDb) return null;
         const snapshot = await firebaseDb.ref(`driveTokens/${folderId}`).once('value');
-        stored = snapshot.val();
+        storedRecord = snapshot.val();
     }
+    const decrypted = decryptDriveTokenRecord(storedRecord);
+    const stored = decrypted?.value || null;
     const metadata = stored?._finderMeta || {};
     const tokens = stored ? { ...stored } : null;
     if (tokens) delete tokens._finderMeta;
     if (!tokens?.refresh_token && !tokens?.access_token) return null;
+    // Migrate legacy plaintext records after a successful decrypt. The raw
+    // token exists only in memory during this request and is never logged.
+    if (decrypted?.legacy) {
+        try { await persistDriveTokenRecord(folderId, stored); } catch (error) { console.warn('Không thể mã hóa token Drive cũ:', error.message); }
+    }
     const credentials = process.env.GOOGLE_OAUTH_CREDENTIALS;
     if (!credentials) return null;
     const cfg = JSON.parse(credentials); const c = cfg.web || cfg.installed;
@@ -878,15 +1128,7 @@ async function getAlbumDriveAuth(folderId) {
             // without it a cold Vercel instance falls back to the internal
             // `party-...` id and the gallery can no longer be resolved.
             const next = { ...tokens, access_token: refreshed.token, expiry_date: Date.now() + 3600000, ...(Object.keys(metadata).length ? { _finderMeta: metadata } : {}) };
-            if (isSupabaseConfigured()) {
-                await supabaseRequest('drive_tokens', {
-                    method: 'POST',
-                    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-                    body: JSON.stringify({ album_id: String(folderId), token: next, updated_at: new Date().toISOString() })
-                });
-            } else {
-                await firebaseDb.ref(`driveTokens/${folderId}`).set(next);
-            }
+            await persistDriveTokenRecord(folderId, next);
             client.setCredentials(next);
         }
     }
@@ -1038,10 +1280,50 @@ function getStoredTokens() {
     return null;
 }
 
+// A new album has no management token yet. For that one creation request only,
+// require proof that the caller controls the Google Drive account used for the
+// upload. The short-lived access token is verified with Drive and is never
+// persisted or returned to the client.
+async function requireDriveCreationProof(req, res) {
+    const accessToken = String(req.get('x-finder-drive-access-token') || '').trim();
+    if (!accessToken) {
+        res.status(403).json({ success: false, code: 'DRIVE_AUTH_REQUIRED', error: 'Cần kết nối Google Drive trước khi tạo album.' });
+        return false;
+    }
+    const client = getOAuth2Client();
+    if (!client) {
+        res.status(503).json({ success: false, code: 'DRIVE_OAUTH_NOT_CONFIGURED', error: 'Máy chủ chưa cấu hình Google Drive OAuth.' });
+        return false;
+    }
+    try {
+        client.setCredentials({ access_token: accessToken });
+        await google.drive({ version: 'v3', auth: client }).about.get({ fields: 'user(emailAddress)' });
+        return true;
+    } catch (error) {
+        console.warn('Drive creation proof failed:', JSON.stringify({ code: error.code, message: error.message }));
+        res.status(403).json({ success: false, code: 'DRIVE_AUTH_INVALID', error: 'Phiên Google Drive không hợp lệ hoặc đã hết hạn.' });
+        return false;
+    }
+}
+
 app.post('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    if (!requireAlbumManagement(req, res, folderId)) return;
+    // The first desktop upload creates the album settings and receives the
+    // freshly generated management token in the response. Once settings
+    // exist, the same endpoint is an update and must be authenticated.
+    const hasExistingSettings = Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId);
+    if (hasExistingSettings) {
+        if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
+    } else if (!req.body?.originalFolderId || !req.body?.publicSlug) {
+        return res.status(403).json({
+            success: false,
+            code: 'MANAGEMENT_TOKEN_REQUIRED',
+            error: 'Album chưa được khởi tạo. Cần thông tin thư mục Drive và slug để tạo album.'
+        });
+    } else if (!(await requireDriveCreationProof(req, res))) {
+        return;
+    }
     const { isEnabled, text, maxSelections, reopenSelection, publicSlug, clientName, displayName, originalFolderId, studioName, studioLogo, accentColor, paymentStatus, paymentAmount, paymentTotal, paymentDeposit, paymentPaid, paymentBalance, paymentPayer, paymentNote, galleryType, partyGallery, gallerySections, expiresDays, expiresAt } = req.body;
     const isBackgroundSync = req.get('x-finder-background-sync') === '1';
     const hasLimitUpdate = maxSelections !== undefined;
@@ -1146,7 +1428,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
 app.post('/api/album/:folderId/manager-history', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    if (!requireAlbumManagement(req, res, folderId)) return;
+    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     if (!isSupabaseConfigured()) return res.status(503).json({ success: false, error: 'Supabase chưa được cấu hình.' });
     const incoming = req.body?.history;
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
@@ -1189,6 +1471,14 @@ app.post('/api/party-gallery', async (req, res) => {
     );
     const folderId = typeof req.body?.galleryId === 'string' && req.body.galleryId.trim() ? req.body.galleryId.trim() : driveFolderId;
     if (!driveFolderId) return res.status(400).json({ success: false, error: 'Thiếu thư mục Google Drive.' });
+    // Creating a new gallery does not have a token yet. Reusing an existing
+    // gallery id, however, is an update and must not overwrite its settings
+    // without the album's management token.
+    if (Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId)) {
+        if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
+    } else if (!(await requireDriveCreationProof(req, res))) {
+        return;
+    }
     const folderName = String(req.body?.folderName || req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
     const galleryName = String(req.body?.galleryName || folderName).trim() || folderName;
     const sectionDriveFolderId = normalizeDriveFolderId(req.body?.sectionDriveFolderId, driveFolderId) || driveFolderId;
@@ -1239,7 +1529,7 @@ app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
     const folderId = req.params.folderId;
     const settings = albumSettingsDatabase[folderId];
     if (!settings || settings.galleryType !== 'party') return res.status(404).json({ success: false, error: 'Không tìm thấy gallery tiệc.' });
-    if (!requireAlbumManagement(req, res, folderId)) return;
+    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     const driveFolderId = normalizeDriveFolderId(req.body?.driveFolderId, '');
     const name = String(req.body?.sectionName || '').trim();
     if (!driveFolderId || !name) return res.status(400).json({ success: false, error: 'Thiếu tên ngày hoặc thư mục Drive.' });
@@ -1263,7 +1553,7 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
 app.post('/api/album/:folderId/check', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
-    if (!requireAlbumManagement(req, res, folderId)) return;
+    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     const checkFolderId = typeof req.body?.checkFolderId === 'string' ? req.body.checkFolderId.trim() : '';
     if (!checkFolderId) return res.status(400).json({ success: false, error: 'Thiếu mã thư mục CHECK.' });
     const current = albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 };
@@ -1500,19 +1790,23 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         // Drive tạo thumbnail theo kích thước được yêu cầu, nên trang khách chỉ tải
         // đúng số pixel cần hiển thị thay vì tải ảnh gốc dung lượng lớn.
-        const driveThumbnail = (fileId, width) => `https://drive.google.com/thumbnail?id=${encodeURIComponent(fileId)}&sz=w${width}`;
+        const driveImage = (fileId, size = 'thumb', download = false) => {
+            const query = new URLSearchParams({ size });
+            if (download) query.set('download', '1');
+            return `/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(fileId)}?${query.toString()}`;
+        };
         const toClientFile = file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
             return {
                 id: file.id,
                 fullName: file.name,
                 shortName: nameWithoutExt,
-                thumbnail: driveThumbnail(file.id, 320),
-                preview: driveThumbnail(file.id, 1440),
-                // Lightbox dùng thumbnail lớn của Drive để cân bằng độ nét và
-                // tốc độ tải. Không tải file gốc dung lượng lớn khi khách mở ảnh.
-                lightbox: driveThumbnail(file.id, 2000),
-                originalUrl: file.webContentLink
+                thumbnail: driveImage(file.id, 'thumb'),
+                preview: driveImage(file.id, 'preview'),
+                // Lightbox vẫn dùng thumbnail lớn của Drive nhưng được proxy
+                // qua server để không cần cấp quyền anyone/reader.
+                lightbox: driveImage(file.id, 'lightbox'),
+                originalUrl: driveImage(file.id, 'original', true)
             };
         };
         const listDriveImages = async parentId => {
@@ -1522,7 +1816,7 @@ app.get('/api/album/:folderId', async (req, res) => {
                 const response = await drive.files.list({
                     q: `'${parentId}' in parents and trashed = false`,
                     includeItemsFromAllDrives: true, supportsAllDrives: true,
-                    fields: 'nextPageToken,files(id, name, webContentLink, thumbnailLink)',
+                    fields: 'nextPageToken,files(id, name, mimeType, parents, webContentLink, thumbnailLink)',
                     pageSize: 1000, pageToken
                 });
                 files.push(...(response.data.files || []));
@@ -1557,23 +1851,78 @@ app.get('/api/album/:folderId', async (req, res) => {
     }
 });
 
+// Serve private Drive images through the album's server-side OAuth session.
+// This replaces public `anyone/reader` permissions while preserving the
+// existing client gallery URLs and thumbnail/preview/lightbox behavior.
+app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
+    const { folderId, fileId } = req.params;
+    const size = String(req.query?.size || 'thumb').toLowerCase();
+    const width = size === 'lightbox' ? 2000 : size === 'preview' ? 1440 : 320;
+    try {
+        await loadPersistentState();
+        const drive = await getAlbumDriveClient(folderId);
+        if (!drive) return res.status(503).json({ success: false, error: 'Album chưa có phiên Google Drive hợp lệ.' });
+        const settings = albumSettingsDatabase[folderId] || {};
+        const allowedParents = new Set([
+            normalizeDriveFolderId(settings.originalFolderId, ''),
+            normalizeDriveFolderId(settings.checkFolderId, ''),
+            normalizeDriveFolderId(folderId, ''),
+            ...(Array.isArray(settings.gallerySections) ? settings.gallerySections.map(section => normalizeDriveFolderId(section?.driveFolderId || section?.id, '')) : [])
+        ].filter(Boolean));
+        const metadata = await drive.files.get({ fileId, fields: 'id,name,mimeType,parents,thumbnailLink', supportsAllDrives: true });
+        const file = metadata.data;
+        if (!file?.id || !/^image\/(jpeg|png|webp|gif)$/i.test(String(file.mimeType || '')) || !file.parents?.some(parent => allowedParents.has(parent))) {
+            return res.status(404).json({ success: false, error: 'Không tìm thấy ảnh trong album.' });
+        }
+
+        const isDownload = String(req.query?.download || '') === '1';
+        // Album links are public by design; cache thumbnails at the Vercel edge
+        // so a large gallery does not re-download the same bytes per visitor.
+        // Original downloads remain private and are never cached.
+        res.set('Cache-Control', isDownload ? 'private, no-store' : 'public, max-age=60, s-maxage=600, stale-while-revalidate=3600');
+        if (isDownload) res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name || 'finder-image')}`);
+
+        // Drive's thumbnail link is much lighter than the original image. It
+        // is fetched with the server-side OAuth bearer token, so the browser
+        // never needs public Drive access.
+        if (!isDownload && file.thumbnailLink) {
+            const oauth = await getAlbumDriveAuth(folderId);
+            const access = oauth ? await oauth.getAccessToken() : null;
+            if (access?.token) {
+                const thumbnailUrl = String(file.thumbnailLink).replace(/=s\d+$/i, `=s${width}`);
+                const thumbnailResponse = await fetch(thumbnailUrl, { headers: { Authorization: `Bearer ${access.token}` } });
+                if (thumbnailResponse.ok) {
+                    res.type(file.mimeType);
+                    return res.send(Buffer.from(await thumbnailResponse.arrayBuffer()));
+                }
+            }
+        }
+
+        const media = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
+        res.set('Content-Type', file.mimeType || media.headers?.['content-type'] || 'application/octet-stream');
+        media.data.on('error', error => { if (!res.headersSent) res.status(502).json({ success: false, error: 'Không thể đọc ảnh từ Google Drive.' }); });
+        media.data.pipe(res);
+    } catch (error) {
+        console.error('Drive image proxy failed:', JSON.stringify({ folderId, fileId, size, code: error.code, message: error.message }));
+        res.status(error.code === 404 ? 404 : 502).json({ success: false, error: 'Không thể tải ảnh từ Google Drive.' });
+    }
+});
+
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
-    if (!requireAlbumManagement(req, res, req.params.folderId)) return;
+    await loadPersistentState();
+    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, req.params.folderId))) return;
     if ((!firebaseDb && !isSupabaseConfigured()) || !req.body?.tokens) return res.status(503).json({ error: 'Chưa cấu hình kho dữ liệu hoặc thiếu token.' });
     const metadata = req.body?.driveFolderId || req.body?.galleryType || req.body?.gallerySections
         ? { driveFolderId: normalizeDriveFolderId(req.body.driveFolderId, ''), galleryType: req.body.galleryType || 'selection', gallerySections: Array.isArray(req.body.gallerySections) ? req.body.gallerySections : [] }
         : null;
     const stored = { ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) };
-    if (isSupabaseConfigured()) {
-        await supabaseRequest('drive_tokens', {
-            method: 'POST',
-            headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-            body: JSON.stringify({ album_id: String(req.params.folderId), token: stored, updated_at: new Date().toISOString() })
-        });
-    } else {
-        await firebaseDb.ref(`driveTokens/${req.params.folderId}`).set(stored);
+    try {
+        await persistDriveTokenRecord(req.params.folderId, stored);
+        res.json({ success: true, encrypted: true });
+    } catch (error) {
+        const code = error.message === 'TOKEN_ENCRYPTION_NOT_CONFIGURED' ? 'TOKEN_ENCRYPTION_NOT_CONFIGURED' : 'DRIVE_TOKEN_STORE_FAILED';
+        res.status(503).json({ success: false, code, error: code === 'TOKEN_ENCRYPTION_NOT_CONFIGURED' ? 'Máy chủ chưa cấu hình khóa mã hóa token Drive.' : 'Không thể lưu phiên Google Drive an toàn.' });
     }
-    res.json({ success: true });
 });
 
 app.post('/api/album/:folderId/toggle-like', async (req, res) => {
@@ -1643,9 +1992,11 @@ app.get('/api/album/:folderId/liked/all', async (req, res) => {
 // Express sẽ chuyển mọi lỗi bất ngờ từ các route bất đồng bộ về đây. Trả JSON
 // giúp trang khách hiển thị được lý do thay vì thông báo chung chung.
 app.use((error, req, res, next) => {
-    console.error('API error:', error);
+    const requestId = req.requestId || createRequestId();
+    logStructuredEvent('api.unhandled_error', { requestId, method: req.method, path: req.path, message: error.message });
     res.status(error.status || 500).json({
         success: false,
+        requestId,
         error: process.env.NODE_ENV === 'production' ? 'Máy chủ không thể xử lý yêu cầu.' : (error.message || 'Máy chủ không thể lưu dữ liệu.')
     });
 });

@@ -354,6 +354,7 @@
                     <div style="font-size:13px; color:#9a3412; margin-bottom:8px;">Lần tải trước bị gián đoạn. Các ảnh đã tải xong sẽ được giữ nguyên.</div>
                     <button type="button" id="btn-resume-upload" class="btn-success">▶ Tiếp tục tải lên</button>
                 </div>
+                <div id="queue-resume-list" style="display:none; margin-top:12px; max-width:600px;"></div>
             </div>
             </div>
 
@@ -1219,6 +1220,7 @@
             document.getElementById('resume-upload-box').style.display = 'block';
             document.getElementById('upload-status').innerHTML = '<span style="color:#b45309;">Có phiên upload chưa hoàn tất. Các file đã có trên Drive sẽ được bỏ qua.</span>';
         }).catch(() => {});
+        refreshUploadQueueUi();
 
         let lastUploadedLink = '';
         function showUploadSuccess(link) {
@@ -1229,6 +1231,30 @@
             linkInput.value = lastUploadedLink;
             modal.classList.add('open');
             document.getElementById('copy-upload-link-btn')?.focus();
+        }
+        async function refreshUploadQueueUi() {
+            const container = document.getElementById('queue-resume-list');
+            if (!container) return;
+            let jobs = [];
+            try { jobs = await ipcRenderer.invoke('get-upload-queue'); } catch (_) { jobs = []; }
+            const resumable = jobs.filter(job => job.type !== 'original');
+            if (!resumable.length) { container.style.display = 'none'; container.innerHTML = ''; return; }
+            container.style.display = 'block';
+            container.innerHTML = `<div style="font-size:13px;color:#9a3412;margin-bottom:8px;">Có ${resumable.length} luồng upload CHECK/gallery chưa hoàn tất.</div>` + resumable.map(job => {
+                const label = job.type === 'check' ? 'CHECK' : job.type === 'party-append' ? 'Gallery bổ sung' : 'Gallery tiệc';
+                const progress = `${job.completedFiles || 0} ảnh`;
+                return `<div style="display:flex;gap:8px;align-items:center;justify-content:space-between;padding:8px;background:#fff7ed;border:1px solid #fdba74;border-radius:8px;margin-top:6px;"><span style="font-size:12px;color:#7c2d12;">${label} · ${progress} · ${escapeHtml(job.error || 'Đã tạm dừng')}</span><button type="button" class="btn-success queue-resume-btn" data-resume-job="${escapeHtml(job.id)}">▶ Tiếp tục</button></div>`;
+            }).join('');
+            container.querySelectorAll('.queue-resume-btn').forEach(button => button.addEventListener('click', async () => {
+                const job = resumable.find(item => item.id === button.dataset.resumeJob);
+                if (!job?.resumeData) return;
+                button.disabled = true;
+                const method = job.type === 'check' ? 'upload-check-to-drive' : job.type === 'party-append' ? 'append-party-gallery' : 'upload-party-gallery';
+                const result = await ipcRenderer.invoke(method, { resumeData: job.resumeData });
+                if (!result?.success) alert(result?.error || 'Không thể tiếp tục upload.');
+                await refreshUploadQueueUi();
+                if (result?.success) { await loadAlbumHistory(); await loadDashboard(); }
+            }));
         }
         const uploadSuccessModal = document.getElementById('upload-success-modal');
         const closeUploadSuccess = document.getElementById('close-upload-success-btn');
@@ -1325,6 +1351,7 @@
             const stats = `${data.completed || 0}/${data.total || 0} thành công · ${data.failed || 0} lỗi${data.rate ? ` · ~${data.rate} ảnh/phút` : ''}${eta ? ` · Còn khoảng ${eta}` : ''}`;
             document.getElementById('upload-status').innerText = `Đang đồng bộ tệp: ${data.currentFile} · ${stats}`;
             if (partyUploadInProgress) document.getElementById('party-upload-status').textContent = `Đang upload: ${data.currentFile} · ${stats}`;
+            refreshUploadQueueUi();
         });
 
         ipcRenderer.on('sync-progress', (event, data) => {

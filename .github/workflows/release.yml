@@ -6,8 +6,48 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: finder-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TAG: v1.0.${{ github.run_number }}
+
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install server dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Syntax and API smoke tests
+        run: npm test
+      - name: Create release tag and draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Finder $TAG"
+            git push origin "$TAG"
+          fi
+          cat > release-notes.md <<'EOF'
+          ## Finder desktop
+
+          macOS: kéo Finder vào Applications. Nếu Gatekeeper cảnh báo app chưa notarize, Control-click → Open.
+          Windows: chạy Finder-Setup-*.exe.
+
+          Bản phát hành có kiểm tra API smoke trước khi đóng gói. Ảnh Drive dùng proxy thumbnail riêng tư; không cấp quyền anyone/reader.
+          EOF
+          gh release create "$TAG" --title "Finder $TAG" --notes-file release-notes.md --draft || true
+
   build-macos:
+    needs: preflight
     runs-on: macos-latest
     defaults:
       run:
@@ -19,7 +59,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: desk/package-lock.json
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Configure Firebase Authentication
         run: |
           node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
@@ -33,49 +73,15 @@ jobs:
           DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
-      - name: Create release tag
-        run: |
-          TAG="v1.0.${{ github.run_number }}"
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Finder $TAG"
-            git push origin "$TAG"
-          fi
-      # Package first, then upload with the GitHub CLI.  electron-builder
-      # uploads the artifact and its blockmap concurrently, which can leave a
-      # release with only the first asset.
       - name: Build macOS installers
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --mac --publish never
-      - name: Create GitHub Release
+      - name: Upload macOS assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v1.0.${{ github.run_number }}
-        run: |
-          cat > release-notes.md <<'EOF'
-          ## Cài đặt macOS
-
-          1. Mở file **Finder-*.dmg** và kéo Finder vào thư mục **Applications**.
-          2. Nếu macOS chặn app, hãy nhấp Control + click vào Finder.app, chọn **Open**, rồi xác nhận **Open**.
-          3. Nếu vẫn hiện thông báo *Finder.app bị hỏng*, mở Terminal và chạy:
-
-          ```bash
-          xattr -cr /Applications/Finder.app
-          ```
-
-          Chỉ thực hiện bước 3 khi bạn tải Finder từ release chính thức này. Bản macOS hiện chưa được Apple notarize.
-          EOF
-          gh release create "$TAG" --title "Finder $TAG" --notes-file release-notes.md || true
-      - name: Upload macOS release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: v1.0.${{ github.run_number }}
         run: gh release upload "$TAG" dist/*.zip dist/*.dmg dist/*.blockmap dist/latest-mac.yml --clobber
 
   build-windows:
-    needs: build-macos
+    needs: preflight
     runs-on: windows-latest
     defaults:
       run:
@@ -87,7 +93,7 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: desk/package-lock.json
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit --no-fund
       - name: Configure Firebase Authentication
         run: |
           node -e "require('fs').writeFileSync('firebase-auth-config.js', 'module.exports = { apiKey: ' + JSON.stringify(process.env.FIREBASE_WEB_API_KEY) + ' };\n')"
@@ -102,8 +108,18 @@ jobs:
           DESKTOP_OAUTH_CREDENTIALS: ${{ secrets.DESKTOP_OAUTH_CREDENTIALS }}
       - name: Set release version
         run: node -e "const fs=require('fs'); const p=require('./package.json'); p.version='1.0.${{ github.run_number }}'; fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');"
-      # Publish Windows into the non-draft release created by macOS.
-      - name: Build and publish Windows installer
+      - name: Build Windows installer
+        run: npx electron-builder --win --publish never
+      - name: Upload Windows assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always --config.publish.releaseType=release
+        run: gh release upload "$TAG" dist/*.exe dist/*.blockmap dist/latest.yml --clobber
+
+  publish:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$TAG" --draft=false

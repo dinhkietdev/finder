@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -85,9 +85,11 @@ function slugifyAlbumName(value = '') {
 const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
+const LOCAL_TOKEN_ENCRYPTED_PATH = path.join(userDataPath, 'finderpicture-session.enc');
 const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
 const DRIVE_LOG_PATH = path.join(userDataPath, 'finder-drive.log');
 const PENDING_UPLOAD_PATH = path.join(userDataPath, 'finder-pending-upload.json');
+const UPLOAD_QUEUE_PATH = path.join(userDataPath, 'finder-upload-queue.json');
 const BACKUP_DIR = path.join(userDataPath, 'backups');
 const QUALITY_CACHE_PATH = path.join(userDataPath, 'finder-quality-cache.json');
 let qualityCachePersistTimer = null;
@@ -112,6 +114,109 @@ try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBA
 let currentAuthSession = null;
 let driveAuthPromise = null;
 
+function canUseSecureStorage() {
+    try { return Boolean(safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()); }
+    catch (_) { return false; }
+}
+
+function readLocalDriveTokens() {
+    if (canUseSecureStorage() && fs.existsSync(LOCAL_TOKEN_ENCRYPTED_PATH)) {
+        const raw = safeStorage.decryptString(fs.readFileSync(LOCAL_TOKEN_ENCRYPTED_PATH));
+        return JSON.parse(raw);
+    }
+    // Migrate a token file created by older Finder releases on first use.
+    if (fs.existsSync(LOCAL_TOKEN_PATH)) {
+        const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+        if (canUseSecureStorage()) {
+            writeLocalDriveTokens(tokens);
+            try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+        }
+        return tokens;
+    }
+    return null;
+}
+
+function writeLocalDriveTokens(tokens) {
+    if (!tokens || typeof tokens !== 'object') throw new Error('Token Google Drive không hợp lệ.');
+    if (canUseSecureStorage()) {
+        const encrypted = safeStorage.encryptString(JSON.stringify(tokens));
+        const temporary = `${LOCAL_TOKEN_ENCRYPTED_PATH}.${process.pid}.tmp`;
+        fs.writeFileSync(temporary, encrypted, { mode: 0o600 });
+        fs.renameSync(temporary, LOCAL_TOKEN_ENCRYPTED_PATH);
+        try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+        return;
+    }
+    // Older/unsupported systems still get restrictive file permissions rather
+    // than an openly readable token file. The server-side copy is encrypted.
+    const temporary = `${LOCAL_TOKEN_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(tokens), { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporary, LOCAL_TOKEN_PATH);
+}
+
+function hasLocalDriveTokens() {
+    return fs.existsSync(LOCAL_TOKEN_ENCRYPTED_PATH) || fs.existsSync(LOCAL_TOKEN_PATH);
+}
+
+function removeLocalDriveTokens() {
+    for (const tokenPath of [LOCAL_TOKEN_ENCRYPTED_PATH, LOCAL_TOKEN_PATH]) {
+        try { fs.unlinkSync(tokenPath); } catch (_) {}
+    }
+}
+
+function readUploadQueue() {
+    try {
+        if (fs.existsSync(UPLOAD_QUEUE_PATH)) {
+            const saved = JSON.parse(fs.readFileSync(UPLOAD_QUEUE_PATH, 'utf8'));
+            if (saved && Array.isArray(saved.jobs)) return { version: 1, jobs: saved.jobs.filter(job => job && job.id && job.resumeData) };
+        }
+    } catch (_) {}
+    // Migrate the single pending-upload file written by older releases.
+    try {
+        if (fs.existsSync(PENDING_UPLOAD_PATH)) {
+            const resumeData = JSON.parse(fs.readFileSync(PENDING_UPLOAD_PATH, 'utf8'));
+            if (resumeData && typeof resumeData === 'object') {
+                const migrated = { version: 1, jobs: [{ id: crypto.randomUUID(), type: 'original', status: 'paused', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), resumeData }] };
+                writeUploadQueue(migrated);
+                return migrated;
+            }
+        }
+    } catch (_) {}
+    return { version: 1, jobs: [] };
+}
+
+function writeUploadQueue(queue) {
+    const safeQueue = { version: 1, jobs: Array.isArray(queue?.jobs) ? queue.jobs.slice(-20) : [] };
+    const temporary = `${UPLOAD_QUEUE_PATH}.${process.pid}.tmp`;
+    try {
+        fs.writeFileSync(temporary, JSON.stringify(safeQueue), { encoding: 'utf8', mode: 0o600 });
+        fs.renameSync(temporary, UPLOAD_QUEUE_PATH);
+        try { fs.unlinkSync(PENDING_UPLOAD_PATH); } catch (_) {}
+    } catch (_) {
+        try { fs.unlinkSync(temporary); } catch (_) {}
+    }
+}
+
+function upsertUploadJob(job) {
+    const queue = readUploadQueue();
+    const index = queue.jobs.findIndex(item => item.id === job.id);
+    if (index === -1) queue.jobs.push(job); else queue.jobs[index] = { ...queue.jobs[index], ...job, updatedAt: new Date().toISOString() };
+    writeUploadQueue(queue);
+}
+
+function removeUploadJob(jobId) {
+    if (!jobId) return;
+    const queue = readUploadQueue();
+    queue.jobs = queue.jobs.filter(job => job.id !== jobId);
+    writeUploadQueue(queue);
+}
+
+function pendingUploadResumeData() {
+    const queue = readUploadQueue();
+    const job = queue.jobs.find(item => ['pending', 'paused', 'running'].includes(item.status) && (!item.type || item.type === 'original'));
+    if (!job?.resumeData) return null;
+    return { ...job.resumeData, _queueJobId: job.id, _queueStatus: job.status, _queueCompletedFiles: job.completedFiles || 0, _queueFailedFiles: job.failedFiles || [] };
+}
+
 function postJson(url, payload, headers = {}) {
     return new Promise((resolve, reject) => {
         const data = JSON.stringify(payload);
@@ -120,7 +225,10 @@ function postJson(url, payload, headers = {}) {
             response.on('end', () => {
                 try {
                     const result = JSON.parse(body || '{}');
-                    if (response.statusCode >= 400) return reject(new Error(result.error?.message || result.error || 'Yêu cầu không thành công.'));
+                    if (response.statusCode >= 400) {
+                        const requestId = response.headers['x-request-id'] || result.requestId;
+                        return reject(new Error(`${result.error?.message || result.error || 'Yêu cầu không thành công.'}${requestId ? ` [requestId=${requestId}]` : ''}`));
+                    }
                     resolve(result);
                 } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${url} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
@@ -136,7 +244,10 @@ function getServerJson(pathname, headers = {}) {
             response.on('end', () => {
                 try {
                     const result = JSON.parse(body || '{}');
-                    if (response.statusCode >= 400) return reject(new Error(result.error || 'Không thể tải dữ liệu.'));
+                    if (response.statusCode >= 400) {
+                        const requestId = response.headers['x-request-id'] || result.requestId;
+                        return reject(new Error(`${result.error || 'Không thể tải dữ liệu.'}${requestId ? ` [requestId=${requestId}]` : ''}`));
+                    }
                     resolve(result);
                 } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${pathname} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
@@ -159,6 +270,7 @@ function syncHistoryToServer(albumData) {
     const { managementToken, ...history } = albumData;
     postServerJson(`/api/album/${encodeURIComponent(albumData.id)}/manager-history`, { history }, {
         ...serverAuthHeaders(),
+        ...driveAccessHeaders(),
         ...albumManagementHeaders(albumData.id)
     }).catch(error => console.warn('Không thể đồng bộ lịch sử album lên Supabase:', error.message));
 }
@@ -172,13 +284,34 @@ function serverAuthHeaders() {
     return currentAuthSession?.idToken ? { Authorization: `Bearer ${currentAuthSession.idToken}` } : {};
 }
 
+// Creation endpoints use the already-authorized, short-lived Drive access
+// token as proof that this desktop controls the selected Drive account. It is
+// sent only in a request header and is never persisted by the server.
+function driveAccessHeaders(auth = oauth2Client) {
+    const accessToken = auth?.credentials?.access_token;
+    return accessToken ? { 'x-finder-drive-access-token': accessToken } : {};
+}
+
+async function revokePublicDrivePermissions(drive, fileId) {
+    if (!drive || !fileId) return;
+    try {
+        const result = await drive.permissions.list({ fileId, fields: 'permissions(id,type,role)', supportsAllDrives: true });
+        for (const permission of result.data.permissions || []) {
+            if (permission.type === 'anyone' && permission.id) {
+                try { await drive.permissions.delete({ fileId, permissionId: permission.id, supportsAllDrives: true }); }
+                catch (error) { console.warn('Không thể gỡ quyền Drive công khai:', error.message); }
+            }
+        }
+    } catch (error) { console.warn('Không thể kiểm tra quyền Drive công khai:', error.message); }
+}
+
 currentAuthSession = loadAuthSession();
 
 ipcMain.handle('auth-session', () => currentAuthSession || loadAuthSession());
 ipcMain.handle('auth-sync-drive-token', async () => {
     try {
         const driveSession = await getServerJson('/api/auth/drive-token', serverAuthHeaders());
-        if (driveSession.tokens) fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(driveSession.tokens), 'utf8');
+        if (driveSession.tokens) writeLocalDriveTokens(driveSession.tokens);
         return { success: true, found: !!driveSession.tokens };
     } catch (error) { return { success: false }; }
 });
@@ -186,8 +319,8 @@ ipcMain.handle('auth-drive-token-status', async () => {
     // Drive sessions belong to the current desktop machine. Do not report a
     // missing session merely because Vercel has no shared GOOGLE_SESSION_TOKEN.
     try {
-        if (fs.existsSync(LOCAL_TOKEN_PATH)) {
-            const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+        if (hasLocalDriveTokens()) {
+            const tokens = readLocalDriveTokens();
             const usable = Boolean(tokens.refresh_token || (tokens.access_token && (!tokens.expiry_date || tokens.expiry_date > Date.now())));
             if (usable) return { success: true, found: true, source: 'local' };
         }
@@ -197,8 +330,19 @@ ipcMain.handle('auth-drive-token-status', async () => {
 });
 ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('get-pending-upload', () => {
-    try { return fs.existsSync(PENDING_UPLOAD_PATH) ? JSON.parse(fs.readFileSync(PENDING_UPLOAD_PATH, 'utf8')) : null; }
-    catch (_) { return null; }
+    return pendingUploadResumeData();
+});
+ipcMain.handle('get-upload-queue', () => {
+    const queue = readUploadQueue();
+    return queue.jobs.filter(job => ['pending', 'paused', 'running'].includes(job.status)).map(job => ({
+        id: job.id,
+        type: job.type,
+        status: job.status,
+        completedFiles: job.completedFiles || 0,
+        failedFiles: job.failedFiles || [],
+        error: job.error || '',
+        resumeData: job.resumeData || null
+    }));
 });
 ipcMain.handle('drive-account', async () => {
     try {
@@ -233,7 +377,7 @@ ipcMain.handle('auth-sign-in', async (event, { email, password, isRegister }) =>
         fs.writeFileSync(AUTH_SESSION_PATH, JSON.stringify(currentAuthSession), 'utf8');
         try {
             const driveSession = await getServerJson('/api/auth/drive-token', serverAuthHeaders());
-            if (driveSession.tokens) fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(driveSession.tokens), 'utf8');
+            if (driveSession.tokens) writeLocalDriveTokens(driveSession.tokens);
         } catch (error) {}
         return { success: true, session: currentAuthSession };
     } catch (error) { return { success: false, error: error.message }; }
@@ -715,9 +859,19 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles, 
 ipcMain.handle('get-culling-original', async (event, { folderPath, file }) => {
     const fullPath = path.join(folderPath || '', path.basename(file || ''));
     if (!fs.existsSync(fullPath)) return { success: false, error: 'Tệp ảnh không còn tồn tại.' };
-    const ext = path.extname(fullPath).toLowerCase();
-    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    return { success: true, dataUrl: `data:${mime};base64,${fs.readFileSync(fullPath).toString('base64')}` };
+    // Culling chỉ cần ảnh đủ rõ để kiểm tra, không cần nhúng toàn bộ file RAW
+    // vào IPC. Giới hạn kích thước trước khi Base64 giúp tránh treo renderer
+    // khi người dùng mở ảnh 40–80 MP.
+    try {
+        const preview = await sharp(fullPath)
+            .rotate()
+            .resize({ width: 2400, height: 1800, fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 90, progressive: true })
+            .toBuffer();
+        return { success: true, dataUrl: `data:image/jpeg;base64,${preview.toString('base64')}`, preview: true };
+    } catch (error) {
+        return { success: false, error: 'Không thể tạo ảnh xem culling an toàn.' };
+    }
 });
 
 ipcMain.handle('get-culling-preview', async (event, { folderPath, file }) => {
@@ -778,12 +932,10 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
             const port = 3000;
             const redirectUri = `http://localhost:${port}/oauth2callback`;
             oauth2Client = new google.auth.OAuth2(client_id, client_secret, redirectUri);
-            if (forceReauth && fs.existsSync(LOCAL_TOKEN_PATH)) {
-                try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
-            }
-            if (!forceReauth && fs.existsSync(LOCAL_TOKEN_PATH)) {
+            if (forceReauth && hasLocalDriveTokens()) removeLocalDriveTokens();
+            if (!forceReauth && hasLocalDriveTokens()) {
                 try {
-                    const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
+                    const tokens = readLocalDriveTokens();
                     const scopes = (tokens.scope || '').split(' ');
                     if ((!requireFullDriveScope || scopes.includes('https://www.googleapis.com/auth/drive')) && (tokens.refresh_token || tokens.access_token)) {
                         (async () => {
@@ -794,7 +946,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                                 if (!refreshed.access_token) throw new Error('DRIVE_REFRESH_FAILED: Server không trả access token mới.');
                                 tokens.access_token = refreshed.access_token;
                                 tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
-                                fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                                writeLocalDriveTokens(tokens);
                             }
                             oauth2Client.setCredentials(tokens); resolve(oauth2Client);
                         })().catch(() => reject(new Error('DRIVE_REAUTH_REQUIRED')));
@@ -804,7 +956,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     // A cancelled Windows callback can leave a zero-byte JSON
                     // file. Treat it as a new machine instead of surfacing a
                     // cryptic "Unexpected end of JSON input" error.
-                    try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+                    removeLocalDriveTokens();
                 }
             }
             shell.openExternal(oauth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'select_account', scope: [requireFullDriveScope ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/drive.file'] }));
@@ -816,7 +968,7 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                     const { tokens } = await oauth2Client.getToken(qs.get('code'));
                     if (requireFullDriveScope && !tokens.scope) tokens.scope = 'https://www.googleapis.com/auth/drive';
                     oauth2Client.setCredentials(tokens);
-                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                    writeLocalDriveTokens(tokens);
                     if (client_id) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: client_id }), 'utf8');
                     res.end('Xác thực thành công. Quay lại Finder.'); server.close(); resolve(oauth2Client);
                 } catch (error) { res.end('Xác thực thất bại.'); server.close(); reject(error); }
@@ -838,10 +990,10 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
         const redirectUri = `http://localhost:${PORT}/oauth2callback`;
         const createClient = clientId => new google.auth.OAuth2(clientId, undefined, redirectUri);
         const useStoredToken = async () => {
-            if (forceReauth || !fs.existsSync(LOCAL_TOKEN_PATH)) return false;
+            if (forceReauth || !hasLocalDriveTokens()) return false;
             let tokens;
-            try { tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8')); }
-            catch (_) { try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {} return false; }
+            try { tokens = readLocalDriveTokens(); }
+            catch (_) { removeLocalDriveTokens(); return false; }
             if (!tokens.refresh_token && (!tokens.access_token || !tokens.expiry_date || tokens.expiry_date < Date.now())) return false;
             let clientId = null;
             try { clientId = (await getServerJson('/api/auth/drive-client')).clientId; } catch (_) {}
@@ -855,7 +1007,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                     if (refreshed.access_token) {
                         tokens.access_token = refreshed.access_token;
                         tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
-                        fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(tokens), 'utf8');
+                        writeLocalDriveTokens(tokens);
                     }
                 } catch (_) { return false; }
             }
@@ -876,7 +1028,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                     res.end('Xac thuc thanh cong! Vui long quay lai ung dung Finder.');
                     server.close();
                     oauth2Client.setCredentials(result.tokens);
-                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(result.tokens), 'utf8');
+                    writeLocalDriveTokens(result.tokens);
                     if (result.clientId) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: result.clientId }), 'utf8');
                     resolve(oauth2Client);
                 } catch (error) { server.close(); reject(error); }
@@ -889,7 +1041,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
             // A token file means this is an existing machine. Do not open a
             // browser automatically when its refresh fails; require the user
             // to press the explicit reconnect button instead.
-            if (fs.existsSync(LOCAL_TOKEN_PATH) && !forceReauth) throw new Error('DRIVE_REAUTH_REQUIRED');
+            if (hasLocalDriveTokens() && !forceReauth) throw new Error('DRIVE_REAUTH_REQUIRED');
             return getServerJson('/api/auth/drive-token', serverAuthHeaders());
         }).then(session => {
             if (!forceReauth && session.tokens && session.clientId) {
@@ -897,7 +1049,7 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                 if (!requireFullDriveScope || grantedScopes.includes('https://www.googleapis.com/auth/drive')) {
                     oauth2Client = createClient(session.clientId);
                     oauth2Client.setCredentials(session.tokens);
-                    fs.writeFileSync(LOCAL_TOKEN_PATH, JSON.stringify(session.tokens), 'utf8');
+                    writeLocalDriveTokens(session.tokens);
                     if (session.clientId) fs.writeFileSync(LOCAL_DRIVE_CLIENT_PATH, JSON.stringify({ clientId: session.clientId }), 'utf8');
                     return resolve(oauth2Client);
                 }
@@ -929,7 +1081,7 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
     } catch (error) {
         logDriveDiagnostic('list-drive-folders', error);
         if (isEmptyJsonError(error)) {
-            try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+            removeLocalDriveTokens();
             return { success: false, error: 'Google Drive trả về phản hồi rỗng. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH };
         }
         return { success: false, error: friendlyDriveError(error) };
@@ -958,30 +1110,37 @@ ipcMain.handle('create-drive-folder', async (event, payload = {}) => {
 // khách hàng riêng bên dưới thư mục đích, rồi mỗi ngày/đợt ảnh là một thư mục
 // con (Vu quy, Thành hôn...). Nhờ vậy các lần bổ sung vẫn dùng cùng một link.
 ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
-    const folderPath = payload.folderPath;
-    const imageFiles = (Array.isArray(payload.imageFiles) ? payload.imageFiles : []).filter(file => /\.jpe?g$|\.png$|\.webp$/i.test(file));
-    const driveParentId = payload.driveParentId || 'root';
-    const folderName = String(payload.folderName || payload.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
-    const galleryName = String(payload.galleryName || folderName).trim() || folderName;
-    const sectionName = String(payload.sectionName || '').trim();
-    const studioName = String(payload.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
-    const expiresDays = Math.min(3650, Math.max(1, Number(payload.expiresDays) || 60));
+    const resumeData = payload.resumeData || null;
+    const uploadJobId = resumeData?._queueJobId || crypto.randomUUID();
+    const folderPath = resumeData?.folderPath || payload.folderPath;
+    const imageFiles = (Array.isArray(resumeData?.imageFiles || payload.imageFiles) ? (resumeData?.imageFiles || payload.imageFiles) : []).filter(file => /\.jpe?g$|\.png$|\.webp$/i.test(file));
+    const driveParentId = resumeData?.driveParentId || payload.driveParentId || 'root';
+    const folderName = String(resumeData?.folderName || payload.folderName || payload.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+    const galleryName = String(resumeData?.galleryName || payload.galleryName || folderName).trim() || folderName;
+    const sectionName = String(resumeData?.sectionName ?? payload.sectionName ?? '').trim();
+    const studioName = String(resumeData?.studioName || payload.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+    const expiresDays = Math.min(3650, Math.max(1, Number(resumeData?.expiresDays || payload.expiresDays) || 60));
+    const galleryId = resumeData?.galleryId || `party-${crypto.randomUUID()}`;
     if (!folderPath || !fs.existsSync(folderPath)) return { success: false, error: 'Không tìm thấy thư mục ảnh tiệc.' };
     if (!imageFiles.length) return { success: false, error: 'Thư mục không có ảnh JPG/PNG/WebP hợp lệ.' };
+    let customerFolderId = resumeData?.customerFolderId || null;
+    let sectionFolderId = resumeData?.sectionFolderId || null;
     try {
         uploadInProgress = true;
         mainWindow.webContents.send('upload-progress', { progress: 0, currentFile: 'Đang kết nối Google Drive…', completed: 0, total: imageFiles.length, failed: 0 });
         const auth = await authenticateCasi(true);
         const drive = google.drive({ version: 'v3', auth });
         await drive.about.get({ fields: 'user(emailAddress)' });
-        const customerFolder = await drive.files.create({
-            resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [driveParentId] },
-            fields: 'id,name', supportsAllDrives: true
-        });
-        const customerFolderId = customerFolder.data.id;
+        if (!customerFolderId) {
+            const customerFolder = await drive.files.create({
+                resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder', parents: [driveParentId] },
+                fields: 'id,name', supportsAllDrives: true
+            });
+            customerFolderId = customerFolder.data.id;
+        }
         if (!customerFolderId) throw new Error('Không thể tạo thư mục khách hàng trên Google Drive.');
-        let sectionFolderId = customerFolderId;
-        if (sectionName) {
+        sectionFolderId = resumeData?.sectionFolderId || customerFolderId;
+        if (sectionName && !resumeData?.sectionFolderId) {
             const sectionFolder = await drive.files.create({
                 resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [customerFolderId] },
                 fields: 'id,name', supportsAllDrives: true
@@ -989,6 +1148,8 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
             sectionFolderId = sectionFolder.data.id;
             if (!sectionFolderId) throw new Error('Không thể tạo thư mục ngày/đợt ảnh trên Google Drive.');
         }
+        const resumableParty = { folderPath, imageFiles, driveParentId, folderName, galleryName, sectionName, studioName, expiresDays, customerFolderId, sectionFolderId, galleryId, _queueJobId: uploadJobId };
+        upsertUploadJob({ id: uploadJobId, type: 'party', status: 'running', createdAt: new Date().toISOString(), completedFiles: 0, failedFiles: [], resumeData: resumableParty });
         const existingFiles = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
         const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
         const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
@@ -1005,6 +1166,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
                     await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType });
                     completed++;
+                    upsertUploadJob({ id: uploadJobId, type: 'party', status: 'running', completedFiles, failedFiles: failed, resumeData: resumableParty });
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
                 } catch (error) { failed++; uploadError = error; const timing = uploadTiming(completed, imageFiles.length, startedAt); mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `Lỗi: ${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds }); }
@@ -1012,35 +1174,36 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         };
         await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, Math.max(1, filesToUpload.length)) }, worker));
         if (uploadError) throw uploadError;
-        for (const sharedId of [customerFolderId, sectionFolderId]) {
-            try { await drive.permissions.create({ fileId: sharedId, requestBody: { role: 'reader', type: 'anyone' }, supportsAllDrives: true }); } catch (_) {}
-        }
-        const galleryId = `party-${crypto.randomUUID()}`;
+        await Promise.all([customerFolderId, sectionFolderId].map(id => revokePublicDrivePermissions(drive, id)));
         const publicSlug = slugifyAlbumName(`${folderName}-${customerFolderId.slice(-6)}`);
-        const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: customerFolderId, sectionDriveFolderId: sectionFolderId, folderName, galleryName, sectionName, studioName, publicSlug, expiresDays }, serverAuthHeaders());
-        const tokenPath = LOCAL_TOKEN_PATH;
-        if (fs.existsSync(tokenPath)) {
+        const metadata = await postServerJson('/api/party-gallery', { galleryId, driveFolderId: customerFolderId, sectionDriveFolderId: sectionFolderId, folderName, galleryName, sectionName, studioName, publicSlug, expiresDays }, { ...serverAuthHeaders(), ...driveAccessHeaders(auth) });
+        if (hasLocalDriveTokens()) {
             try {
-                const tokens = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-                await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens, driveFolderId: customerFolderId, galleryType: 'party', gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }] }, metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {});
+                const tokens = readLocalDriveTokens();
+                await postServerJson(`/api/album/${galleryId}/drive-token`, { tokens, driveFolderId: customerFolderId, galleryType: 'party', gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }] }, { ...driveAccessHeaders(auth), ...(metadata.managementToken ? { 'x-finder-management-token': metadata.managementToken } : {}) });
             } catch (error) { console.warn('Không thể lưu token gallery tiệc:', error.message); }
         }
         const publicLink = metadata.link || `https://${ONLINE_DOMAIN}/a/${metadata.publicSlug || publicSlug}`;
         saveAlbumToHistory({ id: galleryId, name: galleryName, date: new Date().toLocaleString('vi-VN'), link: publicLink, publicSlug: metadata.publicSlug || publicSlug, clientName: folderName, driveFolderName: folderName, studioName, galleryType: 'party', managementToken: metadata.managementToken || null, originalFolderId: customerFolderId, gallerySections: [{ id: sectionFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionFolderId }], status: 'Đã cập nhật · Gallery tiệc', expiresDays, expiresAt: metadata.expiresAt || null, paymentStatus: 'unpaid', paymentAmount: 0, localPath: folderPath, driveParentId: customerFolderId, driveParentPath: payload.driveParentPath || 'Drive của tôi', drivePath: `${payload.driveParentPath || 'Drive của tôi'} / ${folderName}${sectionName ? ` / ${sectionName}` : ''}` });
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: 'Đã hoàn tất gallery tiệc.', completed: imageFiles.length, total: imageFiles.length, failed: 0 });
+        removeUploadJob(uploadJobId);
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
     } catch (error) {
         logDriveDiagnostic('upload-party-gallery', error);
+        upsertUploadJob({ id: uploadJobId, type: 'party', status: 'paused', error: friendlyDriveError(error), resumeData: { folderPath, imageFiles, driveParentId, folderName, galleryName, sectionName, studioName, expiresDays, customerFolderId, sectionFolderId, galleryId, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error) };
     } finally { uploadInProgress = false; }
 });
 
 ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
+    const resumeData = payload.resumeData || null;
+    const uploadJobId = resumeData?._queueJobId || crypto.randomUUID();
     const history = getAlbumHistory();
-    const album = history.find(item => item.id === payload.folderId && item.galleryType === 'party');
-    const folderPath = payload.folderPath;
-    const imageFiles = Array.isArray(payload.imageFiles) ? payload.imageFiles : [];
-    const sectionName = String(payload.sectionName || 'Ngày mới').trim() || 'Ngày mới';
+    const folderId = resumeData?.folderId || payload.folderId;
+    const album = history.find(item => item.id === folderId && item.galleryType === 'party');
+    const folderPath = resumeData?.folderPath || payload.folderPath;
+    const imageFiles = Array.isArray(resumeData?.imageFiles || payload.imageFiles) ? (resumeData?.imageFiles || payload.imageFiles) : [];
+    const sectionName = String(resumeData?.sectionName || payload.sectionName || 'Ngày mới').trim() || 'Ngày mới';
     if (!album) return { success: false, error: 'Không tìm thấy gallery tiệc.' };
     if (!folderPath || !fs.existsSync(folderPath) || !imageFiles.length) return { success: false, error: 'Thư mục bổ sung không có ảnh hợp lệ.' };
     try {
@@ -1049,20 +1212,26 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         const drive = google.drive({ version: 'v3', auth });
         const parentId = album.driveParentId || album.originalFolderId;
         if (!parentId) throw new Error('Gallery chưa có thư mục Drive gốc.');
-        const created = await drive.files.create({ resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
+        const created = resumeData?.sectionFolderId ? { data: { id: resumeData.sectionFolderId } } : await drive.files.create({ resource: { name: sectionName, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }, fields: 'id' });
         const sectionFolderId = created.data.id;
-        let completed = 0; let failed = 0; let nextIndex = 0; let uploadError = null;
+        const resumableParty = { folderId, folderPath, imageFiles, sectionName, sectionFolderId, _queueJobId: uploadJobId };
+        upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'running', createdAt: new Date().toISOString(), completedFiles: 0, failedFiles: [], resumeData: resumableParty });
+        const existing = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
+        const uploadedNames = new Set((existing.data.files || []).map(file => file.name));
+        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        let completed = imageFiles.length - filesToUpload.length; let failed = 0; let nextIndex = 0; let uploadError = null;
         const startedAt = Date.now();
         const worker = async () => {
             while (!uploadError) {
                 const index = nextIndex++;
-                if (index >= imageFiles.length) return;
-                const fileName = imageFiles[index];
+                if (index >= filesToUpload.length) return;
+                const fileName = filesToUpload[index];
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
                     await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType });
                     completed++;
+                    upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'running', completedFiles: completed, failedFiles: failed, resumeData: resumableParty });
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${sectionName}/${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
                 } catch (error) { failed++; uploadError = error; }
@@ -1070,21 +1239,28 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         };
         await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, imageFiles.length) }, worker));
         if (uploadError) throw uploadError;
-        try { await drive.permissions.create({ fileId: sectionFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
-        const response = await postServerJson(`/api/party-gallery/${album.id}/sections`, { driveFolderId: sectionFolderId, sectionName }, { ...serverAuthHeaders(), ...albumManagementHeaders(album.id) });
+        await revokePublicDrivePermissions(drive, sectionFolderId);
+        const response = await postServerJson(`/api/party-gallery/${album.id}/sections`, { driveFolderId: sectionFolderId, sectionName }, { ...serverAuthHeaders(), ...driveAccessHeaders(auth), ...albumManagementHeaders(album.id) });
         const index = history.findIndex(item => item.id === album.id);
         const sections = Array.isArray(history[index].gallerySections) ? history[index].gallerySections : [];
         sections.push({ id: sectionFolderId, name: sectionName, driveFolderId: sectionFolderId, createdAt: new Date().toISOString() });
         if (index >= 0) { history[index].gallerySections = sections; history[index].status = 'Đã cập nhật · Gallery tiệc'; history[index].statusUpdatedAt = new Date().toISOString(); history[index].drivePath = `${history[index].driveParentPath || 'Drive của tôi'} / ${history[index].driveFolderName || history[index].clientName || history[index].name || 'Ảnh tiệc'} / ${sectionName}`; fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8'); syncHistoryToServer(history[index]); }
         mainWindow.webContents.send('upload-progress', { progress: 100, currentFile: `Đã hoàn tất ${sectionName}.`, completed: imageFiles.length, total: imageFiles.length, failed: 0 });
+        removeUploadJob(uploadJobId);
         return { success: true, completed, failed, folderLink: album.link, gallerySections: response.gallerySections || sections };
-    } catch (error) { logDriveDiagnostic('append-party-gallery', error); return { success: false, error: friendlyDriveError(error) }; }
+    } catch (error) {
+        logDriveDiagnostic('append-party-gallery', error);
+        upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'paused', error: friendlyDriveError(error), resumeData: { folderId, folderPath, imageFiles, sectionName, _queueJobId: uploadJobId } });
+        return { success: false, error: friendlyDriveError(error) };
+    }
     finally { uploadInProgress = false; }
 });
 
 ipcMain.handle('upload-to-drive', async (event, payload) => {
     let { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, resumeData } = payload;
     let resumableUpload = resumeData || null;
+    let uploadJobId = resumeData?._queueJobId || crypto.randomUUID();
+    const queueState = { completedFiles: Number(resumeData?._queueCompletedFiles || 0), failedFiles: [] };
     try {
         if (resumeData) ({ folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath } = resumeData);
         uploadInProgress = true;
@@ -1116,14 +1292,6 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             if (driveParentId) folderResource.parents = [driveParentId];
             const driveFolder = await drive.files.create({ resource: folderResource, fields: 'id' });
             googleDriveFolderId = driveFolder.data.id;
-            // Lưu refresh token riêng cho album để trang khách có thể tự làm
-            // mới access token sau nhiều ngày mà không cần đăng nhập lại.
-            try {
-                if (fs.existsSync(LOCAL_TOKEN_PATH)) {
-                    const tokens = JSON.parse(fs.readFileSync(LOCAL_TOKEN_PATH, 'utf8'));
-                    await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens }, albumManagementHeaders(googleDriveFolderId));
-                }
-            } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
         }
         if (!originalFolderId) {
             const existingOriginal = await drive.files.list({ q: `'${googleDriveFolderId}' in parents and name = 'ORIGINAL' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`, fields: 'files(id)', pageSize: 10 });
@@ -1133,8 +1301,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             const originalFolder = await drive.files.create({ resource: { name: 'ORIGINAL', mimeType: 'application/vnd.google-apps.folder', parents: [googleDriveFolderId] }, fields: 'id' });
             originalFolderId = originalFolder.data.id;
         }
-        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId, originalFolderId };
-        try { fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
+        resumableUpload = { folderPath, imageFiles, customFolderName, watermarkToggle, watermarkText, maxSelections, studioName, displayName, studioLogo, accentColor, dueDate, driveParentId, driveParentPath, folderNameOnDrive, googleDriveFolderId, originalFolderId, _queueJobId: uploadJobId };
+        upsertUploadJob({ id: uploadJobId, type: 'original', status: 'running', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), completedFiles: queueState.completedFiles, failedFiles: queueState.failedFiles, resumeData: resumableUpload });
 
         const existingFiles = await drive.files.list({
             q: `'${originalFolderId}' in parents and trashed = false`,
@@ -1147,9 +1315,11 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         const filesToUpload = imageFiles.filter(fileName => !uploadedNames.has(fileName));
         let nextFileIndex = 0;
         let completedFiles = imageFiles.length - filesToUpload.length;
+        queueState.completedFiles = completedFiles;
         let uploadError = null;
         const failedFiles = [];
         const uploadStartedAt = Date.now();
+        let lastQueuePersistAt = Date.now();
 
         async function uploadWorker() {
             while (!uploadError) {
@@ -1165,6 +1335,15 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                         mimeType: 'image/jpeg'
                     });
                     completedFiles++;
+                    queueState.completedFiles = completedFiles;
+                    // Persist at least once per second (and every five files).
+                    // Drive itself is the idempotency source of truth, so a
+                    // crash between checkpoints safely skips already-uploaded
+                    // names on the next resume without blocking the UI.
+                    if (completedFiles % 5 === 0 || Date.now() - lastQueuePersistAt >= 1000) {
+                        upsertUploadJob({ id: uploadJobId, type: 'original', status: 'running', completedFiles, failedFiles: queueState.failedFiles });
+                        lastQueuePersistAt = Date.now();
+                    }
                     const timing = uploadTiming(completedFiles, imageFiles.length, uploadStartedAt);
                     mainWindow.webContents.send('upload-progress', {
                         progress: Math.round((completedFiles / imageFiles.length) * 100),
@@ -1177,6 +1356,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
                     });
                 } catch (error) {
                     failedFiles.push({ fileName, error: friendlyDriveError(error) });
+                    queueState.failedFiles = failedFiles.slice();
+                    upsertUploadJob({ id: uploadJobId, type: 'original', status: 'paused', completedFiles, failedFiles: queueState.failedFiles, error: friendlyDriveError(error), resumeData: { ...resumableUpload, _queueJobId: uploadJobId } });
                     uploadError = error;
                     const timing = uploadTiming(completedFiles, imageFiles.length, uploadStartedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round((completedFiles / imageFiles.length) * 100), currentFile: `Lỗi: ${fileName}`, completed: completedFiles, total: imageFiles.length, failed: failedFiles.length, rate: timing.rate, etaSeconds: timing.etaSeconds });
@@ -1187,9 +1368,8 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         const workerCount = Math.min(MAX_CONCURRENT_UPLOADS, filesToUpload.length);
         await Promise.all(Array.from({ length: workerCount }, uploadWorker));
         if (uploadError) throw uploadError;
+        await Promise.all([googleDriveFolderId, originalFolderId].map(id => revokePublicDrivePermissions(drive, id)));
 
-        await drive.permissions.create({ fileId: googleDriveFolderId, requestBody: { role: 'reader', type: 'anyone' } });
-        
         // Drive ids may contain `_`; normalize the complete slug so the API
         // resolver and the generated client link always use the same value.
         const publicSlug = slugifyAlbumName(`${folderNameOnDrive}-${String(googleDriveFolderId).slice(-6)}`);
@@ -1205,7 +1385,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
         });
-        const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders(), ...albumManagementHeaders(googleDriveFolderId) } };
+        const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders(), ...driveAccessHeaders(auth), ...albumManagementHeaders(googleDriveFolderId) } };
         let settingsResult = {};
         await new Promise((resolve, reject) => {
             let body = '';
@@ -1220,6 +1400,17 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             });
             wmReq.on('error', reject); wmReq.write(wmPayload); wmReq.end();
         });
+
+        // The album token is generated by the settings creation response. Now
+        // that the album has a management token, store its Drive session using
+        // the server-side encryption path so the public client can use the
+        // private image proxy after a cold start.
+        try {
+            if (settingsResult.managementToken && hasLocalDriveTokens()) {
+                const tokens = readLocalDriveTokens();
+                await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens, driveFolderId: originalFolderId, galleryType: 'selection' }, { ...driveAccessHeaders(auth), 'x-finder-management-token': settingsResult.managementToken });
+            }
+        } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
 
         const publicLink = `https://${ONLINE_DOMAIN}/a/${publicSlug}`;
         
@@ -1250,21 +1441,27 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             , dueDate: dueDate || null
         });
 
-        try { fs.unlinkSync(PENDING_UPLOAD_PATH); } catch (_) {}
+        removeUploadJob(uploadJobId);
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: failedFiles.length };
     } catch (error) {
         logDriveDiagnostic('upload-to-drive', error);
         if (isEmptyJsonError(error)) {
-            try { fs.unlinkSync(LOCAL_TOKEN_PATH); } catch (_) {}
+            removeLocalDriveTokens();
+            if (resumableUpload) upsertUploadJob({ id: uploadJobId, type: 'original', status: 'paused', completedFiles: queueState.completedFiles, failedFiles: queueState.failedFiles, error: 'DRIVE_EMPTY_RESPONSE', resumeData: { ...resumableUpload, _queueJobId: uploadJobId } });
             return { success: false, error: 'Google Drive trả về phản hồi rỗng khi upload. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH, resumeData: resumableUpload };
         }
-        try { if (resumableUpload) fs.writeFileSync(PENDING_UPLOAD_PATH, JSON.stringify(resumableUpload), 'utf8'); } catch (_) {}
+        if (resumableUpload) upsertUploadJob({ id: uploadJobId, type: 'original', status: 'paused', completedFiles: queueState.completedFiles, failedFiles: queueState.failedFiles, error: friendlyDriveError(error), resumeData: { ...resumableUpload, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error), resumeData: resumableUpload };
     }
     finally { uploadInProgress = false; }
 });
 
-ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, allowCountMismatch = false }) => {
+ipcMain.handle('upload-check-to-drive', async (event, payload = {}) => {
+    const resumeData = payload.resumeData || null;
+    const uploadJobId = resumeData?._queueJobId || crypto.randomUUID();
+    const folderId = resumeData?.folderId || payload.folderId;
+    const folderPath = resumeData?.folderPath || payload.folderPath;
+    const allowCountMismatch = Boolean(payload.allowCountMismatch || resumeData?.allowCountMismatch);
     const history = getAlbumHistory();
     const album = history.find(item => item.id === folderId);
     if (!album) return { success: false, error: 'Không tìm thấy album trong thư viện.' };
@@ -1291,12 +1488,13 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
         };
     }
 
+    let currentCheckFolderId = resumeData?.checkFolderId || album.checkFolderId || null;
     try {
         uploadInProgress = true;
         mainWindow.webContents.send('check-upload-progress', { progress: 0, currentFile: 'Đang kết nối Google Drive…' });
         const auth = await authenticateCasi(true);
         const drive = google.drive({ version: 'v3', auth });
-        let checkFolderId = album.checkFolderId || null;
+        let checkFolderId = currentCheckFolderId;
         const nextCheckVersion = album.checkVersion
             ? Math.max(1, Number(album.checkVersion) + 1)
             : (album.checkFolderId ? 2 : 1);
@@ -1319,6 +1517,10 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
             });
             checkFolderId = created.data.id;
         }
+        currentCheckFolderId = checkFolderId;
+
+        const resumableCheck = { folderId, folderPath, allowCountMismatch: true, checkFolderId, _queueJobId: uploadJobId };
+        upsertUploadJob({ id: uploadJobId, type: 'check', status: 'running', createdAt: new Date().toISOString(), completedFiles: 0, failedFiles: [], resumeData: resumableCheck });
 
         const existingFiles = await drive.files.list({
             q: `'${checkFolderId}' in parents and trashed = false`,
@@ -1347,6 +1549,7 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
                         mimeType
                     });
                     completed++;
+                    upsertUploadJob({ id: uploadJobId, type: 'check', status: 'running', completedFiles: completed, failedFiles: failed, resumeData: resumableCheck });
                     const timing = uploadTiming(completed, imageFiles.length, uploadStartedAt);
                     mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed: 0, rate: timing.rate, etaSeconds: timing.etaSeconds });
                 } catch (error) { failed++; uploadError = error; const timing = uploadTiming(completed, imageFiles.length, uploadStartedAt); mainWindow.webContents.send('check-upload-progress', { progress: Math.round((completed / imageFiles.length) * 100), currentFile: 'Lỗi: ' + fileName, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds }); }
@@ -1355,9 +1558,8 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
 
         await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_UPLOADS, Math.max(1, filesToUpload.length)) }, uploadWorker));
         if (uploadError) throw uploadError;
-        try { await drive.permissions.create({ fileId: checkFolderId, requestBody: { role: 'reader', type: 'anyone' } }); } catch (_) {}
-
-        await postServerJson(`/api/album/${folderId}/check`, { checkFolderId, checkImageCount: imageFiles.length, version: nextCheckVersion }, serverAuthHeaders());
+        await revokePublicDrivePermissions(drive, checkFolderId);
+        await postServerJson(`/api/album/${folderId}/check`, { checkFolderId, checkImageCount: imageFiles.length, version: nextCheckVersion }, { ...serverAuthHeaders(), ...driveAccessHeaders(auth), ...albumManagementHeaders(folderId) });
         const index = history.findIndex(item => item.id === folderId);
         const checkData = { checkFolderId, checkVersion: nextCheckVersion, checkLocalPath: folderPath, checkImageCount: imageFiles.length, checkStatus: 'ready', checkUpdatedAt: new Date().toISOString(), status: `CHECK ${nextCheckVersion} · chờ khách kiểm tra` };
         if (index !== -1) {
@@ -1372,9 +1574,11 @@ ipcMain.handle('upload-check-to-drive', async (event, { folderId, folderPath, al
             syncHistoryToServer(history[index]);
         }
         mainWindow.webContents.send('check-upload-progress', { progress: 100, currentFile: 'Đã hoàn tất thư mục CHECK.' });
+        removeUploadJob(uploadJobId);
         return { success: true, count: imageFiles.length, selectedCount, countMatched: selectedCount === null || selectedCount === imageFiles.length, checkFolderId };
     } catch (error) {
         logDriveDiagnostic('upload-check-to-drive', error);
+        upsertUploadJob({ id: uploadJobId, type: 'check', status: 'paused', error: friendlyDriveError(error), resumeData: { folderId, folderPath, allowCountMismatch: true, checkFolderId: currentCheckFolderId, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error) };
     } finally { uploadInProgress = false; }
 });

@@ -623,13 +623,21 @@
             try { data = raw ? JSON.parse(raw) : {}; }
             catch (_) { throw new Error(`${fallbackMessage} (HTTP ${response.status})${raw ? `: ${raw.slice(0, 180)}` : ''}`); }
             if (!response.ok || data.success === false) {
-                throw new Error(data.error || data.message || `${fallbackMessage} (HTTP ${response.status})`);
+                const requestId = response.headers.get('x-request-id') || data.requestId;
+                throw new Error(`${data.error || data.message || `${fallbackMessage} (HTTP ${response.status})`}${requestId ? ` [requestId=${requestId}]` : ''}`);
             }
             return data;
         }
 
         function getCurrentImage() {
             return state.images[state.currentIndex] || null;
+        }
+
+        function getProtectedDriveImageUrl(image, size = 'original', download = true) {
+            if (!image?.id || !folderId) return '';
+            const query = new URLSearchParams({ size });
+            if (download) query.set('download', '1');
+            return `${ONLINE_SERVER}/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(image.id)}?${query.toString()}`;
         }
 
         function getShareUrl() {
@@ -640,7 +648,8 @@
             if (state.viewMode !== 'check' && state.galleryType !== 'party') return;
             const current = getCurrentImage();
             if (!current?.id) return;
-            const url = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(current.id)}`;
+            const url = getProtectedDriveImageUrl(current, 'original', true);
+            if (!url) return;
             const link = document.createElement('a');
             link.href = url;
             link.target = '_blank';
@@ -659,7 +668,8 @@
         function triggerPartyDownload(image) {
             if (!image?.id) return;
             const link = document.createElement('a');
-            link.href = `https://drive.google.com/uc?export=download&id=${encodeURIComponent(image.id)}`;
+            link.href = getProtectedDriveImageUrl(image, 'original', true);
+            if (!link.href) return;
             link.target = '_blank';
             link.rel = 'noopener';
             link.download = image.fullName || 'finder-gallery-image';
@@ -1542,7 +1552,8 @@
                 throw new Error(`Máy chủ trả về lỗi ${response.status}. Vui lòng thử lại hoặc kiểm tra Vercel Logs.`);
             }
             if (!response.ok) {
-                throw new Error(data.error || `Máy chủ trả về lỗi ${response.status}.`);
+                const requestId = response.headers.get('x-request-id') || data.requestId;
+                throw new Error(`${data.error || `Máy chủ trả về lỗi ${response.status}.`}${requestId ? ` [requestId=${requestId}]` : ''}`);
             }
             if (!data.success) throw new Error(data.error || 'Không thể lưu dữ liệu');
             return data;
@@ -1771,13 +1782,15 @@
                     });
                     if (!response.ok) {
                         const errorData = await response.json().catch(() => ({}));
-                        throw new Error(errorData.error || 'Không thể xác nhận ảnh');
+                        const requestId = response.headers.get('x-request-id') || errorData.requestId;
+                        throw new Error(`${errorData.error || 'Không thể xác nhận ảnh'}${requestId ? ` [requestId=${requestId}]` : ''}`);
                     }
                 }
                 const finalizeResponse = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/finalize`, { method: 'POST' });
                 if (!finalizeResponse.ok) {
                     const errorData = await finalizeResponse.json().catch(() => ({}));
-                    throw new Error(errorData.error || 'Không thể chốt album');
+                    const requestId = finalizeResponse.headers.get('x-request-id') || errorData.requestId;
+                    throw new Error(`${errorData.error || 'Không thể chốt album'}${requestId ? ` [requestId=${requestId}]` : ''}`);
                 }
                 state.isFinalized = true;
                 render();
@@ -1798,7 +1811,10 @@
             try {
                 const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/check/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
                 const data = await response.json().catch(() => ({}));
-                if (!response.ok || !data.success) throw new Error(data.error || 'Không thể xác nhận phiên bản CHECK.');
+                if (!response.ok || !data.success) {
+                    const requestId = response.headers.get('x-request-id') || data.requestId;
+                    throw new Error(`${data.error || 'Không thể xác nhận phiên bản CHECK.'}${requestId ? ` [requestId=${requestId}]` : ''}`);
+                }
                 state.checkNeedsRevision = false;
                 state.workflowStatus = 'completed';
                 state.expiresAt = data.expiresAt || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();

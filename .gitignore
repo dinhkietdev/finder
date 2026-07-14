@@ -18,4 +18,5 @@ database.json
 # OS files
 .DS_Store
 .vercel
+supabase/.temp/
 .env*
