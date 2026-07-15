@@ -16,6 +16,23 @@ const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
 const REQUEST_ID_HEADER = 'x-request-id';
 const ALERT_DEDUPE_MS = 5 * 60 * 1000;
 const alertLastSent = new Map();
+const driveImageMetadataCache = new Map();
+const DRIVE_IMAGE_METADATA_TTL_MS = 5 * 60 * 1000;
+
+function encodeAlbumPageCursor(value) {
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+
+function decodeAlbumPageCursor(value) {
+    if (!value) return {};
+    try {
+        const decoded = Buffer.from(String(value), 'base64url').toString('utf8');
+        const parsed = JSON.parse(decoded);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return null;
+    }
+}
 
 function createRequestId() {
     return crypto.randomUUID();
@@ -1887,6 +1904,10 @@ app.get('/api/album/:folderId', async (req, res) => {
         // would hit the temporal-dead-zone and turn the next request into a
         // 500 error.
         const compactResponse = String(req.query?.compact || '') === '1';
+        const pagedResponse = String(req.query?.paged || '') === '1';
+        const pageSize = Math.max(8, Math.min(48, Number(req.query?.limit) || 24));
+        const pageCursor = decodeAlbumPageCursor(req.query?.cursor);
+        if (!pageCursor) return res.status(400).json({ success: false, code: 'ALBUM_CURSOR_INVALID', error: 'Cursor tải ảnh không hợp lệ.' });
         const compactFile = file => ({
             id: file.id,
             fullName: file.fullName,
@@ -1897,7 +1918,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         });
         const responseFile = file => compactResponse ? compactFile(file) : file;
 
-        if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
+        if (!pagedResponse && albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             const cachedFiles = albumCacheDatabase[folderId].map(responseFile);
             const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(responseFile);
             return res.json({ success: true, folderId, files: cachedFiles, checkFiles: cachedCheckFiles, gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
@@ -2026,6 +2047,18 @@ app.get('/api/album/:folderId', async (req, res) => {
             } while (pageToken);
             return files.filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || '')).map(toClientFile);
         };
+        const listDriveImagesPage = async (parentId, pageToken, requestedPageSize) => {
+            const response = await drive.files.list({
+                q: `'${parentId}' in parents and trashed = false and mimeType contains 'image/'`,
+                includeItemsFromAllDrives: true, supportsAllDrives: true,
+                fields: 'nextPageToken,files(id, name, mimeType, parents, webContentLink, thumbnailLink)',
+                pageSize: requestedPageSize, pageToken: pageToken || undefined
+            });
+            const files = (response.data.files || [])
+                .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
+                .map(toClientFile);
+            return { files, nextPageToken: response.data.nextPageToken || null };
+        };
         // Album mới lưu ảnh gốc trong ORIGINAL; album cũ vẫn đọc ảnh ở root.
         const configuredRoot = normalizeDriveFolderId(currentSettings.originalFolderId, '');
         const configuredSections = currentSettings.galleryType === 'party' && Array.isArray(currentSettings.gallerySections)
@@ -2039,6 +2072,56 @@ app.get('/api/album/:folderId', async (req, res) => {
             : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
         hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
         albumStage = 'list-gallery-and-check-images';
+        if (pagedResponse) {
+            const sectionTokens = pageCursor.sections && typeof pageCursor.sections === 'object' ? pageCursor.sections : {};
+            const sectionPages = await Promise.all(sections.map(async section => {
+                const key = String(section.id || section.driveFolderId);
+                const hasSectionCursor = Object.prototype.hasOwnProperty.call(sectionTokens, key);
+                if (hasSectionCursor && !sectionTokens[key]) return { files: [], nextPageToken: null, key };
+                const page = await listDriveImagesPage(section.driveFolderId, sectionTokens[key], pageSize);
+                return {
+                    ...page,
+                    files: page.files.map(file => ({
+                        ...file,
+                        gallerySectionId: section.id || section.driveFolderId,
+                        gallerySectionName: section.name || 'Ảnh'
+                    })),
+                    key
+                };
+            }));
+            const hasCheckCursor = Object.prototype.hasOwnProperty.call(pageCursor, 'checkToken');
+            const checkPage = hasCheckCursor && !pageCursor.checkToken
+                ? { files: [], nextPageToken: null }
+                : hasCheckFolder
+                ? await listDriveImagesPage(safeCheckFolderId, pageCursor.checkToken, pageSize)
+                : { files: [], nextPageToken: null };
+            const nextSections = {};
+            sectionPages.forEach(page => {
+                if (page.nextPageToken) nextSections[page.key] = page.nextPageToken;
+                else nextSections[page.key] = null;
+            });
+            const hasMore = Object.values(nextSections).some(Boolean) || Boolean(checkPage.nextPageToken);
+            const nextCursor = hasMore ? encodeAlbumPageCursor({
+                sections: nextSections,
+                checkToken: checkPage.nextPageToken || null
+            }) : null;
+            // Paged image responses intentionally exclude liked_list and
+            // check_notes. Those mutable fields are served by /meta so the
+            // image pages can be cached safely at the edge.
+            res.set('Cache-Control', 'public, max-age=5, s-maxage=30, stale-while-revalidate=120');
+            return res.json({
+                success: true,
+                folderId,
+                files: sectionPages.flatMap(page => page.files).map(responseFile),
+                checkFiles: checkPage.files.map(responseFile),
+                gallerySections: sections,
+                settings: publicAlbumSettings(currentSettings),
+                isFinalized,
+                nextCursor,
+                hasMore,
+                pageSize
+            });
+        }
         // Gallery sections and the latest CHECK folder are independent Drive
         // reads. Fetch them together so CHECK albums do not wait for the full
         // original gallery listing before the response can be rendered.
@@ -2054,6 +2137,34 @@ app.get('/api/album/:folderId', async (req, res) => {
     } catch (error) {
         console.error('Album load failed:', JSON.stringify({ folderId: req.params.folderId, stage: albumStage, message: error.message }));
         res.status(500).json({ error: error.message, stage: albumStage, folderId: req.params.folderId });
+    }
+});
+
+// Mutable album metadata is kept separate from paged image data. This lets
+// the image pages use a short public cache without exposing stale selections
+// or notes through that cache.
+app.get('/api/album/:folderId/meta', async (req, res) => {
+    const { folderId } = req.params;
+    try {
+        await loadPersistentState();
+        if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: 'Album đã bị hủy.' });
+        if (!Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId) && !albumCacheDatabase[folderId]) {
+            return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+        }
+        const settings = albumSettingsDatabase[folderId] || {};
+        res.set('Cache-Control', 'private, no-store');
+        return res.json({
+            success: true,
+            folderId,
+            liked_list: likedImagesDatabase[folderId] || {},
+            check_notes: checkNotesDatabase[folderId] || {},
+            settings: publicAlbumSettings(settings),
+            gallerySections: Array.isArray(settings.gallerySections) ? settings.gallerySections : [],
+            isFinalized: Boolean(finalizedDatabase[folderId])
+        });
+    } catch (error) {
+        console.error('Album metadata load failed:', JSON.stringify({ folderId, message: error.message }));
+        return res.status(500).json({ success: false, error: 'Không thể tải trạng thái album.' });
     }
 });
 
@@ -2075,8 +2186,22 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
             normalizeDriveFolderId(folderId, ''),
             ...(Array.isArray(settings.gallerySections) ? settings.gallerySections.map(section => normalizeDriveFolderId(section?.driveFolderId || section?.id, '')) : [])
         ].filter(Boolean));
-        const metadata = await drive.files.get({ fileId, fields: 'id,name,mimeType,size,parents,thumbnailLink', supportsAllDrives: true });
-        const file = metadata.data;
+        const metadataKey = `${folderId}:${fileId}`;
+        const cachedMetadata = driveImageMetadataCache.get(metadataKey);
+        let file;
+        if (cachedMetadata && cachedMetadata.expiresAt > Date.now()) {
+            file = cachedMetadata.file;
+        } else {
+            const metadata = await drive.files.get({ fileId, fields: 'id,name,mimeType,size,parents,thumbnailLink', supportsAllDrives: true });
+            file = metadata.data;
+            if (file?.id) {
+                driveImageMetadataCache.set(metadataKey, { file, expiresAt: Date.now() + DRIVE_IMAGE_METADATA_TTL_MS });
+                if (driveImageMetadataCache.size > 3000) {
+                    const firstKey = driveImageMetadataCache.keys().next().value;
+                    if (firstKey) driveImageMetadataCache.delete(firstKey);
+                }
+            }
+        }
         if (!file?.id || !/^image\/(jpeg|png|webp|gif)$/i.test(String(file.mimeType || '')) || !file.parents?.some(parent => allowedParents.has(parent))) {
             return res.status(404).json({ success: false, error: 'Không tìm thấy ảnh trong album.' });
         }
@@ -2098,7 +2223,10 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
         // Album links are public by design; cache thumbnails at the Vercel edge
         // so a large gallery does not re-download the same bytes per visitor.
         // Original downloads remain private and are never cached.
-        res.set('Cache-Control', isDownload ? 'private, no-store' : 'public, max-age=60, s-maxage=600, stale-while-revalidate=3600');
+        // Preview/lightbox responses are immutable for a Drive file id. Keep
+        // them at the Vercel edge for an hour (and serve stale while refreshing)
+        // so repeat lightbox opens do not wait on a Drive metadata request.
+        res.set('Cache-Control', isDownload ? 'private, no-store' : 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
         if (isDownload) res.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name || 'finder-image')}`);
 
         // Drive's thumbnail link is much lighter than the original image. It

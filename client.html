@@ -165,13 +165,14 @@
         .selection-item::before { content:'✓'; display:inline-grid; place-items:center; float:left; width:20px; height:20px; margin:0 8px 4px 0; border-radius:50%; background:rgba(59,217,160,.2); color:#80f1c7; font-size:12px; }
         .gallery-panel { padding:15px 16px 18px; }
         .ai-picks-panel { padding:15px 16px 18px; border-color:rgba(124,140,255,.28); background:linear-gradient(135deg,rgba(124,140,255,.12),rgba(59,217,160,.06)); }
-        .ai-picks-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+        .ai-picks-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; margin-bottom:12px; }
         .ai-picks-heading strong { font-size:15px; }
         .ai-picks-heading span { color:var(--text-muted); font-size:12px; }
-        .ai-picks-heading-main { display:flex; align-items:center; gap:8px; min-width:0; }
+        .ai-picks-heading-main { display:flex; align-items:flex-start; gap:8px; min-width:0; flex:1; }
         .ai-picks-heading-main > div { min-width:0; }
         .ai-picks-heading-actions { display:flex; align-items:center; gap:8px; flex:none; }
-        .ai-picks-toggle { display:inline-flex; align-items:center; gap:7px; min-height:36px; padding:6px 10px; border:1px solid rgba(157,168,255,.35); border-radius:999px; background:rgba(12,18,32,.68); color:#e4e9ff; font-size:12px; font-weight:700; cursor:pointer; }
+        .ai-picks-count { display:inline-flex; align-items:center; min-height:36px; padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .ai-picks-toggle { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:44px; padding:8px 12px; border:1px solid rgba(157,168,255,.35); border-radius:999px; background:rgba(12,18,32,.68); color:#e4e9ff; font-size:12px; font-weight:700; cursor:pointer; }
         .ai-picks-toggle:hover { border-color:rgba(157,168,255,.8); background:rgba(30,41,88,.7); }
         .ai-picks-toggle .toggle-track { position:relative; width:30px; height:17px; border-radius:999px; background:#475569; transition:background .18s ease; }
         .ai-picks-toggle .toggle-track::after { content:''; position:absolute; width:13px; height:13px; top:2px; left:2px; border-radius:50%; background:#e2e8f0; transition:transform .18s ease; }
@@ -181,11 +182,15 @@
         .ai-picks-panel.is-collapsed .ai-picks-heading { margin-bottom:0; }
         .gallery-panel.is-collapsed #gallerySectionsNav, .gallery-panel.is-collapsed #partyGalleryActions, .gallery-panel.is-collapsed #partyDownloadQueue, .gallery-panel.is-collapsed #thumbStrip { display:none !important; }
         .gallery-panel.is-collapsed .gallery-heading { margin-bottom:0; }
-        .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; }
-        .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; }
+        .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; content-visibility:auto; contain-intrinsic-size:160px; }
+        .ai-pick-card::before { content:''; position:absolute; inset:0 0 30px; z-index:1; pointer-events:none; background:linear-gradient(110deg,#111a2a 25%,#26344d 45%,#111a2a 65%); background-size:220% 100%; animation:aiGroupShimmer 1.25s linear infinite; }
+        .ai-pick-card.is-ready::before { display:none; }
+        .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; opacity:0; transition:opacity .22s ease,transform .3s ease; }
+        .ai-pick-card img.is-ready { opacity:1; }
         .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .ai-pick-card::after { content:'Cụm tương tự'; position:absolute; top:7px; left:7px; padding:4px 6px; border-radius:999px; background:rgba(30,41,88,.86); color:#dbe5ff; font-size:10px; font-weight:700; }
         .ai-pick-card:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(50,60,130,.25); }
+        @keyframes aiGroupShimmer { to { background-position:-220% 0; } }
         .selection-item { display:flex; align-items:center; gap:10px; cursor:pointer; }
         .selection-item img { width:58px; height:58px; border-radius:10px; object-fit:cover; flex:none; background:#0b1220; }
         .selection-item:hover { background:rgba(124,140,255,.08); }
@@ -248,6 +253,12 @@
             .image-lightbox { align-items:center; }
             .lightbox-image { max-width:100vw; }
             .zoom-tip { bottom:max(78px,calc(env(safe-area-inset-bottom) + 70px)); max-width:calc(100vw - 28px); overflow:hidden; text-overflow:ellipsis; }
+            .ai-picks-heading { display:grid; grid-template-columns:1fr; gap:10px; }
+            .ai-picks-heading-main { display:grid; gap:4px; }
+            .ai-picks-heading-main > span { line-height:1.45; }
+            .ai-picks-heading-actions { width:100%; justify-content:space-between; gap:10px; }
+            .ai-picks-count { min-height:40px; }
+            .ai-picks-toggle { min-height:44px; padding:8px 12px; }
         }
 
         /* Final client polish: touch-first gallery and clear loading feedback. */
@@ -422,7 +433,7 @@
         </div>
 
         <div id="aiPicksPanel" class="panel ai-picks-panel" style="display:none;">
-            <div class="ai-picks-heading"><div class="ai-picks-heading-main"><strong>▦ Nhóm ảnh tương tự</strong><span id="aiPicksDescription">Các ảnh gần giống nhau được gom để bạn xem nhanh</span></div><div class="ai-picks-heading-actions"><span id="aiPicksCount"></span><button id="aiPicksToggle" class="ai-picks-toggle" type="button" role="switch" aria-checked="true" aria-label="Bật hoặc tắt nhóm ảnh tương tự"><span class="toggle-track" aria-hidden="true"></span><span id="aiPicksToggleLabel">Đang mở</span></button></div></div>
+            <div class="ai-picks-heading"><div class="ai-picks-heading-main"><strong>▦ Nhóm ảnh tương tự</strong><span id="aiPicksDescription">Các ảnh gần giống nhau được gom để bạn xem nhanh</span></div><div class="ai-picks-heading-actions"><span id="aiPicksCount" class="ai-picks-count"></span><button id="aiPicksToggle" class="ai-picks-toggle" type="button" role="switch" aria-checked="true" aria-label="Bật hoặc tắt nhóm ảnh tương tự"><span class="toggle-track" aria-hidden="true"></span><span id="aiPicksToggleLabel">Đang mở</span></button></div></div>
             <div id="aiPicksGrid" class="ai-picks-grid"></div>
         </div>
 
@@ -529,7 +540,13 @@
             studioName: 'Finder',
             displayName: 'Finder',
             compareEnabled: false,
-            selectionReopenedAt: null
+            selectionReopenedAt: null,
+            pageCursor: null,
+            pageHasMore: false,
+            pageLoading: false,
+            pagesPending: false,
+            likedList: {},
+            checkNotes: {}
         };
         const savingFiles = new Set();
 
@@ -618,6 +635,11 @@
         let lightboxPanStart = null;
         let aiGroupingTimer = null;
         let thumbRenderVersion = 0;
+        // Keep only a small set of in-flight/completed warmups. The browser
+        // owns the decoded image cache; this map prevents duplicate requests
+        // while quickly navigating between lightbox images.
+        const lightboxWarmCache = new Map();
+        const LIGHTBOX_WARM_CACHE_LIMIT = 12;
         const activePointers = new Map();
         const thumbObserver = 'IntersectionObserver' in window
             ? new IntersectionObserver(entries => entries.forEach(entry => {
@@ -629,6 +651,34 @@
                 thumbObserver.unobserve(image);
             }), { rootMargin:'360px 0px' })
             : null;
+        const aiGroupObserver = 'IntersectionObserver' in window
+            ? new IntersectionObserver(entries => entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                hydrateAiGroupCard(entry.target);
+                aiGroupObserver.unobserve(entry.target);
+            }), { rootMargin:'320px 0px' })
+            : null;
+
+        function hydrateAiGroupCard(card) {
+            if (!card || card.dataset.hydrated === 'true') return;
+            const image = card.querySelector('img[data-src]');
+            if (!image) {
+                card.classList.add('is-ready');
+                card.dataset.hydrated = 'true';
+                return;
+            }
+            const src = image.dataset.src || '';
+            image.removeAttribute('data-src');
+            card.dataset.hydrated = 'true';
+            const markReady = () => {
+                image.classList.add('is-ready');
+                card.classList.add('is-ready');
+            };
+            image.addEventListener('load', markReady, { once:true });
+            image.addEventListener('error', markReady, { once:true });
+            if (!src) return markReady();
+            image.src = src;
+        }
 
         function setMessage(message, type = 'info') {
             elements.statusMessage.textContent = message;
@@ -662,6 +712,102 @@
             const query = new URLSearchParams({ size });
             if (download) query.set('download', '1');
             return `${ONLINE_SERVER}/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(image.id)}?${query.toString()}`;
+        }
+
+        function mapAlbumImage(file) {
+            const image = {
+                ...file,
+                fullName: file.fullName || file.shortName || '',
+                shortName: file.shortName || file.fullName || '',
+                selected: false,
+                note: ''
+            };
+            image.thumbnail = image.thumbnail || getProtectedDriveImageUrl(image, 'thumb', false);
+            image.preview = image.preview || getProtectedDriveImageUrl(image, 'preview', false);
+            image.lightbox = image.lightbox || getProtectedDriveImageUrl(image, 'lightbox', false);
+            image.originalUrl = image.originalUrl || getProtectedDriveImageUrl(image, 'original', true);
+            return image;
+        }
+
+        function applyMetadataToImages(images) {
+            const likedList = state.likedList || {};
+            const checkNotes = state.checkNotes || {};
+            (images || []).forEach(item => {
+                const savedData = likedList[item.fullName];
+                if (savedData && typeof savedData === 'object') {
+                    item.selected = !!savedData.isLiked;
+                    item.note = savedData.note || '';
+                }
+                if (state.checkImages.includes(item) && checkNotes[item.fullName] !== undefined) {
+                    item.note = checkNotes[item.fullName] || '';
+                }
+            });
+        }
+
+        function mergeAlbumImages(target, incoming) {
+            const seen = new Set(target.map(item => item.id || item.fullName));
+            incoming.forEach(item => {
+                const key = item.id || item.fullName;
+                if (!seen.has(key)) {
+                    target.push(item);
+                    seen.add(key);
+                }
+            });
+            target.sort(naturalImageCompare);
+            applyMetadataToImages(incoming);
+        }
+
+        function warmLightboxImage(url, priority = 'low') {
+            const source = String(url || '');
+            if (!source) return Promise.resolve(false);
+            const cached = lightboxWarmCache.get(source);
+            if (cached) return cached;
+            const promise = new Promise(resolve => {
+                const image = new Image();
+                image.decoding = 'async';
+                image.fetchPriority = priority;
+                image.onload = () => resolve(true);
+                image.onerror = () => resolve(false);
+                image.src = source;
+            });
+            lightboxWarmCache.set(source, promise);
+            if (lightboxWarmCache.size > LIGHTBOX_WARM_CACHE_LIMIT) {
+                const oldest = lightboxWarmCache.keys().next().value;
+                if (oldest) lightboxWarmCache.delete(oldest);
+            }
+            return promise;
+        }
+
+        function progressiveLightboxImage(element, imageId, previewUrl, highUrl, onHighReady) {
+            if (!element) return;
+            const preview = String(previewUrl || highUrl || '');
+            const high = String(highUrl || preview);
+            element.dataset.imageId = String(imageId || '');
+            element.dataset.fallback = preview;
+            element.decoding = 'async';
+            element.loading = 'eager';
+            element.fetchPriority = 'high';
+            // Paint the light preview first; upgrade to the 2000px image in
+            // the background so opening the lightbox never waits on Drive.
+            if (element.getAttribute('src') !== preview) element.src = preview;
+            if (!high || high === preview) return;
+            let upgradeStarted = false;
+            const startUpgrade = () => {
+                if (upgradeStarted) return;
+                upgradeStarted = true;
+                const run = () => warmLightboxImage(high, 'low').then(ready => {
+                    if (!ready || element.dataset.imageId !== String(imageId || '')) return;
+                    onHighReady?.();
+                    if (element.getAttribute('src') !== high) element.src = high;
+                });
+                if ('requestIdleCallback' in window) window.requestIdleCallback(run, { timeout: 900 });
+                else window.setTimeout(run, 24);
+            };
+            // Let the preview win the first round-trip on mobile. The larger
+            // request begins only after the preview has painted (or failed).
+            element.addEventListener('load', startUpgrade, { once: true });
+            element.addEventListener('error', startUpgrade, { once: true });
+            if (element.complete && element.naturalWidth > 0) startUpgrade();
         }
 
         function getShareUrl() {
@@ -820,12 +966,12 @@
             orderedSections.forEach(section => {
                 const button = document.createElement('button'); button.type = 'button'; button.className = 'gallery-section-btn';
                 const count = state.originalImages.filter(image => String(image.gallerySectionId || '') === String(section.id || section.driveFolderId)).length;
-                button.textContent = `${section.name || 'Ngày'} (${count})`;
+                button.textContent = `${section.name || 'Ngày'} (${count}${state.pagesPending ? '+' : ''})`;
                 button.classList.toggle('active', String(state.activeGallerySection) === String(section.id || section.driveFolderId));
                 button.onclick = () => setGallerySection(section.id || section.driveFolderId);
                 nav.appendChild(button);
             });
-            const all = document.createElement('button'); all.type = 'button'; all.className = 'gallery-section-btn'; all.textContent = `Tất cả (${state.originalImages.length})`;
+            const all = document.createElement('button'); all.type = 'button'; all.className = 'gallery-section-btn'; all.textContent = `Tất cả (${state.originalImages.length}${state.pagesPending ? '+' : ''})`;
             all.classList.toggle('active', state.activeGallerySection === 'all'); all.onclick = () => setGallerySection('all'); nav.appendChild(all);
             if (elements.partyGalleryActions) elements.partyGalleryActions.style.display = state.galleryType === 'party' ? 'flex' : 'none';
         }
@@ -869,10 +1015,10 @@
         // Gom theo thứ tự tên + độ tương đồng thumbnail. Tên file chỉ dùng để
         // giữ đúng thứ tự burst; quyết định ảnh có cùng cụm hay không dựa trên
         // đặc trưng hình ảnh, tránh việc cả album bị đề xuất hàng loạt.
-        async function buildAiGroups() {
-            if (state.viewMode !== 'original' || !state.images.length) { state.aiGroups = []; return; }
-            const ordered = state.images.slice().sort(naturalImageCompare);
-            state.images = ordered;
+        async function buildAiGroups(sourceImages = state.images) {
+            if (state.viewMode !== 'original' || !sourceImages.length) { state.aiGroups = []; return; }
+            const ordered = sourceImages.slice().sort(naturalImageCompare);
+            if (sourceImages === state.images) state.images = ordered;
             const groupCacheKey = 'finder-ai-groups:' + folderId + ':' + ordered.map(item => item.fullName + ':' + (item.thumbnail || '')).join('|');
             try {
                 const cachedGroups = JSON.parse(localStorage.getItem(groupCacheKey) || 'null');
@@ -914,12 +1060,12 @@
         // AI grouping is helpful but not required to start browsing. Delay it
         // until the first image and the initial controls have had a chance to
         // paint, so a large album does not compete with the first thumbnails.
-        function scheduleAiGroups() {
+        function scheduleAiGroups(sourceImages = state.images) {
             window.clearTimeout(aiGroupingTimer);
             const run = () => {
                 aiGroupingTimer = null;
-                if (state.viewMode !== 'original' || !state.images.length) return;
-                buildAiGroups().then(() => render()).catch(() => {});
+                if (state.viewMode !== 'original' || !sourceImages.length) return;
+                buildAiGroups(sourceImages).then(() => render()).catch(() => {});
             };
             if ('requestIdleCallback' in window) {
                 window.requestIdleCallback(run, { timeout: 2200 });
@@ -928,7 +1074,13 @@
             }
         }
 
+        function getAiWarmWindow() {
+            const start = Math.max(0, state.currentIndex - 12);
+            return state.originalImages.slice(start, start + 36);
+        }
+
         function renderAiPicks() {
+            aiGroupObserver?.disconnect();
             const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
             if (!available) {
                 elements.aiPicksPanel.style.display = 'none';
@@ -948,7 +1100,7 @@
             state.aiGroups.forEach((group, groupIndex) => {
                 const first = group[0];
                 const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
-                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = first.image.thumbnail || first.image.originalUrl || ''; image.alt = 'Nhóm ảnh tương tự ' + (groupIndex + 1);
+                const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.dataset.src = first.image.thumbnail || first.image.originalUrl || ''; image.alt = 'Nhóm ảnh tương tự ' + (groupIndex + 1);
                 const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = 'Cụm ' + (groupIndex + 1) + ' · ' + group.length + ' ảnh tương tự';
                 card.append(image, label); card.addEventListener('click', () => {
                     state.activeAiGroupIndex = groupIndex;
@@ -958,6 +1110,8 @@
                     openLightbox();
                 });
                 elements.aiPicksGrid.appendChild(card);
+                if (aiGroupObserver) aiGroupObserver.observe(card);
+                else hydrateAiGroupCard(card);
             });
         }
 
@@ -1154,7 +1308,7 @@
             elements.swipeHint.style.display = isFinalView ? 'none' : '';
             elements.statusMessage.style.display = isFinalView && !elements.statusMessage.classList.contains('error') ? 'none' : '';
             const galleryEntries = state.images.map((img, index) => ({ img, index }));
-            elements.galleryCount.textContent = `${state.images.length} ảnh`;
+            elements.galleryCount.textContent = `${state.images.length}${state.pagesPending ? '+' : ''} ảnh`;
             renderGallerySections();
             elements.reviewModeBar.classList.toggle('visible', state.checkReady && !isPartyGallery);
             elements.checkAcceptBtn.style.display = state.checkReady && state.viewMode === 'check' && !state.checkNeedsRevision && state.workflowStatus !== 'completed' ? '' : 'none';
@@ -1203,8 +1357,15 @@
             if (!elements.partyGalleryActions || state.galleryType !== 'party') return;
             const visible = state.images.filter(image => image);
             const allSelected = visible.length > 0 && visible.every(image => partySelected.has(image.fullName));
-            if (elements.partySelectAllBtn) elements.partySelectAllBtn.textContent = allSelected ? 'Bỏ chọn phần này' : 'Chọn tất cả phần này';
-            if (elements.partyDownloadBtn) elements.partyDownloadBtn.textContent = `⬇️ Tải ảnh đã chọn (${partySelected.size})`;
+            const waitingForPages = state.pagesPending || state.pageLoading;
+            if (elements.partySelectAllBtn) {
+                elements.partySelectAllBtn.textContent = waitingForPages ? 'Đang tải danh sách…' : (allSelected ? 'Bỏ chọn phần này' : 'Chọn tất cả phần này');
+                elements.partySelectAllBtn.disabled = waitingForPages;
+            }
+            if (elements.partyDownloadBtn) {
+                elements.partyDownloadBtn.textContent = waitingForPages ? 'Đang chuẩn bị ảnh…' : `⬇️ Tải ảnh đã chọn (${partySelected.size})`;
+                elements.partyDownloadBtn.disabled = waitingForPages;
+            }
         }
 
         function preloadNearbyImages() {
@@ -1215,6 +1376,18 @@
                 preload.decoding = 'async';
                 preload.fetchPriority = offset === 1 ? 'high' : 'low';
                 preload.src = image.preview;
+            });
+        }
+
+        function preloadLightboxNeighbors() {
+            if (!state.images.length) return;
+            [1, -1].forEach(offset => {
+                const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
+                if (!image) return;
+                const preview = image.preview || image.thumbnail || image.originalUrl || '';
+                // Warm only the lightweight preview. The full lightbox image
+                // is fetched after the visitor opens that specific image.
+                warmLightboxImage(preview, offset === 1 ? 'high' : 'low');
             });
         }
 
@@ -1255,6 +1428,7 @@
             }
             state.currentIndex = (state.currentIndex + 1) % state.images.length;
             render();
+            if (state.pagesPending && state.viewMode === 'original') scheduleAiGroups(getAiWarmWindow());
             if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
         }
 
@@ -1267,6 +1441,7 @@
             }
             state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
             render();
+            if (state.pagesPending && state.viewMode === 'original') scheduleAiGroups(getAiWarmWindow());
             if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
         }
 
@@ -1337,6 +1512,7 @@
                 }
             }
             const highResolutionUrl = current.lightbox || current.originalUrl || current.preview || current.thumbnail || '';
+            const previewResolutionUrl = current.preview || current.thumbnail || current.originalUrl || highResolutionUrl;
             const compareOriginal = state.viewMode === 'check' ? findOriginalForCheck(current) : null;
             const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
             const canCompare = !isFinalView && Boolean(compareOriginal && (compareOriginal.lightbox || compareOriginal.originalUrl));
@@ -1345,24 +1521,26 @@
             elements.compareToggleBtn.textContent = showCompare ? '🖼️ Ảnh đơn' : '↔ So sánh';
             elements.compareStage.classList.toggle('visible', showCompare);
             elements.lightboxImage.style.display = showCompare ? 'none' : '';
+            elements.lightboxLoading.classList.remove('hidden');
+            elements.lightboxLoading.textContent = showCompare ? 'Đang tải ảnh xem trước để so sánh…' : 'Đang tải ảnh xem trước…';
             if (showCompare) {
                 const compareRect = elements.compareStage.getBoundingClientRect();
                 elements.compareStage.style.setProperty('--compare-stage-width', `${compareRect.width}px`);
                 elements.compareStage.style.setProperty('--compare-stage-height', `${compareRect.height}px`);
-                elements.compareOriginalImage.src = compareOriginal.lightbox || compareOriginal.originalUrl;
-                elements.compareCheckImage.src = highResolutionUrl;
+                const originalHighUrl = compareOriginal.lightbox || compareOriginal.originalUrl || compareOriginal.preview || compareOriginal.thumbnail || '';
+                const originalPreviewUrl = compareOriginal.preview || compareOriginal.thumbnail || originalHighUrl;
+                progressiveLightboxImage(elements.compareOriginalImage, `original:${compareOriginal.id || compareOriginal.fullName}`, originalPreviewUrl, originalHighUrl);
+                progressiveLightboxImage(elements.compareCheckImage, `check:${current.id || current.fullName}`, previewResolutionUrl, highResolutionUrl);
                 elements.compareRange.value = '50';
                 updateCompareSlider();
             } else {
-                elements.lightboxImage.dataset.fallback = current.preview || current.thumbnail || elements.mainImage.src;
-                elements.lightboxImage.src = highResolutionUrl;
+                progressiveLightboxImage(elements.lightboxImage, current.id || current.fullName, previewResolutionUrl, highResolutionUrl);
             }
-            elements.lightboxLoading.classList.remove('hidden');
-            elements.lightboxLoading.textContent = canCompare ? 'Đang tải ảnh gốc và ảnh chỉnh sửa chất lượng cao…' : 'Đang tải ảnh chất lượng cao…';
             zoomScale = 1;
             panX = 0; panY = 0; panPointer = null;
             elements.lightboxImage.style.transformOrigin = 'center';
             applyZoom();
+            preloadLightboxNeighbors();
         }
 
         function openLightbox() {
@@ -1724,6 +1902,67 @@
             throw lastError || new Error('Không thể kết nối máy chủ.');
         }
 
+        function applyAlbumSettings(settings = {}, isFinalized = state.isFinalized, gallerySections = []) {
+            state.galleryType = settings.galleryType || (settings.partyGallery ? 'party' : 'selection');
+            state.gallerySections = Array.isArray(gallerySections) && gallerySections.length
+                ? gallerySections
+                : (Array.isArray(settings.gallerySections) ? settings.gallerySections : []);
+            if (!state.activeGallerySection) state.activeGallerySection = 'all';
+            state.expiresDays = Number(settings.expiresDays) || 60;
+            state.isFinalized = !!isFinalized || state.galleryType === 'party';
+            state.maxSelections = Number(settings.maxSelections) || 0;
+            state.checkFolderId = settings.checkFolderId || null;
+            state.checkUpdatedAt = settings.checkUpdatedAt || null;
+            state.checkVersion = Number(settings.checkVersion) || 1;
+            state.checkNeedsRevision = Boolean(settings.checkNeedsRevision);
+            state.workflowStatus = settings.workflowStatus || (state.checkReady ? 'check_pending' : 'selection_open');
+            state.expiresAt = settings.expiresAt || null;
+            state.selectionReopenedAt = settings.selectionReopenedAt || null;
+            state.publicSlug = settings.publicSlug || state.publicSlug;
+            const configuredStudio = String(settings.studioName || '').trim();
+            state.studioName = configuredStudio && !/^(finder|finder studio)$/i.test(configuredStudio)
+                ? configuredStudio.toUpperCase()
+                : 'FINDER';
+            state.displayName = String(settings.displayName || state.studioName || 'Finder').trim() || 'Finder';
+        }
+
+        function applyAlbumMetadata(data = {}) {
+            state.likedList = data.liked_list || {};
+            state.checkNotes = data.check_notes || {};
+            applyMetadataToImages([...state.originalImages, ...state.checkImages]);
+            if (data.settings) applyAlbumSettings(data.settings, data.isFinalized, data.gallerySections);
+            state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+            render();
+        }
+
+        async function loadRemainingAlbumPages() {
+            if (state.pageLoading || !state.pageCursor) return;
+            state.pagesPending = true;
+            while (state.pageCursor) {
+                state.pageLoading = true;
+                updatePartyActions();
+                const params = new URLSearchParams({ paged: '1', compact: '1', limit: '24', cursor: state.pageCursor });
+                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}?${params.toString()}`, { cache: 'default' }, 3);
+                const data = await readApiJson(response, 'Không thể tải thêm ảnh');
+                const currentName = getCurrentImage()?.fullName || '';
+                mergeAlbumImages(state.originalImages, (data.files || []).map(mapAlbumImage));
+                mergeAlbumImages(state.checkImages, (data.checkFiles || []).map(mapAlbumImage));
+                state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+                state.pageCursor = data.nextCursor || null;
+                state.pageHasMore = Boolean(data.hasMore && state.pageCursor);
+                state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
+                const restoredIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
+                if (restoredIndex >= 0) state.currentIndex = restoredIndex;
+                render();
+            }
+            state.pageLoading = false;
+            state.pagesPending = false;
+            state.pageHasMore = false;
+            updatePartyActions();
+            if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
+            render();
+        }
+
         async function loadAlbum() {
             if (!folderId && albumSlug) {
                 try {
@@ -1744,64 +1983,30 @@
             if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
 
             try {
-                const albumParams = new URLSearchParams({ compact: '1' });
+                const albumParams = new URLSearchParams({ paged: '1', compact: '1', limit: '24' });
                 if (albumSlug) albumParams.set('slug', albumSlug);
                 const albumQuery = `?${albumParams.toString()}`;
-                const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}${albumQuery}`, { cache: 'no-store' }, 3);
+                // Images and mutable selections are fetched independently. The
+                // first page can paint while likes/notes are still loading.
+                const pageResponsePromise = fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}${albumQuery}`, { cache: 'default' }, 3);
+                const metadataResponsePromise = fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/meta`, { cache: 'no-store' }, 3)
+                    .catch(error => { console.warn('Album metadata request failed:', error.message); return null; });
+                const response = await pageResponsePromise;
                 const data = await readApiJson(response, 'Không thể tải album');
 
-                state.galleryType = data.settings?.galleryType || (data.settings?.partyGallery ? 'party' : 'selection');
-                state.gallerySections = Array.isArray(data.gallerySections) && data.gallerySections.length ? data.gallerySections : (Array.isArray(data.settings?.gallerySections) ? data.settings.gallerySections : []);
-                state.activeGallerySection = 'all';
-                state.expiresDays = Number(data.settings?.expiresDays) || 60;
-                state.isFinalized = !!data.isFinalized || state.galleryType === 'party';
-                state.maxSelections = Number(data.settings?.maxSelections) || 0;
-                const mapImage = file => {
-                    const image = {
-                        ...file,
-                        fullName: file.fullName || file.shortName || '',
-                        shortName: file.shortName || file.fullName || '',
-                        selected: false,
-                        note: ''
-                    };
-                    // Compact album responses carry only the thumbnail URL;
-                    // derive the other protected sizes locally to avoid
-                    // repeating long URLs hundreds of times in JSON.
-                    image.thumbnail = image.thumbnail || getProtectedDriveImageUrl(image, 'thumb', false);
-                    image.preview = image.preview || getProtectedDriveImageUrl(image, 'preview', false);
-                    image.lightbox = image.lightbox || getProtectedDriveImageUrl(image, 'lightbox', false);
-                    image.originalUrl = image.originalUrl || getProtectedDriveImageUrl(image, 'original', true);
-                    return image;
-                };
-                state.originalImages = (data.files || []).map(mapImage);
-                state.checkImages = (data.checkFiles || []).map(mapImage);
+                applyAlbumSettings(data.settings || {}, data.isFinalized, data.gallerySections);
+                state.originalImages = (data.files || []).map(mapAlbumImage);
+                state.checkImages = (data.checkFiles || []).map(mapAlbumImage);
                 state.originalImages.sort(naturalImageCompare);
                 state.checkImages.sort(naturalImageCompare);
-                state.checkFolderId = data.settings?.checkFolderId || null;
-                state.checkUpdatedAt = data.settings?.checkUpdatedAt || null;
-                state.checkVersion = Number(data.settings?.checkVersion) || 1;
-                state.checkNeedsRevision = Boolean(data.settings?.checkNeedsRevision);
-                state.workflowStatus = data.settings?.workflowStatus || (state.checkReady ? 'check_pending' : 'selection_open');
-                state.expiresAt = data.settings?.expiresAt || null;
-                state.selectionReopenedAt = data.settings?.selectionReopenedAt || null;
-                state.checkReady = Boolean(data.settings?.checkReady && state.checkFolderId && state.checkImages.length);
-                state.publicSlug = data.settings?.publicSlug || state.publicSlug;
-                const configuredStudio = String(data.settings?.studioName || '').trim();
-                state.studioName = configuredStudio && !/^(finder|finder studio)$/i.test(configuredStudio)
-                    ? configuredStudio.toUpperCase()
-                    : 'FINDER';
-                state.displayName = String(data.settings?.displayName || state.studioName || 'Finder').trim() || 'Finder';
-
-                const likedList = data.liked_list || {};
-                const checkNotes = data.check_notes || {};
-                [...state.originalImages, ...state.checkImages].forEach(item => {
-                    const savedData = likedList[item.fullName];
-                    if (savedData && typeof savedData === 'object') {
-                        item.selected = !!savedData.isLiked;
-                        item.note = savedData.note || '';
-                    }
-                    if (state.checkImages.includes(item) && checkNotes[item.fullName] !== undefined) item.note = checkNotes[item.fullName] || '';
-                });
+                state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+                state.pageCursor = data.nextCursor || null;
+                state.pageHasMore = Boolean(data.hasMore && state.pageCursor);
+                state.pagesPending = state.pageHasMore;
+                // Older pages or an API rollout may still include metadata;
+                // use it immediately, then let /meta provide the canonical
+                // mutable state without delaying the first paint.
+                if (data.liked_list || data.check_notes) applyAlbumMetadata(data);
 
                 // Khi khách được mở lại để chọn bổ sung, mặc định trở về ảnh
                 // gốc; tab CHECK vẫn được giữ trên thanh chuyển chế độ để xem
@@ -1814,10 +2019,22 @@
                 // Chỉ chào sau khi đã nạp đầy đủ trạng thái, giới hạn chọn và
                 // lựa chọn đã lưu để robot không nói sai ngữ cảnh lúc mới mở.
                 showRobotStatus(robotContextGreeting());
-                // Hiển thị gallery ngay lập tức; gom nhóm chạy nền sau đó.
-                if (state.viewMode === 'original') scheduleAiGroups();
+                // Analyze only the first visible page first; the complete album
+                // pass runs after the remaining Drive pages finish loading.
+                if (state.viewMode === 'original') scheduleAiGroups(getAiWarmWindow());
                 scheduleRobotAssistant();
                 setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+                metadataResponsePromise
+                    .then(response => response ? readApiJson(response, 'Không thể tải trạng thái album') : null)
+                    .then(data => data ? applyAlbumMetadata(data) : null)
+                    .catch(error => console.warn('Album metadata deferred load failed:', error.message));
+                if (state.pageCursor) loadRemainingAlbumPages().catch(error => {
+                    state.pageLoading = false;
+                    state.pagesPending = false;
+                    setMessage(`⚠️ Đã hiển thị ảnh đầu tiên nhưng chưa tải hết thư viện: ${error.message}`, 'error');
+                    updatePartyActions();
+                    render();
+                });
             } catch (error) {
                 setMessage(`❌ ${error.message || 'Không thể kết nối tới Server.'}`, 'error');
             }
