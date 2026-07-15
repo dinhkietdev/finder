@@ -573,8 +573,12 @@
             expiresDays: 60,
             expiresAt: null,
             aiGroups: [],
-            aiGroupsExpanded: true,
+            // While analysis is running, keep the normal gallery visible.
+            // Once the complete group list is ready, the accordion opens the
+            // groups automatically (unless the visitor explicitly toggled it).
+            aiGroupsExpanded: false,
             galleryExpanded: true,
+            aiAccordionUserInteracted: false,
             activeAiGroupIndex: null,
             publicSlug: albumSlug,
             studioName: 'Finder',
@@ -1243,6 +1247,10 @@
             state.aiAnalysisPending = Boolean(sourceImages.length && state.viewMode === 'original');
             state.aiGroupSourceCount = sourceImages.length;
             state.aiGroupsComplete = !state.pagesPending && !state.pageLoading && sourceImages.length >= state.originalImages.length;
+            if (!state.aiAccordionUserInteracted) {
+                state.aiGroupsExpanded = false;
+                state.galleryExpanded = true;
+            }
             updateAlbumLoadingOverlay();
             // Paint the compact “đang phân tích” state immediately instead of
             // leaving a blank section until the first worker finishes.
@@ -1262,6 +1270,15 @@
                     .finally(() => {
                         if (runId === aiGroupingRunId) {
                             state.aiAnalysisPending = false;
+                            if (!state.aiAccordionUserInteracted) {
+                                if (state.aiGroupsComplete && state.aiGroups.length) {
+                                    state.aiGroupsExpanded = true;
+                                    state.galleryExpanded = false;
+                                } else {
+                                    state.aiGroupsExpanded = false;
+                                    state.galleryExpanded = true;
+                                }
+                            }
                             updateAlbumLoadingOverlay();
                             render();
                         }
@@ -1280,15 +1297,19 @@
         }
 
         function setAiGroupsExpanded(expanded) {
+            state.aiAccordionUserInteracted = true;
             state.aiGroupsExpanded = !!expanded;
-            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            const available = state.viewMode === 'original' && !state.isFinalized
+                && (state.aiGroups.length > 0 || state.aiAnalysisPending || state.pagesPending);
             if (available) state.galleryExpanded = !state.aiGroupsExpanded;
             render();
         }
 
         function setGalleryExpanded(expanded) {
+            state.aiAccordionUserInteracted = true;
             state.galleryExpanded = !!expanded;
-            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            const available = state.viewMode === 'original' && !state.isFinalized
+                && (state.aiGroups.length > 0 || state.aiAnalysisPending || state.pagesPending);
             if (available) state.aiGroupsExpanded = !state.galleryExpanded;
             render();
         }
