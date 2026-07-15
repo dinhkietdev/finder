@@ -196,6 +196,7 @@
         .selection-item:hover { background:rgba(124,140,255,.08); }
         .gallery-heading { display:flex; justify-content:space-between; align-items:center; margin:0 2px 12px; font-size:13px; color:var(--text-muted); }
         .gallery-heading strong { color:var(--text-main); font-size:15px; }
+        .gallery-heading-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; min-width:0; }
         .thumb-strip { display:grid; grid-template-columns:repeat(auto-fill,minmax(92px,1fr)); gap:10px; overflow:visible; padding:0; }
         .thumb-btn { width:100%; aspect-ratio:1; border-radius:14px; border:1px solid var(--border); background:#0d1320; transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease; }
         .thumb-btn:hover { transform:translateY(-2px); border-color:rgba(135,150,255,.9); }
@@ -259,6 +260,9 @@
             .ai-picks-heading-actions { width:100%; justify-content:space-between; gap:10px; }
             .ai-picks-count { min-height:40px; }
             .ai-picks-toggle { min-height:44px; padding:8px 12px; }
+            .gallery-heading { align-items:flex-start; gap:8px; }
+            .gallery-heading-actions { flex-wrap:wrap; justify-content:flex-end; }
+            .gallery-heading-actions .ai-picks-toggle { min-height:44px; }
         }
 
         /* Final client polish: touch-first gallery and clear loading feedback. */
@@ -268,7 +272,7 @@
         button:focus-visible, textarea:focus-visible { outline:3px solid rgba(124,140,255,.42); outline-offset:3px; }
         .gallery-panel { overflow:hidden; }
         .gallery-heading { position:sticky; top:0; z-index:3; padding:5px 2px 12px; background:linear-gradient(var(--bg-card) 72%,transparent); }
-        .gallery-heading span { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
+        .gallery-heading > #galleryCount { padding:5px 9px; border:1px solid var(--border); border-radius:999px; font-variant-numeric:tabular-nums; }
         .thumb-btn { content-visibility:auto; contain-intrinsic-size:92px; }
         .thumb-btn img { opacity:0; transition:opacity .22s ease, transform .3s ease; }
         .thumb-btn img.is-ready { opacity:1; }
@@ -297,6 +301,14 @@
         .selection-reopen-card p { color:var(--text-muted); font-size:13px; line-height:1.6; }
         .selection-reopen-actions { display:flex; gap:9px; justify-content:center; margin-top:18px; }
         .selection-reopen-actions .btn { flex:1; }
+        .album-loading-modal { display:none; position:fixed; inset:0; z-index:1300; align-items:center; justify-content:center; padding:20px; background:rgba(2,6,14,.28); backdrop-filter:blur(3px); pointer-events:none; }
+        .album-loading-modal.open { display:flex; }
+        .album-loading-card { width:min(430px,100%); padding:25px 23px 22px; border:1px solid rgba(157,168,255,.34); border-radius:22px; background:linear-gradient(145deg,#111a2c,#0c1321); color:var(--text-main); box-shadow:0 24px 80px rgba(0,0,0,.48); text-align:center; pointer-events:none; }
+        .album-loading-spinner { width:38px; height:38px; margin:0 auto 15px; border:3px solid rgba(191,200,255,.2); border-top-color:#9da8ff; border-right-color:#3bd9a0; border-radius:50%; animation:albumLoadingSpin .8s linear infinite; }
+        .album-loading-card strong { display:block; font-size:17px; }
+        .album-loading-card p { margin-top:9px; color:#d7deef; font-size:13px; line-height:1.6; }
+        .album-loading-card small { display:block; margin-top:13px; color:var(--text-muted); font-size:12px; }
+        @keyframes albumLoadingSpin { to { transform:rotate(360deg); } }
         @media (max-width:560px) {
             body { padding-bottom:calc(82px + env(safe-area-inset-bottom)); }
             .thumb-strip { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -438,7 +450,15 @@
         </div>
 
         <div id="galleryPanel" class="panel gallery-panel">
-            <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
+            <div class="gallery-heading">
+                <strong>Thư viện ảnh</strong>
+                <div class="gallery-heading-actions">
+                    <span id="galleryCount">0 ảnh</span>
+                    <button id="galleryToggle" class="ai-picks-toggle" type="button" role="switch" aria-checked="true" aria-label="Bật hoặc tắt thư viện ảnh">
+                        <span class="toggle-track" aria-hidden="true"></span><span id="galleryToggleLabel">Đang mở</span>
+                    </button>
+                </div>
+            </div>
             <div id="gallerySectionsNav" class="gallery-sections-nav" style="display:none;"></div>
             <div id="partyGalleryActions" style="display:none;gap:8px;flex-wrap:wrap;margin:0 0 12px;">
                 <button id="partySelectAllBtn" type="button" class="gallery-section-btn">Chọn tất cả phần này</button>
@@ -485,6 +505,14 @@
             <h3>Album đã được mở lại</h3>
             <p>Studio vừa điều chỉnh số lượng ảnh cần chọn. Các ảnh bạn đã chọn vẫn được giữ nguyên; hãy quay lại trang ảnh gốc để bổ sung hoặc thay đổi lựa chọn.</p>
             <div class="selection-reopen-actions"><button id="reopenOriginalBtn" class="btn btn-primary" type="button">Ảnh lựa chọn</button><button id="reopenCheckBtn" class="btn btn-outline" type="button">Xem ảnh đã sửa</button></div>
+        </div>
+    </div>
+    <div id="albumLoadingModal" class="album-loading-modal" aria-hidden="true" role="status" aria-live="polite">
+        <div class="album-loading-card">
+            <div class="album-loading-spinner" aria-hidden="true"></div>
+            <strong>Đang chuẩn bị album...</strong>
+            <p>Vui lòng đợi em load ảnh một xíu nhé, lần đầu sẽ mất xíu thời gian, đừng dỗi em nha :D</p>
+            <small id="albumLoadingProgress">Đang tải ảnh...</small>
         </div>
     </div>
     <div id="helpRobot" class="help-robot">
@@ -535,6 +563,7 @@
             expiresAt: null,
             aiGroups: [],
             aiGroupsExpanded: true,
+            galleryExpanded: true,
             activeAiGroupIndex: null,
             publicSlug: albumSlug,
             studioName: 'Finder',
@@ -545,6 +574,9 @@
             pageHasMore: false,
             pageLoading: false,
             pagesPending: false,
+            initialLoadPending: false,
+            metadataPending: false,
+            aiAnalysisPending: false,
             likedList: {},
             checkNotes: {}
         };
@@ -598,6 +630,8 @@
             ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn'), partyDownloadQueue: document.getElementById('partyDownloadQueue'), partyDownloadQueueText: document.getElementById('partyDownloadQueueText'), partyDownloadNextBtn: document.getElementById('partyDownloadNextBtn'), partyDownloadCancelBtn: document.getElementById('partyDownloadCancelBtn')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             aiPicksToggle: document.getElementById('aiPicksToggle'), aiPicksToggleLabel: document.getElementById('aiPicksToggleLabel'), galleryPanel: document.getElementById('galleryPanel'),
+            galleryToggle: document.getElementById('galleryToggle'), galleryToggleLabel: document.getElementById('galleryToggleLabel'),
+            albumLoadingModal: document.getElementById('albumLoadingModal'), albumLoadingProgress: document.getElementById('albumLoadingProgress'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
             copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
@@ -634,6 +668,7 @@
         let suppressLightboxCloseUntil = 0;
         let lightboxPanStart = null;
         let aiGroupingTimer = null;
+        let aiGroupingRunId = 0;
         let thumbRenderVersion = 0;
         // Keep only a small set of in-flight/completed warmups. The browser
         // owns the decoded image cache; this map prevents duplicate requests
@@ -685,6 +720,36 @@
             elements.statusMessage.className = 'status-message';
             if (type === 'error') elements.statusMessage.classList.add('error');
             if (type === 'success') elements.statusMessage.classList.add('success');
+        }
+
+        function setAlbumLoadingVisible(visible) {
+            const modal = elements.albumLoadingModal;
+            if (!modal) return;
+            modal.classList.toggle('open', !!visible);
+            modal.setAttribute('aria-hidden', visible ? 'false' : 'true');
+        }
+
+        function updateAlbumLoadingOverlay() {
+            if (!state.initialLoadPending) {
+                setAlbumLoadingVisible(false);
+                return;
+            }
+            const busy = state.metadataPending || state.pagesPending || state.pageLoading || state.aiAnalysisPending;
+            if (!busy) {
+                state.initialLoadPending = false;
+                setAlbumLoadingVisible(false);
+                return;
+            }
+            const progress = [];
+            if (state.originalImages.length || state.checkImages.length) {
+                const imageCount = state.originalImages.length + (state.checkImages.length ? ` · ${state.checkImages.length} CHECK` : '');
+                progress.push(`Đã nhận ${imageCount} ảnh` + (state.pagesPending || state.pageLoading ? ', đang tải tiếp...' : ''));
+            } else {
+                progress.push('Đang tải ảnh đầu tiên...');
+            }
+            if (state.aiAnalysisPending) progress.push('Đang chuẩn bị nhóm ảnh tương tự...');
+            if (elements.albumLoadingProgress) elements.albumLoadingProgress.textContent = progress.join(' ');
+            setAlbumLoadingVisible(true);
         }
 
         function escapeHtml(value = '') {
@@ -1069,10 +1134,28 @@
         // paint, so a large album does not compete with the first thumbnails.
         function scheduleAiGroups(sourceImages = state.images) {
             window.clearTimeout(aiGroupingTimer);
+            const runId = ++aiGroupingRunId;
+            state.aiAnalysisPending = Boolean(sourceImages.length && state.viewMode === 'original');
+            updateAlbumLoadingOverlay();
             const run = () => {
                 aiGroupingTimer = null;
-                if (state.viewMode !== 'original' || !sourceImages.length) return;
-                buildAiGroups(sourceImages).then(() => render()).catch(() => {});
+                if (state.viewMode !== 'original' || !sourceImages.length) {
+                    if (runId === aiGroupingRunId) {
+                        state.aiAnalysisPending = false;
+                        updateAlbumLoadingOverlay();
+                    }
+                    return;
+                }
+                buildAiGroups(sourceImages)
+                    .then(() => render())
+                    .catch(() => {})
+                    .finally(() => {
+                        if (runId === aiGroupingRunId) {
+                            state.aiAnalysisPending = false;
+                            updateAlbumLoadingOverlay();
+                            render();
+                        }
+                    });
             };
             if ('requestIdleCallback' in window) {
                 window.requestIdleCallback(run, { timeout: 2200 });
@@ -1086,22 +1169,45 @@
             return state.originalImages.slice(start, start + 36);
         }
 
+        function setAiGroupsExpanded(expanded) {
+            state.aiGroupsExpanded = !!expanded;
+            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            if (available) state.galleryExpanded = !state.aiGroupsExpanded;
+            render();
+        }
+
+        function setGalleryExpanded(expanded) {
+            state.galleryExpanded = !!expanded;
+            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            if (available) state.aiGroupsExpanded = !state.galleryExpanded;
+            render();
+        }
+
         function renderAiPicks() {
             aiGroupObserver?.disconnect();
             const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
             if (!available) {
                 elements.aiPicksPanel.style.display = 'none';
-                elements.galleryPanel?.classList.remove('is-collapsed');
+                const galleryOpen = state.galleryExpanded !== false;
+                elements.galleryPanel?.classList.toggle('is-collapsed', !galleryOpen);
+                elements.galleryToggle?.setAttribute('aria-checked', galleryOpen ? 'true' : 'false');
+                if (elements.galleryToggleLabel) elements.galleryToggleLabel.textContent = galleryOpen ? 'Đang mở' : 'Đã thu gọn';
                 return;
             }
             elements.aiPicksPanel.style.display = '';
             elements.aiPicksCount.textContent = state.aiGroups.length + ' cụm';
             const expanded = state.aiGroupsExpanded !== false;
+            // The two panels intentionally behave like an accordion: opening
+            // one automatically collapses the other to keep mobile browsing
+            // focused and prevent duplicate grids in a large album.
+            state.galleryExpanded = !expanded;
             elements.aiPicksPanel.classList.toggle('is-collapsed', !expanded);
             elements.aiPicksGrid.hidden = !expanded;
             elements.aiPicksToggle?.setAttribute('aria-checked', expanded ? 'true' : 'false');
             if (elements.aiPicksToggleLabel) elements.aiPicksToggleLabel.textContent = expanded ? 'Đang mở' : 'Đã thu gọn';
-            elements.galleryPanel?.classList.toggle('is-collapsed', expanded);
+            elements.galleryPanel?.classList.toggle('is-collapsed', state.galleryExpanded === false);
+            elements.galleryToggle?.setAttribute('aria-checked', state.galleryExpanded ? 'true' : 'false');
+            if (elements.galleryToggleLabel) elements.galleryToggleLabel.textContent = state.galleryExpanded ? 'Đang mở' : 'Đã thu gọn';
             elements.aiPicksGrid.innerHTML = '';
             if (!expanded) return;
             state.aiGroups.forEach((group, groupIndex) => {
@@ -1948,8 +2054,10 @@
         async function loadRemainingAlbumPages() {
             if (state.pageLoading || !state.pageCursor) return;
             state.pagesPending = true;
+            updateAlbumLoadingOverlay();
             while (state.pageCursor) {
                 state.pageLoading = true;
+                updateAlbumLoadingOverlay();
                 updatePartyActions();
                 const params = new URLSearchParams({ paged: '1', compact: '1', limit: '24', cursor: state.pageCursor });
                 const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}?${params.toString()}`, { cache: 'default' }, 3);
@@ -1964,16 +2072,25 @@
                 const restoredIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
                 if (restoredIndex >= 0) state.currentIndex = restoredIndex;
                 render();
+                updateAlbumLoadingOverlay();
             }
             state.pageLoading = false;
             state.pagesPending = false;
             state.pageHasMore = false;
+            updateAlbumLoadingOverlay();
             updatePartyActions();
             if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
             render();
         }
 
         async function loadAlbum() {
+            state.initialLoadPending = true;
+            state.metadataPending = true;
+            state.pagesPending = false;
+            state.pageLoading = false;
+            state.aiAnalysisPending = false;
+            setAlbumLoadingVisible(true);
+            updateAlbumLoadingOverlay();
             if (!folderId && albumSlug) {
                 try {
                     const resolveResponse = await fetch(`${ONLINE_SERVER}/api/album-by-slug/${encodeURIComponent(albumSlug)}`, { cache: 'no-store' });
@@ -1988,9 +2105,21 @@
                         state.galleryType = 'party';
                         state.gallerySections = Array.isArray(resolved.settings.gallerySections) ? resolved.settings.gallerySections : [];
                     }
-                } catch (error) { setMessage(`❌ ${error.message}`, 'error'); return; }
+                } catch (error) {
+                    state.initialLoadPending = false;
+                    state.metadataPending = false;
+                    setAlbumLoadingVisible(false);
+                    setMessage(`❌ ${error.message}`, 'error');
+                    return;
+                }
             }
-            if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
+            if (!folderId) {
+                state.initialLoadPending = false;
+                state.metadataPending = false;
+                setAlbumLoadingVisible(false);
+                setMessage('❌ Đường dẫn album không hợp lệ.', 'error');
+                return;
+            }
 
             try {
                 const albumParams = new URLSearchParams({ paged: '1', compact: '1', limit: '24' });
@@ -1998,11 +2127,18 @@
                 const albumQuery = `?${albumParams.toString()}`;
                 // Images and mutable selections are fetched independently. The
                 // first page can paint while likes/notes are still loading.
+                state.pageLoading = true;
+                updateAlbumLoadingOverlay();
                 const pageResponsePromise = fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}${albumQuery}`, { cache: 'default' }, 3);
                 const metadataResponsePromise = fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}/meta`, { cache: 'no-store' }, 3)
-                    .catch(error => { console.warn('Album metadata request failed:', error.message); return null; });
+                    .catch(error => { console.warn('Album metadata request failed:', error.message); return null; })
+                    .finally(() => {
+                        state.metadataPending = false;
+                        updateAlbumLoadingOverlay();
+                    });
                 const response = await pageResponsePromise;
                 const data = await readApiJson(response, 'Không thể tải album');
+                state.pageLoading = false;
 
                 applyAlbumSettings(data.settings || {}, data.isFinalized, data.gallerySections);
                 state.originalImages = (data.files || []).map(mapAlbumImage);
@@ -2013,6 +2149,7 @@
                 state.pageCursor = data.nextCursor || null;
                 state.pageHasMore = Boolean(data.hasMore && state.pageCursor);
                 state.pagesPending = state.pageHasMore;
+                updateAlbumLoadingOverlay();
                 // Older pages or an API rollout may still include metadata;
                 // use it immediately, then let /meta provide the canonical
                 // mutable state without delaying the first paint.
@@ -2041,11 +2178,21 @@
                 if (state.pageCursor) loadRemainingAlbumPages().catch(error => {
                     state.pageLoading = false;
                     state.pagesPending = false;
+                    state.initialLoadPending = false;
+                    state.metadataPending = false;
+                    state.aiAnalysisPending = false;
+                    setAlbumLoadingVisible(false);
                     setMessage(`⚠️ Đã hiển thị ảnh đầu tiên nhưng chưa tải hết thư viện: ${error.message}`, 'error');
                     updatePartyActions();
                     render();
                 });
             } catch (error) {
+                state.initialLoadPending = false;
+                state.metadataPending = false;
+                state.pagesPending = false;
+                state.pageLoading = false;
+                state.aiAnalysisPending = false;
+                setAlbumLoadingVisible(false);
                 setMessage(`❌ ${error.message || 'Không thể kết nối tới Server.'}`, 'error');
             }
         }
@@ -2216,8 +2363,10 @@
         });
         elements.originalModeBtn.addEventListener('click', () => setViewMode('original'));
         elements.aiPicksToggle?.addEventListener('click', () => {
-            state.aiGroupsExpanded = state.aiGroupsExpanded === false;
-            renderAiPicks();
+            setAiGroupsExpanded(state.aiGroupsExpanded === false);
+        });
+        elements.galleryToggle?.addEventListener('click', () => {
+            setGalleryExpanded(state.galleryExpanded === false);
         });
         function jumpToSection(section) {
             section.scrollIntoView({ behavior: 'smooth', block: 'start' });
