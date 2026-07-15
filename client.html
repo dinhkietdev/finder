@@ -551,6 +551,8 @@
         const CLIENT_BOOTSTRAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
         const CLIENT_BOOTSTRAP_CACHE_MAX_IMAGES = 120;
         const CLIENT_BOOTSTRAP_CACHE_MAX_CHECK_IMAGES = 60;
+        const CLIENT_VIEW_STATE_VERSION = 1;
+        const CLIENT_VIEW_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
         const state = {
             images: [],
@@ -595,6 +597,10 @@
             aiGroupsComplete: false,
             aiGroupSourceCount: 0,
             cacheHydrated: false,
+            savedViewState: null,
+            savedViewStateLoaded: false,
+            viewStateRestored: false,
+            pendingViewFullName: '',
             likedList: {},
             checkNotes: {}
         };
@@ -819,6 +825,112 @@
             return `finder-client-bootstrap:${CLIENT_BOOTSTRAP_CACHE_VERSION}:${ONLINE_SERVER}:${identity}`;
         }
 
+        function getClientViewStateKey() {
+            const identity = albumSlug || folderId || 'unknown';
+            return `finder-client-view:${CLIENT_VIEW_STATE_VERSION}:${ONLINE_SERVER}:${identity}`;
+        }
+
+        function readClientViewState() {
+            if (state.savedViewStateLoaded) return state.savedViewState;
+            state.savedViewStateLoaded = true;
+            try {
+                const saved = JSON.parse(localStorage.getItem(getClientViewStateKey()) || 'null');
+                if (!saved || saved.version !== CLIENT_VIEW_STATE_VERSION || !saved.savedAt) return null;
+                if (Date.now() - Number(saved.savedAt) > CLIENT_VIEW_STATE_TTL_MS) return null;
+                state.savedViewState = saved;
+                return saved;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function applyClientViewState() {
+            if (state.viewStateRestored) return;
+            const saved = readClientViewState();
+            if (!saved) {
+                state.viewStateRestored = true;
+                return;
+            }
+            const requestedCheck = saved.viewMode === 'check';
+            // CHECK may arrive after the first page/meta response. Keep the
+            // restore pending until that list is available instead of
+            // overwriting the saved position with the first original image.
+            if (requestedCheck && !state.checkReady) {
+                state.pendingViewFullName = String(saved.fullName || '');
+                return;
+            }
+            state.viewMode = requestedCheck && state.checkReady ? 'check' : 'original';
+            state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
+            if (state.galleryType === 'party' && saved.gallerySection) {
+                const sectionExists = state.gallerySections.some(section => String(section.id || section.driveFolderId) === String(saved.gallerySection));
+                if (sectionExists) state.activeGallerySection = String(saved.gallerySection);
+            }
+            if (state.galleryType === 'party' && state.activeGallerySection !== 'all') {
+                const sectionId = String(state.activeGallerySection);
+                state.images = state.images.filter(image => String(image.gallerySectionId || '') === sectionId);
+            }
+            state.activeAiGroupIndex = Number.isInteger(Number(saved.activeAiGroupIndex)) ? Number(saved.activeAiGroupIndex) : null;
+            const desiredName = String(saved.fullName || '');
+            const restoredIndex = desiredName ? state.images.findIndex(image => image.fullName === desiredName) : -1;
+            if (restoredIndex >= 0) {
+                state.currentIndex = restoredIndex;
+                state.pendingViewFullName = '';
+                state.viewStateRestored = true;
+                return;
+            }
+            if (desiredName) {
+                state.pendingViewFullName = desiredName;
+                // The remaining cursor pages will call this function again.
+                return;
+            }
+            const fallbackIndex = Number(saved.currentIndex);
+            state.currentIndex = Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < state.images.length ? fallbackIndex : 0;
+            state.viewStateRestored = true;
+        }
+
+        function finalizeClientViewState() {
+            if (state.viewStateRestored || state.pagesPending || state.pageLoading || state.metadataPending) return;
+            const saved = readClientViewState();
+            // A stale/deleted CHECK image must not leave the page in a blank
+            // mode forever. Fall back to the first available original image.
+            if (saved?.viewMode === 'check' && !state.checkReady) {
+                state.viewMode = 'original';
+                state.images = state.originalImages;
+                state.currentIndex = 0;
+            }
+            state.pendingViewFullName = '';
+            state.viewStateRestored = true;
+        }
+
+        function persistClientViewState() {
+            if (!folderId || !state.viewStateRestored) return;
+            const current = getCurrentImage();
+            if (!current) return;
+            try {
+                localStorage.setItem(getClientViewStateKey(), JSON.stringify({
+                    version: CLIENT_VIEW_STATE_VERSION,
+                    savedAt: Date.now(),
+                    fullName: current.fullName || current.shortName || '',
+                    currentIndex: state.currentIndex,
+                    viewMode: state.viewMode,
+                    gallerySection: state.galleryType === 'party' ? state.activeGallerySection : null,
+                    activeAiGroupIndex: Number.isInteger(state.activeAiGroupIndex) ? state.activeAiGroupIndex : null
+                }));
+            } catch (_) {
+                // Storage can be unavailable in private/in-app browsers; the
+                // online gallery must continue without position persistence.
+            }
+        }
+
+        let clientViewStateWriteTimer = null;
+        function scheduleClientViewStatePersist() {
+            window.clearTimeout(clientViewStateWriteTimer);
+            clientViewStateWriteTimer = window.setTimeout(() => {
+                clientViewStateWriteTimer = null;
+                persistClientViewState();
+            }, 120);
+        }
+
         function serializeClientImage(image) {
             if (!image) return null;
             return {
@@ -893,6 +1005,7 @@
                 state.pageCursor = null;
                 state.pageHasMore = true;
                 state.pagesPending = true;
+                applyClientViewState();
                 return true;
             } catch (_) {
                 return false;
@@ -1607,6 +1720,7 @@
             preloadNearbyImages();
             renderAiPicks();
             updatePartyActions();
+            scheduleClientViewStatePersist();
         }
 
         function updatePartyActions() {
@@ -2200,6 +2314,8 @@
             applyMetadataToImages([...state.originalImages, ...state.checkImages]);
             if (data.settings) applyAlbumSettings(data.settings, data.isFinalized, data.gallerySections);
             state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+            applyClientViewState();
+            finalizeClientViewState();
             writeClientBootstrapCache();
             render();
         }
@@ -2219,6 +2335,7 @@
                 mergeAlbumImages(state.originalImages, (data.files || []).map(mapAlbumImage));
                 mergeAlbumImages(state.checkImages, (data.checkFiles || []).map(mapAlbumImage));
                 state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+                applyClientViewState();
                 state.pageCursor = data.nextCursor || null;
                 state.pageHasMore = Boolean(data.hasMore && state.pageCursor);
                 state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
@@ -2234,6 +2351,7 @@
             updateAlbumLoadingOverlay();
             updatePartyActions();
             if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
+            finalizeClientViewState();
             writeClientBootstrapCache();
             render();
         }
@@ -2329,12 +2447,12 @@
                 // mutable state without delaying the first paint.
                 if (data.liked_list || data.check_notes) applyAlbumMetadata(data);
 
-                // Khi khách được mở lại để chọn bổ sung, mặc định trở về ảnh
-                // gốc; tab CHECK vẫn được giữ trên thanh chuyển chế độ để xem
-                // các bản chỉnh sửa trước đó.
-                state.viewMode = 'original';
-                state.images = state.originalImages;
-                state.currentIndex = 0;
+                // Restore the last image/mode/section for this album. A new
+                // visitor has no saved state and therefore starts at the
+                // first original image as before.
+                state.images = state.viewMode === 'check' && state.checkReady ? state.checkImages : state.originalImages;
+                state.currentIndex = Math.min(state.currentIndex, Math.max(0, state.images.length - 1));
+                applyClientViewState();
                 state.aiGroups = [];
                 render();
                 // Chỉ chào sau khi đã nạp đầy đủ trạng thái, giới hạn chọn và
@@ -2351,7 +2469,10 @@
                     : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
                 metadataResponsePromise
                     .then(response => response ? readApiJson(response, 'Không thể tải trạng thái album') : null)
-                    .then(data => data ? applyAlbumMetadata(data) : null)
+                    .then(data => {
+                        if (data) applyAlbumMetadata(data);
+                        else finalizeClientViewState();
+                    })
                     .catch(error => console.warn('Album metadata deferred load failed:', error.message));
                 if (state.pageCursor) loadRemainingAlbumPages().catch(error => {
                     state.pageLoading = false;
@@ -2570,6 +2691,10 @@
             if (event.key === 'ArrowLeft') prevImage();
         });
 
+        window.addEventListener('pagehide', () => {
+            window.clearTimeout(clientViewStateWriteTimer);
+            persistClientViewState();
+        });
         attachSwipe();
         loadAlbum();
         expiryTimer = window.setInterval(updateCheckBannerVisibility, 60000);
