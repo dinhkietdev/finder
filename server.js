@@ -1881,6 +1881,21 @@ app.get('/api/album/:folderId', async (req, res) => {
         // makes Drive return `File not found: .` and blocks the whole gallery.
         const safeCheckFolderId = normalizeDriveFolderId(currentSettings.checkFolderId, '');
         let hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
+        // Keep the response-shaping helpers available on both the cache fast
+        // path and the Drive path.  The cache can be populated by a previous
+        // compact request, so declaring these helpers below the cache return
+        // would hit the temporal-dead-zone and turn the next request into a
+        // 500 error.
+        const compactResponse = String(req.query?.compact || '') === '1';
+        const compactFile = file => ({
+            id: file.id,
+            fullName: file.fullName,
+            shortName: file.shortName,
+            thumbnail: file.thumbnail,
+            gallerySectionId: file.gallerySectionId,
+            gallerySectionName: file.gallerySectionName
+        });
+        const responseFile = file => compactResponse ? compactFile(file) : file;
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             const cachedFiles = albumCacheDatabase[folderId].map(responseFile);
@@ -1977,16 +1992,6 @@ app.get('/api/album/:folderId', async (req, res) => {
             if (download) query.set('download', '1');
             return `/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(fileId)}?${query.toString()}`;
         };
-        const compactResponse = String(req.query?.compact || '') === '1';
-        const compactFile = file => ({
-            id: file.id,
-            fullName: file.fullName,
-            shortName: file.shortName,
-            thumbnail: file.thumbnail,
-            gallerySectionId: file.gallerySectionId,
-            gallerySectionName: file.gallerySectionName
-        });
-        const responseFile = file => compactResponse ? compactFile(file) : file;
         const toClientFile = file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
             const base = {
