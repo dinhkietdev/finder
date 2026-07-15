@@ -196,6 +196,10 @@ app.get('/api/health', (req, res) => {
         rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback'),
         directDownloads: Boolean(isSupabaseConfigured() && process.env.FINDER_DIRECT_DOWNLOADS !== '0'),
         downloadStorageBucket: String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads'),
+        thumbnailCache: Boolean(isSupabaseConfigured() && String(process.env.FINDER_THUMBNAIL_CACHE || '1') !== '0'),
+        thumbnailStorageBucket: thumbnailStorageBucket(),
+        thumbnailTtlDays: thumbnailTtlDays(),
+        thumbnailCleanupCron: Boolean(String(process.env.CRON_SECRET || process.env.FINDER_CRON_SECRET || '').trim()),
         alertSink: isSupabaseConfigured() ? 'supabase' : 'none',
         alertWebhook: Boolean(String(process.env.FINDER_ALERT_WEBHOOK || '').trim()),
         alertWebhookFormat: String(process.env.FINDER_ALERT_WEBHOOK_FORMAT || 'generic').trim().toLowerCase()
@@ -391,6 +395,72 @@ async function persistApiAlert(entry) {
 // Vercel's response bandwidth entirely. Drive remains the source of truth.
 const DOWNLOAD_SIGN_TTL_SECONDS = Math.max(60, Math.min(3600, Number(process.env.FINDER_DOWNLOAD_SIGN_TTL || 900)));
 let downloadBucketPromise = null;
+let thumbnailBucketPromise = null;
+const storageSignedUrlCache = new Map();
+const storageObjectMissCache = new Map();
+const THUMBNAIL_MISS_TTL_MS = 10 * 60 * 1000;
+
+function thumbnailStorageBucket() {
+    return String(process.env.FINDER_THUMBNAIL_BUCKET || 'finder-thumbnails').trim() || 'finder-thumbnails';
+}
+
+function thumbnailTtlDays() {
+    const configured = Number(process.env.FINDER_THUMBNAIL_TTL_DAYS || 30);
+    return Math.max(1, Math.min(365, Number.isFinite(configured) ? configured : 30));
+}
+
+function thumbnailSignTtlSeconds() {
+    const configured = Number(process.env.FINDER_THUMBNAIL_SIGN_TTL || 86400);
+    return Math.max(300, Math.min(30 * 24 * 3600, Number.isFinite(configured) ? configured : 86400));
+}
+
+function thumbnailObjectPath(folderId, fileId) {
+    const safe = value => String(value || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    return `v1/${safe(folderId)}/${safe(fileId)}/thumb`;
+}
+
+function storageCacheKey(bucket, objectPath) {
+    return `${bucket}:${objectPath}`;
+}
+
+function getCachedStorageSignedUrl(bucket, objectPath) {
+    const key = storageCacheKey(bucket, objectPath);
+    const cached = storageSignedUrlCache.get(key);
+    if (!cached || cached.expiresAt <= Date.now()) {
+        storageSignedUrlCache.delete(key);
+        return null;
+    }
+    return cached.url;
+}
+
+function cacheStorageSignedUrl(bucket, objectPath, url, ttlSeconds) {
+    const key = storageCacheKey(bucket, objectPath);
+    storageSignedUrlCache.set(key, { url, expiresAt: Date.now() + Math.max(60, ttlSeconds - 60) * 1000 });
+    if (storageSignedUrlCache.size > 5000) {
+        const oldest = storageSignedUrlCache.keys().next().value;
+        if (oldest) storageSignedUrlCache.delete(oldest);
+    }
+}
+
+function isKnownStorageMiss(bucket, objectPath) {
+    const key = storageCacheKey(bucket, objectPath);
+    const expiresAt = storageObjectMissCache.get(key) || 0;
+    if (expiresAt > Date.now()) return true;
+    storageObjectMissCache.delete(key);
+    return false;
+}
+
+function markStorageMiss(bucket, objectPath) {
+    storageObjectMissCache.set(storageCacheKey(bucket, objectPath), Date.now() + THUMBNAIL_MISS_TTL_MS);
+    if (storageObjectMissCache.size > 5000) {
+        const oldest = storageObjectMissCache.keys().next().value;
+        if (oldest) storageObjectMissCache.delete(oldest);
+    }
+}
+
+function clearStorageMiss(bucket, objectPath) {
+    storageObjectMissCache.delete(storageCacheKey(bucket, objectPath));
+}
 
 function downloadStorageBucket() {
     return String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads').trim() || 'finder-downloads';
@@ -445,13 +515,45 @@ async function ensureDownloadBucket() {
     return downloadBucketPromise;
 }
 
-async function createDownloadSignedUrl(objectPath, fileName) {
-    if (!(await ensureDownloadBucket())) return null;
+async function ensurePrivateStorageBucket(bucketName, stateRef) {
+    if (!isSupabaseConfigured()) return false;
+    if (!stateRef.promise) {
+        stateRef.promise = (async () => {
+            const bucket = String(bucketName || '').trim();
+            const response = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+                method: 'POST',
+                headers: { apikey: supabaseServiceKey, Authorization: `Bearer ${supabaseServiceKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+                signal: AbortSignal.timeout(2500)
+            });
+            if (!response.ok && response.status !== 409) {
+                const text = await response.text();
+                throw new Error(`Supabase Storage bucket ${response.status}: ${text.slice(0, 300)}`);
+            }
+            return true;
+        })().catch(error => {
+            stateRef.promise = null;
+            logStructuredEvent('storage.bucket_error', { bucket: bucketName, message: error.message });
+            return false;
+        });
+    }
+    return stateRef.promise;
+}
+
+async function ensureThumbnailBucket() {
+    return ensurePrivateStorageBucket(thumbnailStorageBucket(), { get promise() { return thumbnailBucketPromise; }, set promise(value) { thumbnailBucketPromise = value; } });
+}
+
+async function createStorageSignedUrl(bucketName, objectPath, ttlSeconds, fileName) {
+    if (!isSupabaseConfigured()) return null;
+    const bucket = String(bucketName || '').trim();
+    const cached = getCachedStorageSignedUrl(bucket, objectPath);
+    if (cached) return cached;
     try {
-        const bucket = encodeURIComponent(downloadStorageBucket());
-        const data = await supabaseStorageRequest(`object/sign/${bucket}`, {
+        const encodedBucket = encodeURIComponent(bucket);
+        const data = await supabaseStorageRequest(`object/sign/${encodedBucket}`, {
             method: 'POST',
-            body: JSON.stringify({ expiresIn: DOWNLOAD_SIGN_TTL_SECONDS, paths: [objectPath] })
+            body: JSON.stringify({ expiresIn: ttlSeconds, paths: [objectPath] })
         });
         const signedPath = data?.[0]?.signedURL || data?.[0]?.signedUrl || data?.signedURL || data?.signedUrl;
         if (!signedPath) return null;
@@ -459,13 +561,79 @@ async function createDownloadSignedUrl(objectPath, fileName) {
             ? new URL(String(signedPath))
             : new URL(`${supabaseUrl}/storage/v1${String(signedPath).startsWith('/') ? signedPath : `/${signedPath}`}`);
         if (fileName) signedUrl.searchParams.set('download', String(fileName));
-        return signedUrl.toString();
+        const result = signedUrl.toString();
+        cacheStorageSignedUrl(bucket, objectPath, result, ttlSeconds);
+        return result;
     } catch (error) {
         // A missing object is expected on its first download; do not turn it
         // into a user-facing error because Drive remains the source of truth.
-        logStructuredEvent('download_storage.sign_miss', { message: error.message });
+        logStructuredEvent('storage.sign_miss', { bucket, objectPath, message: error.message });
         return null;
     }
+}
+
+async function createDownloadSignedUrl(objectPath, fileName) {
+    if (!(await ensureDownloadBucket())) return null;
+    return createStorageSignedUrl(downloadStorageBucket(), objectPath, DOWNLOAD_SIGN_TTL_SECONDS, fileName);
+}
+
+async function cacheBufferToStorage(bucketName, objectPath, buffer, contentType) {
+    if (!isSupabaseConfigured() || !Buffer.isBuffer(buffer) || !buffer.length) return false;
+    const bucket = encodeURIComponent(String(bucketName || '').trim());
+    const target = `${supabaseUrl}/storage/v1/object/${bucket}/${encodeStoragePath(objectPath)}`;
+    const response = await fetch(target, {
+        method: 'POST',
+        headers: {
+            apikey: supabaseServiceKey,
+            Authorization: `Bearer ${supabaseServiceKey}`,
+            'Content-Type': contentType || 'image/jpeg',
+            'x-upsert': 'true',
+            'Content-Length': String(buffer.length)
+        },
+        body: buffer,
+        signal: AbortSignal.timeout(15000)
+    });
+    if (!response.ok) throw new Error(`Supabase Storage thumbnail upload ${response.status}: ${(await response.text()).slice(0, 300)}`);
+    clearStorageMiss(bucketName, objectPath);
+    return true;
+}
+
+async function cleanupExpiredThumbnailObjects() {
+    if (!(await ensureThumbnailBucket())) return { deleted: 0, scanned: 0, skipped: true };
+    const bucket = thumbnailStorageBucket();
+    const cutoffMs = Date.now() - thumbnailTtlDays() * 24 * 60 * 60 * 1000;
+    const pageSize = 1000;
+    const maxObjects = Math.max(100, Math.min(10000, Number(process.env.FINDER_THUMBNAIL_CLEANUP_LIMIT || 2000)));
+    const expired = [];
+    let offset = 0;
+    let scanned = 0;
+    while (expired.length < maxObjects) {
+        const page = await supabaseStorageRequest(`object/list/${encodeURIComponent(bucket)}`, {
+            method: 'POST',
+            body: JSON.stringify({ prefix: 'v1/', limit: pageSize, offset, sortBy: { column: 'created_at', order: 'asc' } })
+        });
+        if (!Array.isArray(page) || !page.length) break;
+        scanned += page.length;
+        page.forEach(item => {
+            const createdAt = Date.parse(String(item?.created_at || ''));
+            if (item?.name && Number.isFinite(createdAt) && createdAt < cutoffMs && expired.length < maxObjects) expired.push(String(item.name));
+        });
+        offset += page.length;
+        if (page.length < pageSize) break;
+        const timestamps = page.map(item => Date.parse(String(item?.created_at || ''))).filter(Number.isFinite);
+        if (timestamps.length && Math.max(...timestamps) >= cutoffMs) break;
+    }
+    let deleted = 0;
+    for (let index = 0; index < expired.length; index += 1000) {
+        const batch = expired.slice(index, index + 1000);
+        await supabaseStorageRequest(`object/remove/${encodeURIComponent(bucket)}`, {
+            method: 'POST',
+            body: JSON.stringify({ prefixes: batch })
+        });
+        deleted += batch.length;
+    }
+    logStructuredEvent('thumbnail_cache.cleanup', { bucket, ttlDays: thumbnailTtlDays(), scanned, deleted });
+    return { bucket, ttlDays: thumbnailTtlDays(), scanned, deleted };
 }
 
 function cacheDriveStreamToStorage(stream, file, objectPath) {
@@ -1655,6 +1823,43 @@ app.post('/api/album/:folderId/manager-history', async (req, res) => {
     res.json({ success: true });
 });
 
+function cronRequestAuthorized(req) {
+    const secret = String(process.env.CRON_SECRET || process.env.FINDER_CRON_SECRET || '').trim();
+    if (!secret) return false;
+    const authorization = String(req.get('authorization') || '');
+    const provided = authorization.replace(/^Bearer\s+/i, '').trim() || String(req.get('x-cron-secret') || '').trim();
+    const providedBuffer = Buffer.from(provided);
+    const secretBuffer = Buffer.from(secret);
+    return providedBuffer.length === secretBuffer.length && crypto.timingSafeEqual(providedBuffer, secretBuffer);
+}
+
+// Vercel invokes this endpoint once per day. It only removes disposable
+// thumbnail objects older than the configured TTL; Drive originals,
+// downloads and album metadata are never touched.
+app.get('/api/internal/cleanup-thumbnails', async (req, res) => {
+    if (!cronRequestAuthorized(req)) return res.status(401).json({ success: false, error: 'Cron secret không hợp lệ.' });
+    try {
+        const result = await cleanupExpiredThumbnailObjects();
+        return res.json({ success: true, ...result });
+    } catch (error) {
+        logStructuredEvent('thumbnail_cache.cleanup_error', { message: error.message });
+        return res.status(500).json({ success: false, error: 'Không thể dọn cache thumbnail.' });
+    }
+});
+
+// POST is useful for an operator to trigger the same guarded cleanup during
+// staging without changing the production cron schedule.
+app.post('/api/internal/cleanup-thumbnails', async (req, res) => {
+    if (!cronRequestAuthorized(req)) return res.status(401).json({ success: false, error: 'Cron secret không hợp lệ.' });
+    try {
+        const result = await cleanupExpiredThumbnailObjects();
+        return res.json({ success: true, ...result });
+    } catch (error) {
+        logStructuredEvent('thumbnail_cache.cleanup_error', { message: error.message });
+        return res.status(500).json({ success: false, error: 'Không thể dọn cache thumbnail.' });
+    }
+});
+
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
 // đã chọn; không tạo ORIGINAL/CHECK và không đi qua luồng chọn ảnh.
 app.post('/api/party-gallery', async (req, res) => {
@@ -2241,6 +2446,27 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
                 }
             }
         }
+        // Persist only small grid thumbnails by default. The cache is
+        // disposable; Google Drive remains the source of truth and originals
+        // never enter this bucket.
+        const thumbnailCacheEnabled = !isDownload
+            && String(process.env.FINDER_THUMBNAIL_CACHE || '1') !== '0'
+            && size === 'thumb'
+            && isSupabaseConfigured();
+        const thumbnailBucket = thumbnailStorageBucket();
+        const thumbnailPath = thumbnailObjectPath(folderId, fileId);
+        let thumbnailStorageReady = false;
+        if (thumbnailCacheEnabled) {
+            thumbnailStorageReady = await ensureThumbnailBucket();
+            if (thumbnailStorageReady && !isKnownStorageMiss(thumbnailBucket, thumbnailPath)) {
+                const cachedThumbnailUrl = await createStorageSignedUrl(thumbnailBucket, thumbnailPath, thumbnailSignTtlSeconds());
+                if (cachedThumbnailUrl) {
+                    res.set('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800');
+                    return res.redirect(302, cachedThumbnailUrl);
+                }
+                markStorageMiss(thumbnailBucket, thumbnailPath);
+            }
+        }
         // Album links are public by design; cache thumbnails at the Vercel edge
         // so a large gallery does not re-download the same bytes per visitor.
         // Original downloads remain private and are never cached.
@@ -2260,8 +2486,14 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
                 const thumbnailUrl = String(file.thumbnailLink).replace(/=s\d+$/i, `=s${width}`);
                 const thumbnailResponse = await fetch(thumbnailUrl, { headers: { Authorization: `Bearer ${access.token}` } });
                 if (thumbnailResponse.ok) {
+                    const thumbnailBuffer = Buffer.from(await thumbnailResponse.arrayBuffer());
                     res.type(file.mimeType);
-                    return res.send(Buffer.from(await thumbnailResponse.arrayBuffer()));
+                    res.send(thumbnailBuffer);
+                    if (thumbnailStorageReady) {
+                        cacheBufferToStorage(thumbnailBucket, thumbnailPath, thumbnailBuffer, file.mimeType)
+                            .catch(error => logStructuredEvent('thumbnail_cache.upload_error', { folderId, fileId, message: error.message }));
+                    }
+                    return;
                 }
             }
         }

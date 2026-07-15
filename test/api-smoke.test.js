@@ -64,3 +64,11 @@ test('production never falls back to legacy album storage', async () => {
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, 'SUPABASE_REQUIRED');
 });
+
+test('thumbnail cleanup requires the cron secret', async () => {
+  const response = await fetch(`${baseUrl}/api/internal/cleanup-thumbnails`);
+  // Production also refuses storage jobs before routing when Supabase is not
+  // configured; once configured, the same request reaches the 401 guard.
+  assert.ok([401, 503].includes(response.status));
+  assert.equal((await response.json()).success, false);
+});
