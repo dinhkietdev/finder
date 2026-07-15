@@ -1883,7 +1883,18 @@ app.get('/api/album/:folderId', async (req, res) => {
         let hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
-            return res.json({ success: true, folderId, files: albumCacheDatabase[folderId], checkFiles: albumCheckCacheDatabase[folderId] || [], gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
+            const cacheCompact = String(req.query?.compact || '') === '1';
+            const compactCachedFile = file => cacheCompact ? {
+                id: file.id,
+                fullName: file.fullName,
+                shortName: file.shortName,
+                thumbnail: file.thumbnail,
+                gallerySectionId: file.gallerySectionId,
+                gallerySectionName: file.gallerySectionName
+            } : file;
+            const cachedFiles = albumCacheDatabase[folderId].map(compactCachedFile);
+            const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(compactCachedFile);
+            return res.json({ success: true, folderId, files: cachedFiles, checkFiles: cachedCheckFiles, gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
         }
 
         albumStage = 'drive-auth';
