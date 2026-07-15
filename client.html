@@ -1037,9 +1037,15 @@
                     if (index >= indexed.length) return;
                     const item = indexed[index];
                     try { signatures.set(item.image, await getVisualSignature(item.image)); } catch (_) { signatures.set(item.image, null); }
+                    // Yield between small batches so a large album never
+                    // monopolizes the main thread or floods the image proxy.
+                    if (index % 4 === 3) await new Promise(resolve => {
+                        if ('requestIdleCallback' in window) window.requestIdleCallback(resolve, { timeout: 80 });
+                        else window.setTimeout(resolve, 16);
+                    });
                 }
             };
-            await Promise.all(Array.from({ length: Math.min(6, indexed.length) }, signatureWorker));
+            await Promise.all(Array.from({ length: Math.min(3, indexed.length) }, signatureWorker));
             const groups = []; let group = [];
             for (let index = 0; index < indexed.length; index++) {
                 const item = indexed[index];

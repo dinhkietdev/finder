@@ -140,6 +140,12 @@ async function checkDistributedRateLimit(key, limit) {
 }
 
 app.use('/api/', async (req, res, next) => {
+    // Image bytes are immutable public-gallery assets and are already guarded
+    // by the album/file authorization in the image handler. They are also
+    // cached at the Vercel edge, so counting every thumbnail/lightbox request
+    // against the JSON API bucket makes large galleries throttle their own
+    // settings/status requests. Keep rate limiting for control-plane APIs.
+    if (/^\/album\/[^/]+\/image\/[^/]+$/i.test(req.path)) return next();
     const key = `${req.ip || 'unknown'}:${req.path.startsWith('/auth/') ? 'auth' : 'api'}`;
     const now = Date.now();
     const limit = key.endsWith(':auth') ? 30 : 240;
