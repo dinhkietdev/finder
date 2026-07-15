@@ -86,6 +86,18 @@ app.use((req, res, next) => {
 });
 app.use(express.static(__dirname));
 
+// Keep the extracted client assets discoverable by Vercel's Node builder.
+// The explicit file references are also a reliable fallback when the static
+// file manifest is pruned from the serverless bundle.
+app.get('/assets/client.css', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+    res.sendFile(path.join(__dirname, 'assets', 'client.css'));
+});
+app.get('/assets/client.js', (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+    res.sendFile(path.join(__dirname, 'assets', 'client.js'));
+});
+
 app.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
     next();
