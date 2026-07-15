@@ -46,8 +46,6 @@ function buildAlertPayload(entry) {
 }
 
 function sendAlert(entry) {
-    const endpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
-    if (!endpoint) return;
     const key = `${entry.status || 'unknown'}:${entry.path || 'unknown'}`;
     const now = Date.now();
     const previous = alertLastSent.get(key) || 0;
@@ -56,6 +54,9 @@ function sendAlert(entry) {
     if (alertLastSent.size > 2000) {
         for (const [item, sentAt] of alertLastSent) if (now - sentAt > ALERT_DEDUPE_MS * 2) alertLastSent.delete(item);
     }
+    persistApiAlert(entry).catch(() => {});
+    const endpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
+    if (!endpoint) return;
     fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -172,6 +173,7 @@ app.get('/api/health', (req, res) => {
         rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback'),
         directDownloads: Boolean(isSupabaseConfigured() && process.env.FINDER_DIRECT_DOWNLOADS !== '0'),
         downloadStorageBucket: String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads'),
+        alertSink: isSupabaseConfigured() ? 'supabase' : 'none',
         alertWebhook: Boolean(String(process.env.FINDER_ALERT_WEBHOOK || '').trim()),
         alertWebhookFormat: String(process.env.FINDER_ALERT_WEBHOOK_FORMAT || 'generic').trim().toLowerCase()
     });
@@ -337,6 +339,28 @@ async function supabaseRequest(resource, options = {}) {
     const text = await response.text();
     if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 400)}`);
     return text ? JSON.parse(text) : null;
+}
+
+async function persistApiAlert(entry) {
+    if (!isSupabaseConfigured()) return;
+    try {
+        await supabaseRequest('api_alerts', {
+            method: 'POST',
+            headers: { Prefer: 'return=minimal' },
+            body: JSON.stringify({
+                request_id: entry.requestId || null,
+                event: entry.event || 'api.error',
+                method: entry.method || null,
+                path: entry.path || null,
+                status: Number(entry.status) || 0,
+                duration_ms: Number(entry.durationMs) || 0,
+                ip: entry.ip || null,
+                payload: { source: 'finder', alert: true }
+            })
+        });
+    } catch (error) {
+        logStructuredEvent('api_alerts.persist_error', { message: error.message });
+    }
 }
 
 // Large downloads are cached into a private Supabase Storage bucket on the

@@ -33,6 +33,7 @@ test('health exposes readiness without secrets', async () => {
   assert.equal(typeof body.oauthStateSecret, 'boolean');
   assert.equal(typeof body.tokenEncryptionKey, 'boolean');
   assert.equal(typeof body.directDownloads, 'boolean');
+  assert.ok(['supabase', 'none'].includes(body.alertSink));
   assert.equal(typeof body.alertWebhook, 'boolean');
 });
 
