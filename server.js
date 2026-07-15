@@ -2038,6 +2038,15 @@ app.get('/api/album/:folderId', async (req, res) => {
                 originalUrl: driveImage(file.id, 'original', true)
             };
         };
+        // Google Drive does not guarantee a stable order unless `orderBy` is
+        // supplied. Keep the same natural filename order for both paged and
+        // non-paged responses so the first image is always the first file the
+        // client sees (01, 02, 10 instead of 01, 10, 02).
+        const naturalFilenameCompare = (a, b) => String(a?.name || '').localeCompare(
+            String(b?.name || ''),
+            undefined,
+            { numeric: true, sensitivity: 'base' }
+        );
         const listDriveImages = async parentId => {
             const files = [];
             let pageToken;
@@ -2046,22 +2055,28 @@ app.get('/api/album/:folderId', async (req, res) => {
                     q: `'${parentId}' in parents and trashed = false`,
                     includeItemsFromAllDrives: true, supportsAllDrives: true,
                     fields: 'nextPageToken,files(id, name, mimeType, parents, webContentLink, thumbnailLink)',
+                    orderBy: 'name_natural',
                     pageSize: 1000, pageToken
                 });
                 files.push(...(response.data.files || []));
                 pageToken = response.data.nextPageToken || undefined;
             } while (pageToken);
-            return files.filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || '')).map(toClientFile);
+            return files
+                .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
+                .sort(naturalFilenameCompare)
+                .map(toClientFile);
         };
         const listDriveImagesPage = async (parentId, pageToken, requestedPageSize) => {
             const response = await drive.files.list({
                 q: `'${parentId}' in parents and trashed = false and mimeType contains 'image/'`,
                 includeItemsFromAllDrives: true, supportsAllDrives: true,
                 fields: 'nextPageToken,files(id, name, mimeType, parents, webContentLink, thumbnailLink)',
+                orderBy: 'name_natural',
                 pageSize: requestedPageSize, pageToken: pageToken || undefined
             });
             const files = (response.data.files || [])
                 .filter(file => /\.(jpe?g|png|webp)$/i.test(file.name || ''))
+                .sort(naturalFilenameCompare)
                 .map(toClientFile);
             return { files, nextPageToken: response.data.nextPageToken || null };
         };

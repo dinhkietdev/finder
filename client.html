@@ -948,6 +948,7 @@
             state.images = state.galleryType === 'party' && state.activeGallerySection !== 'all'
                 ? base.filter(image => String(image.gallerySectionId || '') === String(state.activeGallerySection))
                 : base.slice();
+            state.images.sort(naturalImageCompare);
             state.currentIndex = 0;
             render();
         }
@@ -1191,7 +1192,10 @@
 
         function renderThumbStrip(galleryEntries, isPartyGallery) {
             const version = ++thumbRenderVersion;
-            const ordered = galleryEntries.slice().sort((a, b) => Number(b.img.selected) - Number(a.img.selected));
+            // Keep the Drive filename order in the strip. Moving selected
+            // images to the front made the visible order differ from the
+            // lightbox and caused the first image to appear to change.
+            const ordered = galleryEntries.slice().sort((a, b) => naturalImageCompare(a.img, b.img));
             elements.thumbStrip.innerHTML = '';
             let cursor = 0;
             const appendBatch = () => {
