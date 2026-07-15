@@ -5,6 +5,7 @@ const { google } = require('googleapis');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { PassThrough } = require('stream');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
 
@@ -13,6 +14,8 @@ app.disable('x-powered-by');
 const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
     || process.env.NODE_ENV === 'production';
 const REQUEST_ID_HEADER = 'x-request-id';
+const ALERT_DEDUPE_MS = 5 * 60 * 1000;
+const alertLastSent = new Map();
 
 function createRequestId() {
     return crypto.randomUUID();
@@ -32,6 +35,35 @@ function logStructuredEvent(event, data = {}) {
     }).catch(() => {});
 }
 
+function buildAlertPayload(entry) {
+    const format = String(process.env.FINDER_ALERT_WEBHOOK_FORMAT || 'generic').trim().toLowerCase();
+    const summary = `[Finder] ${entry.event || 'api.error'} ${entry.status || ''} ${entry.method || ''} ${entry.path || ''} requestId=${entry.requestId || 'unknown'}`.trim();
+    if (format === 'discord') {
+        return { content: summary, embeds: [{ title: 'Finder API alert', description: summary, color: 15158332, fields: [{ name: 'Duration', value: `${entry.durationMs || 0} ms`, inline: true }] }] };
+    }
+    if (format === 'slack') return { text: summary, blocks: [{ type: 'section', text: { type: 'mrkdwn', text: `*Finder API alert*\n${summary}` } }] };
+    return { ...entry, alert: true, source: 'finder' };
+}
+
+function sendAlert(entry) {
+    const endpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
+    if (!endpoint) return;
+    const key = `${entry.status || 'unknown'}:${entry.path || 'unknown'}`;
+    const now = Date.now();
+    const previous = alertLastSent.get(key) || 0;
+    if (now - previous < ALERT_DEDUPE_MS) return;
+    alertLastSent.set(key, now);
+    if (alertLastSent.size > 2000) {
+        for (const [item, sentAt] of alertLastSent) if (now - sentAt > ALERT_DEDUPE_MS * 2) alertLastSent.delete(item);
+    }
+    fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(buildAlertPayload(entry)),
+        signal: AbortSignal.timeout(1500)
+    }).catch(() => {});
+}
+
 app.use((req, res, next) => {
     const incoming = String(req.get(REQUEST_ID_HEADER) || '').trim();
     const requestId = /^[A-Za-z0-9._:-]{8,120}$/.test(incoming) ? incoming : createRequestId();
@@ -43,10 +75,7 @@ app.use((req, res, next) => {
         const status = res.statusCode;
         const entry = { requestId, method: req.method, path: req.path, status, durationMs: Date.now() - startedAt, ip: req.ip || 'unknown' };
         logStructuredEvent(status >= 500 ? 'api.error' : status >= 400 ? 'api.client_error' : 'api.request', entry);
-        if (status >= 500 || status === 429) {
-            const alertEndpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
-            if (alertEndpoint) fetch(alertEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...entry, alert: true }), signal: AbortSignal.timeout(1500) }).catch(() => {});
-        }
+        if (status >= 500 || status === 429) sendAlert({ ...entry, event: status === 429 ? 'api.rate_limited' : 'api.error' });
     });
     next();
 });
@@ -140,7 +169,11 @@ app.get('/api/health', (req, res) => {
         oauthStateSecret: Boolean(getOAuthStateSecret()),
         tokenEncryptionKey: Boolean(getTokenEncryptionKey()),
         distributedRateLimit: Boolean(isSupabaseConfigured() || (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)),
-        rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback')
+        rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback'),
+        directDownloads: Boolean(isSupabaseConfigured() && process.env.FINDER_DIRECT_DOWNLOADS !== '0'),
+        downloadStorageBucket: String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads'),
+        alertWebhook: Boolean(String(process.env.FINDER_ALERT_WEBHOOK || '').trim()),
+        alertWebhookFormat: String(process.env.FINDER_ALERT_WEBHOOK_FORMAT || 'generic').trim().toLowerCase()
     });
 });
 
@@ -304,6 +337,109 @@ async function supabaseRequest(resource, options = {}) {
     const text = await response.text();
     if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 400)}`);
     return text ? JSON.parse(text) : null;
+}
+
+// Large downloads are cached into a private Supabase Storage bucket on the
+// first request. Later downloads receive a short-lived signed URL and bypass
+// Vercel's response bandwidth entirely. Drive remains the source of truth.
+const DOWNLOAD_SIGN_TTL_SECONDS = Math.max(60, Math.min(3600, Number(process.env.FINDER_DOWNLOAD_SIGN_TTL || 900)));
+let downloadBucketPromise = null;
+
+function downloadStorageBucket() {
+    return String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads').trim() || 'finder-downloads';
+}
+
+function storageObjectPath(folderId, fileId) {
+    return `drive/${String(folderId).replace(/[^A-Za-z0-9_-]/g, '_')}/${String(fileId).replace(/[^A-Za-z0-9_-]/g, '_')}`;
+}
+
+function encodeStoragePath(objectPath) {
+    return objectPath.split('/').map(part => encodeURIComponent(part)).join('/');
+}
+
+async function supabaseStorageRequest(resource, options = {}) {
+    if (!isSupabaseConfigured()) return null;
+    const response = await fetch(`${supabaseUrl}/storage/v1/${resource}`, {
+        ...options,
+        headers: {
+            apikey: supabaseServiceKey,
+            Authorization: `Bearer ${supabaseServiceKey}`,
+            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(options.headers || {})
+        }
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`Supabase Storage ${response.status}: ${text.slice(0, 300)}`);
+    return text ? JSON.parse(text) : null;
+}
+
+async function ensureDownloadBucket() {
+    if (!isSupabaseConfigured()) return false;
+    if (!downloadBucketPromise) {
+        downloadBucketPromise = (async () => {
+            const bucket = downloadStorageBucket();
+            const response = await fetch(`${supabaseUrl}/storage/v1/bucket`, {
+                method: 'POST',
+                headers: { apikey: supabaseServiceKey, Authorization: `Bearer ${supabaseServiceKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+                signal: AbortSignal.timeout(2500)
+            });
+            if (!response.ok && response.status !== 409) {
+                const text = await response.text();
+                throw new Error(`Supabase Storage bucket ${response.status}: ${text.slice(0, 300)}`);
+            }
+            return true;
+        })().catch(error => {
+            downloadBucketPromise = null;
+            logStructuredEvent('download_storage.bucket_error', { message: error.message });
+            return false;
+        });
+    }
+    return downloadBucketPromise;
+}
+
+async function createDownloadSignedUrl(objectPath, fileName) {
+    if (!(await ensureDownloadBucket())) return null;
+    try {
+        const bucket = encodeURIComponent(downloadStorageBucket());
+        const data = await supabaseStorageRequest(`object/sign/${bucket}`, {
+            method: 'POST',
+            body: JSON.stringify({ expiresIn: DOWNLOAD_SIGN_TTL_SECONDS, paths: [objectPath] })
+        });
+        const signedPath = data?.[0]?.signedURL || data?.[0]?.signedUrl || data?.signedURL || data?.signedUrl;
+        if (!signedPath) return null;
+        const signedUrl = /^https?:\/\//i.test(String(signedPath))
+            ? new URL(String(signedPath))
+            : new URL(`${supabaseUrl}/storage/v1${String(signedPath).startsWith('/') ? signedPath : `/${signedPath}`}`);
+        if (fileName) signedUrl.searchParams.set('download', String(fileName));
+        return signedUrl.toString();
+    } catch (error) {
+        // A missing object is expected on its first download; do not turn it
+        // into a user-facing error because Drive remains the source of truth.
+        logStructuredEvent('download_storage.sign_miss', { message: error.message });
+        return null;
+    }
+}
+
+function cacheDriveStreamToStorage(stream, file, objectPath) {
+    const bucket = encodeURIComponent(downloadStorageBucket());
+    const target = `${supabaseUrl}/storage/v1/object/${bucket}/${encodeStoragePath(objectPath)}`;
+    return fetch(target, {
+        method: 'POST',
+        headers: {
+            apikey: supabaseServiceKey,
+            Authorization: `Bearer ${supabaseServiceKey}`,
+            'Content-Type': file.mimeType || 'application/octet-stream',
+            'x-upsert': 'true',
+            ...(file.size ? { 'Content-Length': String(file.size) } : {})
+        },
+        body: stream,
+        duplex: 'half',
+        signal: AbortSignal.timeout(120000)
+    }).then(async response => {
+        if (!response.ok) throw new Error(`Supabase Storage upload ${response.status}: ${(await response.text()).slice(0, 300)}`);
+        return true;
+    });
 }
 
 function buildSupabaseAlbumRow(folderId) {
@@ -1873,13 +2009,26 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
             normalizeDriveFolderId(folderId, ''),
             ...(Array.isArray(settings.gallerySections) ? settings.gallerySections.map(section => normalizeDriveFolderId(section?.driveFolderId || section?.id, '')) : [])
         ].filter(Boolean));
-        const metadata = await drive.files.get({ fileId, fields: 'id,name,mimeType,parents,thumbnailLink', supportsAllDrives: true });
+        const metadata = await drive.files.get({ fileId, fields: 'id,name,mimeType,size,parents,thumbnailLink', supportsAllDrives: true });
         const file = metadata.data;
         if (!file?.id || !/^image\/(jpeg|png|webp|gif)$/i.test(String(file.mimeType || '')) || !file.parents?.some(parent => allowedParents.has(parent))) {
             return res.status(404).json({ success: false, error: 'Không tìm thấy ảnh trong album.' });
         }
 
         const isDownload = String(req.query?.download || '') === '1';
+        const directDownloadsEnabled = isDownload && isSupabaseConfigured() && process.env.FINDER_DIRECT_DOWNLOADS !== '0';
+        let storageReady = false;
+        const objectPath = storageObjectPath(folderId, fileId);
+        if (directDownloadsEnabled) {
+            storageReady = await ensureDownloadBucket();
+            if (storageReady) {
+                const signedUrl = await createDownloadSignedUrl(objectPath, file.name || 'finder-image');
+                if (signedUrl) {
+                    res.set('Cache-Control', 'private, no-store');
+                    return res.redirect(302, signedUrl);
+                }
+            }
+        }
         // Album links are public by design; cache thumbnails at the Vercel edge
         // so a large gallery does not re-download the same bytes per visitor.
         // Original downloads remain private and are never cached.
@@ -1904,7 +2053,22 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
 
         const media = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
         res.set('Content-Type', file.mimeType || media.headers?.['content-type'] || 'application/octet-stream');
+        if (file.size) res.set('Content-Length', String(file.size));
         media.data.on('error', error => { if (!res.headersSent) res.status(502).json({ success: false, error: 'Không thể đọc ảnh từ Google Drive.' }); });
+        if (storageReady) {
+            // Tee the first download: the visitor receives the image now while
+            // Supabase Storage receives a bounded stream for future signed URL
+            // downloads. No full image is buffered in the Vercel function.
+            const storageStream = new PassThrough();
+            const clientStream = new PassThrough();
+            storageStream.on('error', () => {});
+            cacheDriveStreamToStorage(storageStream, file, objectPath).catch(error => {
+                logStructuredEvent('download_storage.upload_error', { folderId, fileId, message: error.message });
+            });
+            media.data.pipe(storageStream);
+            media.data.pipe(clientStream);
+            return clientStream.pipe(res);
+        }
         media.data.pipe(res);
     } catch (error) {
         console.error('Drive image proxy failed:', JSON.stringify({ folderId, fileId, size, code: error.code, message: error.message }));

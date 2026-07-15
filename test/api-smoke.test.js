@@ -32,6 +32,8 @@ test('health exposes readiness without secrets', async () => {
   const body = await response.json();
   assert.equal(typeof body.oauthStateSecret, 'boolean');
   assert.equal(typeof body.tokenEncryptionKey, 'boolean');
+  assert.equal(typeof body.directDownloads, 'boolean');
+  assert.equal(typeof body.alertWebhook, 'boolean');
 });
 
 test('Drive authorize returns a signed OAuth URL', async () => {
