@@ -15,6 +15,7 @@ test('client and desktop inline scripts parse', () => {
     const html = fs.readFileSync(file, 'utf8');
     const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)]
       .map(match => match[1]).filter(Boolean);
+    if (file === 'client.html') scripts.push(fs.readFileSync('assets/client.js', 'utf8'));
     assert.ok(scripts.length, `${file} should contain a script`);
     scripts.forEach((source, index) => new vm.Script(source, { filename: `${file}#${index + 1}` }));
   }
