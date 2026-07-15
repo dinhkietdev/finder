@@ -1883,17 +1883,8 @@ app.get('/api/album/:folderId', async (req, res) => {
         let hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
 
         if (albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
-            const cacheCompact = String(req.query?.compact || '') === '1';
-            const compactCachedFile = file => cacheCompact ? {
-                id: file.id,
-                fullName: file.fullName,
-                shortName: file.shortName,
-                thumbnail: file.thumbnail,
-                gallerySectionId: file.gallerySectionId,
-                gallerySectionName: file.gallerySectionName
-            } : file;
-            const cachedFiles = albumCacheDatabase[folderId].map(compactCachedFile);
-            const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(compactCachedFile);
+            const cachedFiles = albumCacheDatabase[folderId].map(responseFile);
+            const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(responseFile);
             return res.json({ success: true, folderId, files: cachedFiles, checkFiles: cachedCheckFiles, gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
         }
 
@@ -1987,6 +1978,15 @@ app.get('/api/album/:folderId', async (req, res) => {
             return `/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(fileId)}?${query.toString()}`;
         };
         const compactResponse = String(req.query?.compact || '') === '1';
+        const compactFile = file => ({
+            id: file.id,
+            fullName: file.fullName,
+            shortName: file.shortName,
+            thumbnail: file.thumbnail,
+            gallerySectionId: file.gallerySectionId,
+            gallerySectionName: file.gallerySectionName
+        });
+        const responseFile = file => compactResponse ? compactFile(file) : file;
         const toClientFile = file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
             const base = {
@@ -1997,7 +1997,6 @@ app.get('/api/album/:folderId', async (req, res) => {
                 gallerySectionId: file.gallerySectionId,
                 gallerySectionName: file.gallerySectionName
             };
-            if (compactResponse) return base;
             return {
                 ...base,
                 preview: driveImage(file.id, 'preview'),
@@ -2046,7 +2045,7 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
-        res.json({ success: true, folderId, files, checkFiles, gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
+        res.json({ success: true, folderId, files: files.map(responseFile), checkFiles: checkFiles.map(responseFile), gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
     } catch (error) {
         console.error('Album load failed:', JSON.stringify({ folderId: req.params.folderId, stage: albumStage, message: error.message }));
         res.status(500).json({ error: error.message, stage: albumStage, folderId: req.params.folderId });
