@@ -1230,7 +1230,16 @@ app.get('/a/:slug', async (req, res) => {
             .replace(/\s*<meta name="twitter:[^"]+" content="[^"]*">/g, '')
             .replace(/\s*<meta name="description" content="[^"]*">/g, '');
         const withSocialTitle = withoutStaticSocialMeta.replace(/<title>[^<]*<\/title>/i, `<title>${escapeHtmlAttribute(title)}</title>`);
-        return res.type('html').send(withSocialTitle.replace('</head>', `${meta}</head>`));
+        // The slug resolver already found the internal album id while
+        // preparing this HTML shell. Bootstrap that safe public id into the
+        // client so it can start the Drive request immediately instead of
+        // making a second `/api/album-by-slug` round-trip.
+        const bootstrap = match ? { folderId: match[0], publicSlug: requested } : null;
+        const bootstrapScript = bootstrap
+            ? `<script>window.__FINDER_ALBUM_BOOTSTRAP__=${JSON.stringify(bootstrap).replace(/</g, '\\u003c')};</script>`
+            : '';
+        res.set('Cache-Control', 'public, max-age=30, s-maxage=300, stale-while-revalidate=3600');
+        return res.type('html').send(withSocialTitle.replace('</head>', `${meta}${bootstrapScript}</head>`));
     } catch (_) {
         return res.sendFile(path.join(__dirname, 'client.html'));
     }
@@ -1929,7 +1938,13 @@ app.get('/api/album/:folderId', async (req, res) => {
         const brandingFolderId = currentSettings.galleryType === 'party'
             ? normalizeDriveFolderId(currentSettings.originalFolderId, '')
             : folderId;
-        const driveStudioName = brandingFolderId ? await readDriveBranding(drive, brandingFolderId) : null;
+        // Settings already contain the configured Studio name. Reading the
+        // Drive appProperties on every public page view is redundant and adds
+        // another Google API round-trip; only recover branding when the saved
+        // value is still the default.
+        const driveStudioName = brandingFolderId && isDefaultStudioName(currentSettings.studioName)
+            ? await readDriveBranding(drive, brandingFolderId)
+            : null;
         if (driveStudioName) {
             currentSettings = { ...currentSettings, studioName: driveStudioName };
             albumSettingsDatabase[folderId] = currentSettings;
@@ -2000,11 +2015,15 @@ app.get('/api/album/:folderId', async (req, res) => {
             ? configuredSections
             : [{ id: configuredRoot || normalizeDriveFolderId(folderId, 'root'), name: currentSettings.galleryType === 'party' ? 'Tất cả' : 'Ảnh', driveFolderId: configuredRoot || normalizeDriveFolderId(folderId, 'root') }];
         hasCheckFolder = currentSettings.galleryType !== 'party' && Boolean(currentSettings.checkReady && safeCheckFolderId);
-        albumStage = 'list-gallery-images';
-        const sectionFiles = await Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' }))));
+        albumStage = 'list-gallery-and-check-images';
+        // Gallery sections and the latest CHECK folder are independent Drive
+        // reads. Fetch them together so CHECK albums do not wait for the full
+        // original gallery listing before the response can be rendered.
+        const [sectionFiles, checkFiles] = await Promise.all([
+            Promise.all(sections.map(async section => (await listDriveImages(section.driveFolderId)).map(file => ({ ...file, gallerySectionId: section.id || section.driveFolderId, gallerySectionName: section.name || 'Ảnh' })))),
+            hasCheckFolder ? listDriveImages(safeCheckFolderId) : Promise.resolve([])
+        ]);
         const files = sectionFiles.flat();
-        albumStage = 'list-check-images';
-        const checkFiles = hasCheckFolder ? await listDriveImages(safeCheckFolderId) : [];
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
