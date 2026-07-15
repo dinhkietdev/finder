@@ -232,7 +232,9 @@
             .note-box { min-height:92px; }
             .selection-list { max-height:220px; }
             .thumb-btn, .thumb-btn img { width:74px; height:74px; }
-            .help-robot { right:14px; bottom:82px; }
+            /* Keep the assistant clear of the gallery accordion and the
+               browser's bottom gesture area on phones. */
+            .help-robot { right:12px; bottom:calc(env(safe-area-inset-bottom) + 14px); }
             .robot-button { width:54px; height:54px; font-size:28px; }
             .header-panel { border-radius:18px; }
             .intro { order:-1; }
@@ -260,6 +262,7 @@
             .ai-picks-heading-actions { width:100%; justify-content:space-between; gap:10px; }
             .ai-picks-count { min-height:40px; }
             .ai-picks-toggle { min-height:44px; padding:8px 12px; }
+            .ai-picks-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; max-height:none; overflow:visible; }
             .gallery-heading { align-items:flex-start; gap:8px; }
             .gallery-heading-actions { flex-wrap:wrap; justify-content:flex-end; }
             .gallery-heading-actions .ai-picks-toggle { min-height:44px; }
@@ -540,6 +543,14 @@
         // query-string fallback for older links and direct desktop launches.
         let folderId = window.__FINDER_ALBUM_BOOTSTRAP__?.folderId || urlParams.get('id');
         const albumSlug = window.location.pathname.match(/^\/a\/([^/]+)/)?.[1] || '';
+        // Keep only a small metadata bootstrap in localStorage.  The actual
+        // image bytes remain on Drive/Vercel; this cache is intentionally
+        // short-lived so a visitor opening the same Messenger/Zalo link can
+        // see the first screen immediately while the server refreshes it.
+        const CLIENT_BOOTSTRAP_CACHE_VERSION = 2;
+        const CLIENT_BOOTSTRAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+        const CLIENT_BOOTSTRAP_CACHE_MAX_IMAGES = 120;
+        const CLIENT_BOOTSTRAP_CACHE_MAX_CHECK_IMAGES = 60;
 
         const state = {
             images: [],
@@ -577,6 +588,9 @@
             initialLoadPending: false,
             metadataPending: false,
             aiAnalysisPending: false,
+            aiGroupsComplete: false,
+            aiGroupSourceCount: 0,
+            cacheHydrated: false,
             likedList: {},
             checkNotes: {}
         };
@@ -734,7 +748,10 @@
                 setAlbumLoadingVisible(false);
                 return;
             }
-            const busy = state.metadataPending || state.pagesPending || state.pageLoading || state.aiAnalysisPending;
+            // Only the first paint is blocking. Metadata, later Drive pages
+            // and similarity analysis continue in the background after the
+            // first thumbnail is visible.
+            const busy = state.pageLoading || (!state.originalImages.length && state.metadataPending);
             if (!busy) {
                 state.initialLoadPending = false;
                 setAlbumLoadingVisible(false);
@@ -747,7 +764,6 @@
             } else {
                 progress.push('Đang tải ảnh đầu tiên...');
             }
-            if (state.aiAnalysisPending) progress.push('Đang chuẩn bị nhóm ảnh tương tự...');
             if (elements.albumLoadingProgress) elements.albumLoadingProgress.textContent = progress.join(' ');
             setAlbumLoadingVisible(true);
         }
@@ -792,6 +808,91 @@
             image.lightbox = image.lightbox || getProtectedDriveImageUrl(image, 'lightbox', false);
             image.originalUrl = image.originalUrl || getProtectedDriveImageUrl(image, 'original', true);
             return image;
+        }
+
+        function getClientBootstrapCacheKey() {
+            const identity = albumSlug || folderId || 'unknown';
+            return `finder-client-bootstrap:${CLIENT_BOOTSTRAP_CACHE_VERSION}:${ONLINE_SERVER}:${identity}`;
+        }
+
+        function serializeClientImage(image) {
+            if (!image) return null;
+            return {
+                id: image.id || null,
+                name: image.name || null,
+                fullName: image.fullName || image.shortName || '',
+                shortName: image.shortName || image.fullName || '',
+                thumbnail: image.thumbnail || '',
+                preview: image.preview || '',
+                lightbox: image.lightbox || '',
+                originalUrl: image.originalUrl || '',
+                gallerySectionId: image.gallerySectionId || null
+            };
+        }
+
+        function getClientBootstrapSettings() {
+            return {
+                galleryType: state.galleryType,
+                gallerySections: state.gallerySections,
+                expiresDays: state.expiresDays,
+                checkFolderId: state.checkFolderId,
+                checkUpdatedAt: state.checkUpdatedAt,
+                checkVersion: state.checkVersion,
+                checkNeedsRevision: state.checkNeedsRevision,
+                workflowStatus: state.workflowStatus,
+                expiresAt: state.expiresAt,
+                publicSlug: state.publicSlug,
+                studioName: state.studioName,
+                displayName: state.displayName,
+                maxSelections: state.maxSelections
+            };
+        }
+
+        function writeClientBootstrapCache() {
+            if (!folderId || !state.originalImages.length) return;
+            try {
+                const payload = {
+                    version: CLIENT_BOOTSTRAP_CACHE_VERSION,
+                    savedAt: Date.now(),
+                    folderId,
+                    publicSlug: state.publicSlug || albumSlug,
+                    settings: getClientBootstrapSettings(),
+                    isFinalized: state.isFinalized,
+                    originalImages: state.originalImages.slice(0, CLIENT_BOOTSTRAP_CACHE_MAX_IMAGES).map(serializeClientImage).filter(Boolean),
+                    checkImages: state.checkImages.slice(0, CLIENT_BOOTSTRAP_CACHE_MAX_CHECK_IMAGES).map(serializeClientImage).filter(Boolean)
+                };
+                localStorage.setItem(getClientBootstrapCacheKey(), JSON.stringify(payload));
+            } catch (_) {
+                // Private browsing mode, a full quota, or disabled storage
+                // must never prevent the online album from loading.
+            }
+        }
+
+        function hydrateClientBootstrapCache() {
+            try {
+                const cached = JSON.parse(localStorage.getItem(getClientBootstrapCacheKey()) || 'null');
+                if (!cached || cached.version !== CLIENT_BOOTSTRAP_CACHE_VERSION || !cached.savedAt) return false;
+                if (Date.now() - Number(cached.savedAt) > CLIENT_BOOTSTRAP_CACHE_TTL_MS) return false;
+                if (!folderId && cached.folderId) folderId = cached.folderId;
+                if (!folderId || !Array.isArray(cached.originalImages) || !cached.originalImages.length) return false;
+                state.cacheHydrated = true;
+                state.publicSlug = cached.publicSlug || state.publicSlug || albumSlug;
+                applyAlbumSettings(cached.settings || {}, cached.isFinalized, cached.settings?.gallerySections || []);
+                state.originalImages = cached.originalImages.map(mapAlbumImage).sort(naturalImageCompare);
+                state.checkImages = Array.isArray(cached.checkImages) ? cached.checkImages.map(mapAlbumImage).sort(naturalImageCompare) : [];
+                state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+                state.images = state.originalImages;
+                state.currentIndex = 0;
+                state.aiGroups = [];
+                // The cursor is intentionally not cached: Drive cursors can
+                // expire. The next online response will provide a fresh one.
+                state.pageCursor = null;
+                state.pageHasMore = true;
+                state.pagesPending = true;
+                return true;
+            } catch (_) {
+                return false;
+            }
         }
 
         function applyMetadataToImages(images) {
@@ -1082,7 +1183,11 @@
         // giữ đúng thứ tự burst; quyết định ảnh có cùng cụm hay không dựa trên
         // đặc trưng hình ảnh, tránh việc cả album bị đề xuất hàng loạt.
         async function buildAiGroups(sourceImages = state.images) {
-            if (state.viewMode !== 'original' || !sourceImages.length) { state.aiGroups = []; return; }
+            const sourceCount = sourceImages.length;
+            const isComplete = !state.pagesPending && !state.pageLoading && sourceCount >= state.originalImages.length;
+            state.aiGroupSourceCount = sourceCount;
+            state.aiGroupsComplete = isComplete;
+            if (state.viewMode !== 'original' || !sourceImages.length) { state.aiGroups = []; state.aiGroupsComplete = false; return; }
             const ordered = sourceImages.slice().sort(naturalImageCompare);
             if (sourceImages === state.images) state.images = ordered;
             const groupCacheKey = 'finder-ai-groups:' + folderId + ':' + ordered.map(item => item.fullName + ':' + (item.thumbnail || '')).join('|');
@@ -1091,7 +1196,7 @@
                 if (Array.isArray(cachedGroups)) {
                     const byName = new Map(ordered.map((image, index) => [image.fullName, { image, index }]));
                     state.aiGroups = cachedGroups.map(group => group.map(name => byName.get(name)).filter(Boolean)).filter(group => group.length >= 2);
-                    if (state.aiGroups.length) return;
+                    if (state.aiGroups.length || isComplete) return;
                 }
             } catch (_) {}
             const indexed = ordered.map((image, index) => ({ image, index }));
@@ -1136,7 +1241,12 @@
             window.clearTimeout(aiGroupingTimer);
             const runId = ++aiGroupingRunId;
             state.aiAnalysisPending = Boolean(sourceImages.length && state.viewMode === 'original');
+            state.aiGroupSourceCount = sourceImages.length;
+            state.aiGroupsComplete = !state.pagesPending && !state.pageLoading && sourceImages.length >= state.originalImages.length;
             updateAlbumLoadingOverlay();
+            // Paint the compact “đang phân tích” state immediately instead of
+            // leaving a blank section until the first worker finishes.
+            if (elements.aiPicksPanel) renderAiPicks();
             const run = () => {
                 aiGroupingTimer = null;
                 if (state.viewMode !== 'original' || !sourceImages.length) {
@@ -1185,7 +1295,9 @@
 
         function renderAiPicks() {
             aiGroupObserver?.disconnect();
-            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            const isOriginal = state.viewMode === 'original' && !state.isFinalized;
+            const stillWorking = isOriginal && (state.aiAnalysisPending || state.pagesPending || state.pageLoading || (!state.aiGroupsComplete && state.originalImages.length > 0));
+            const available = isOriginal && (state.aiGroups.length > 0 || stillWorking);
             if (!available) {
                 elements.aiPicksPanel.style.display = 'none';
                 const galleryOpen = state.galleryExpanded !== false;
@@ -1195,7 +1307,14 @@
                 return;
             }
             elements.aiPicksPanel.style.display = '';
-            elements.aiPicksCount.textContent = state.aiGroups.length + ' cụm';
+            elements.aiPicksCount.textContent = state.aiGroups.length
+                ? `${state.aiGroups.length}${state.aiGroupsComplete ? '' : '+'} cụm`
+                : 'Đang phân tích…';
+            if (elements.aiPicksDescription) {
+                elements.aiPicksDescription.textContent = stillWorking
+                    ? `Đã tìm ${state.aiGroups.length} cụm${state.aiGroups.length ? ', đang phân tích thêm trong nền…' : ', đang chuẩn bị…'}`
+                    : 'Các ảnh gần giống nhau được gom để bạn xem nhanh';
+            }
             const expanded = state.aiGroupsExpanded !== false;
             // The two panels intentionally behave like an accordion: opening
             // one automatically collapses the other to keep mobile browsing
@@ -1705,25 +1824,35 @@
             if (repeat) robotMessageInterval = window.setInterval(flash, 10000);
         }
 
+        function visibleImageTotal() {
+            const count = state.originalImages.length || state.images.length;
+            return `${count}${state.pagesPending || state.pageLoading ? '+' : ''}`;
+        }
+
         function robotContextGreeting() {
             if (!state.images.length) return 'Hiện album chưa có ảnh để xem.';
-            if (state.galleryType === 'party') return `Gallery tiệc đã sẵn sàng với ${state.gallerySections.length || 1} ngày/đợt ảnh. Bạn có thể chuyển mục để xem từng phần.`;
+            if (state.cacheHydrated && (state.pagesPending || state.pageLoading)) return `⚡ Em đã mở nhanh ${state.originalImages.length} ảnh đã lưu. Phần còn lại đang tải nền, mình vẫn có thể xem ảnh ngay nhé.`;
+            if (state.galleryType === 'party') return `Gallery tiệc đã sẵn sàng với ${state.gallerySections.length || 1} ngày/đợt ảnh và ${visibleImageTotal()} ảnh. Bạn có thể chuyển mục để xem từng phần.`;
             if (state.workflowStatus === 'completed') return 'Album đã hoàn tất. Bạn có thể xem và lưu các ảnh chất lượng cao.';
             if (state.checkNeedsRevision) return '🛠️ Studio đã nhận ghi chú của bạn và đang chờ xử lý chỉnh sửa tiếp.';
             if (state.checkReady) return `Album đã có ${state.checkImages.length} ảnh chỉnh sửa. Bạn có thể mở ảnh để kiểm tra.`;
             if (state.isFinalized) return `Đã ghi nhận ${selectedCount()} ảnh bạn chọn. Studio sẽ xử lý theo các ghi chú trong album.`;
             if (state.maxSelections > 0 && selectedCount() >= state.maxSelections) return `✅ Bạn đã chọn đủ ${state.maxSelections} ảnh. Hãy kiểm tra lại rồi xác nhận khi sẵn sàng.`;
             if (selectedCount() > 0) return `👍 Bạn đã chọn ${selectedCount()}${state.maxSelections > 0 ? `/${state.maxSelections}` : ''} ảnh. Bạn có thể tiếp tục xem và ghi chú trước khi chốt.`;
-            if (state.maxSelections > 0) return `Album có ${state.images.length} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; mình sẽ cập nhật số đã chọn ngay trên nút.`;
-            return `Album có ${state.images.length} ảnh. Hãy mở ảnh bạn quan tâm để xem và gửi lựa chọn cho studio.`;
+            if (state.maxSelections > 0) return `Album có ${visibleImageTotal()} ảnh. Bạn có thể chọn tối đa ${state.maxSelections} ảnh; mình sẽ cập nhật số đã chọn ngay trên nút.`;
+            return `Album có ${visibleImageTotal()} ảnh. Hãy mở ảnh bạn quan tâm để xem và gửi lựa chọn cho studio.`;
         }
 
         function robotContextPrompts() {
             const selected = selectedCount();
+            const loadingHint = state.pagesPending || state.pageLoading
+                ? `Em đang tải tiếp phần ảnh còn lại ở nền (${visibleImageTotal()} ảnh đã nhận).`
+                : 'Toàn bộ danh sách ảnh đã sẵn sàng.';
             if (state.galleryType === 'party') return [
-                `Gallery có ${state.gallerySections.length || 1} ngày/đợt ảnh để xem.`,
+                `Gallery có ${state.gallerySections.length || 1} ngày/đợt ảnh và ${visibleImageTotal()} ảnh để xem.`,
                 'Bạn có thể chuyển tab ngày ở phía trên thư viện ảnh.',
-                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh trong mục hiện tại.`
+                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh trong mục hiện tại.`,
+                loadingHint
             ];
             if (state.workflowStatus === 'completed') return [
                 'Ảnh đã hoàn tất, bạn có thể lưu lại ngay.',
@@ -1738,7 +1867,8 @@
             if (state.checkReady) return [
                 'Bạn có thể mở ảnh để kiểm tra bản chỉnh sửa.',
                 'Nếu cần sửa thêm, hãy mở ảnh rồi gửi ghi chú cho studio.',
-                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`
+                `Bạn đang xem ${state.currentIndex + 1}/${state.images.length} ảnh chỉnh sửa.`,
+                loadingHint
             ];
             if (state.isFinalized) return [
                 'Lựa chọn đã được khóa; bạn vẫn có thể xem lại ảnh.',
@@ -1748,7 +1878,8 @@
             return [
                 `Bạn đã chọn ${selected}${state.maxSelections > 0 ? `/${state.maxSelections}` : ''} ảnh trong album.`,
                 'Bạn có thể mở ảnh lớn để kiểm tra trước khi chốt.',
-                'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.'
+                'Nếu cần chỉnh sửa riêng, hãy ghi chú ngay trên ảnh đó.',
+                loadingHint
             ];
         }
 
@@ -2048,6 +2179,7 @@
             applyMetadataToImages([...state.originalImages, ...state.checkImages]);
             if (data.settings) applyAlbumSettings(data.settings, data.isFinalized, data.gallerySections);
             state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+            writeClientBootstrapCache();
             render();
         }
 
@@ -2071,6 +2203,7 @@
                 state.images = state.viewMode === 'check' ? state.checkImages : state.originalImages;
                 const restoredIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
                 if (restoredIndex >= 0) state.currentIndex = restoredIndex;
+                writeClientBootstrapCache();
                 render();
                 updateAlbumLoadingOverlay();
             }
@@ -2080,17 +2213,25 @@
             updateAlbumLoadingOverlay();
             updatePartyActions();
             if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
+            writeClientBootstrapCache();
             render();
         }
 
         async function loadAlbum() {
-            state.initialLoadPending = true;
+            const cacheHydrated = hydrateClientBootstrapCache();
+            state.initialLoadPending = !cacheHydrated;
             state.metadataPending = true;
-            state.pagesPending = false;
+            state.pagesPending = cacheHydrated;
             state.pageLoading = false;
             state.aiAnalysisPending = false;
-            setAlbumLoadingVisible(true);
+            state.aiGroupsComplete = false;
+            setAlbumLoadingVisible(!cacheHydrated);
             updateAlbumLoadingOverlay();
+            if (cacheHydrated) {
+                setMessage(`⚡ Đã mở nhanh ${state.originalImages.length} ảnh đã lưu; đang đồng bộ bản mới ở nền…`, 'success');
+                render();
+                showRobotStatus(robotContextGreeting());
+            }
             if (!folderId && albumSlug) {
                 try {
                     const resolveResponse = await fetch(`${ONLINE_SERVER}/api/album-by-slug/${encodeURIComponent(albumSlug)}`, { cache: 'no-store', credentials: 'include' });
@@ -2141,14 +2282,26 @@
                 state.pageLoading = false;
 
                 applyAlbumSettings(data.settings || {}, data.isFinalized, data.gallerySections);
-                state.originalImages = (data.files || []).map(mapAlbumImage);
-                state.checkImages = (data.checkFiles || []).map(mapAlbumImage);
-                state.originalImages.sort(naturalImageCompare);
-                state.checkImages.sort(naturalImageCompare);
+                const freshOriginalImages = (data.files || []).map(mapAlbumImage);
+                const freshCheckImages = (data.checkFiles || []).map(mapAlbumImage);
+                if (cacheHydrated && state.originalImages.length) {
+                    // Keep the warm bootstrap visible while the first network
+                    // page arrives; merge prevents a 120→24 flicker on mobile.
+                    mergeAlbumImages(state.originalImages, freshOriginalImages);
+                    mergeAlbumImages(state.checkImages, freshCheckImages);
+                } else {
+                    state.originalImages = freshOriginalImages;
+                    state.checkImages = freshCheckImages;
+                    state.originalImages.sort(naturalImageCompare);
+                    state.checkImages.sort(naturalImageCompare);
+                }
                 state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
                 state.pageCursor = data.nextCursor || null;
                 state.pageHasMore = Boolean(data.hasMore && state.pageCursor);
                 state.pagesPending = state.pageHasMore;
+                state.initialLoadPending = false;
+                state.metadataPending = false;
+                writeClientBootstrapCache();
                 updateAlbumLoadingOverlay();
                 // Older pages or an API rollout may still include metadata;
                 // use it immediately, then let /meta provide the canonical
@@ -2170,7 +2323,11 @@
                 // pass runs after the remaining Drive pages finish loading.
                 if (state.viewMode === 'original') scheduleAiGroups(getAiWarmWindow());
                 scheduleRobotAssistant();
-                setMessage(state.checkReady ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.' : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+                setMessage(state.checkReady
+                    ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.'
+                    : state.pagesPending
+                    ? `✅ Đã mở ${state.originalImages.length} ảnh đầu tiên. Phần còn lại đang tải nền; bạn có thể xem và chọn ngay.`
+                    : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
                 metadataResponsePromise
                     .then(response => response ? readApiJson(response, 'Không thể tải trạng thái album') : null)
                     .then(data => data ? applyAlbumMetadata(data) : null)
