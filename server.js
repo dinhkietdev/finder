@@ -1219,7 +1219,8 @@ app.get('/a/:slug', async (req, res) => {
     try {
         await loadPersistentState();
         const requested = canonicalPublicSlug(req.params.slug);
-        const match = Object.values(albumSettingsDatabase).find(settings => canonicalPublicSlug(settings?.publicSlug) === requested);
+        const matchEntry = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
+        const match = matchEntry?.[1] || null;
         const title = 'Finder - Ứng dụng bàn giao và chọn ảnh';
         const description = match?.galleryType === 'party' ? 'Gallery ảnh tiệc / PSC trên Finder' : 'Gallery ảnh khách hàng trên Finder';
         const source = fs.readFileSync(path.join(__dirname, 'client.html'), 'utf8');
@@ -1234,7 +1235,7 @@ app.get('/a/:slug', async (req, res) => {
         // preparing this HTML shell. Bootstrap that safe public id into the
         // client so it can start the Drive request immediately instead of
         // making a second `/api/album-by-slug` round-trip.
-        const bootstrap = match ? { folderId: match[0], publicSlug: requested } : null;
+        const bootstrap = matchEntry ? { folderId: matchEntry[0], publicSlug: requested } : null;
         const bootstrapScript = bootstrap
             ? `<script>window.__FINDER_ALBUM_BOOTSTRAP__=${JSON.stringify(bootstrap).replace(/</g, '\\u003c')};</script>`
             : '';
