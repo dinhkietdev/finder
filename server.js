@@ -1975,13 +1975,20 @@ app.get('/api/album/:folderId', async (req, res) => {
             if (download) query.set('download', '1');
             return `/api/album/${encodeURIComponent(folderId)}/image/${encodeURIComponent(fileId)}?${query.toString()}`;
         };
+        const compactResponse = String(req.query?.compact || '') === '1';
         const toClientFile = file => {
             const nameWithoutExt = path.basename(file.name, path.extname(file.name));
-            return {
+            const base = {
                 id: file.id,
                 fullName: file.name,
                 shortName: nameWithoutExt,
                 thumbnail: driveImage(file.id, 'thumb'),
+                gallerySectionId: file.gallerySectionId,
+                gallerySectionName: file.gallerySectionName
+            };
+            if (compactResponse) return base;
+            return {
+                ...base,
                 preview: driveImage(file.id, 'preview'),
                 // Lightbox vẫn dùng thumbnail lớn của Drive nhưng được proxy
                 // qua server để không cần cấp quyền anyone/reader.

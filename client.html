@@ -598,6 +598,7 @@
         let suppressLightboxCloseUntil = 0;
         let lightboxPanStart = null;
         let aiGroupingTimer = null;
+        let thumbRenderVersion = 0;
         const activePointers = new Map();
         const thumbObserver = 'IntersectionObserver' in window
             ? new IntersectionObserver(entries => entries.forEach(entry => {
@@ -922,6 +923,63 @@
             });
         }
 
+        function createThumbEntry(img, index, isPartyGallery) {
+            const thumbBtn = document.createElement('button');
+            thumbBtn.className = 'thumb-btn';
+            if (index === state.currentIndex) thumbBtn.classList.add('active');
+            if (img.selected) thumbBtn.classList.add('selected');
+            const thumbImg = document.createElement('img');
+            thumbImg.loading = 'lazy';
+            thumbImg.decoding = 'async';
+            thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
+            thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
+            thumbBtn.appendChild(thumbImg);
+            if (isPartyGallery) {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox'; checkbox.checked = partySelected.has(img.fullName); checkbox.title = 'Chọn ảnh tải xuống';
+                checkbox.style.cssText = 'position:absolute;top:7px;left:7px;width:19px;height:19px;z-index:2;accent-color:#22c55e;';
+                checkbox.addEventListener('click', event => event.stopPropagation());
+                checkbox.addEventListener('change', () => { checkbox.checked ? partySelected.add(img.fullName) : partySelected.delete(img.fullName); updatePartyActions(); });
+                thumbBtn.appendChild(checkbox);
+            }
+            thumbBtn.onclick = () => {
+                state.currentIndex = index;
+                render();
+            };
+            return { button: thumbBtn, image: thumbImg };
+        }
+
+        function renderThumbStrip(galleryEntries, isPartyGallery) {
+            const version = ++thumbRenderVersion;
+            const ordered = galleryEntries.slice().sort((a, b) => Number(b.img.selected) - Number(a.img.selected));
+            elements.thumbStrip.innerHTML = '';
+            let cursor = 0;
+            const appendBatch = () => {
+                if (version !== thumbRenderVersion) return;
+                const fragment = document.createDocumentFragment();
+                const images = [];
+                const end = Math.min(cursor + 48, ordered.length);
+                for (; cursor < end; cursor += 1) {
+                    const entry = createThumbEntry(ordered[cursor].img, ordered[cursor].index, isPartyGallery);
+                    fragment.appendChild(entry.button);
+                    images.push(entry.image);
+                }
+                elements.thumbStrip.appendChild(fragment);
+                if (thumbObserver) images.forEach(image => thumbObserver.observe(image));
+                else images.forEach(image => {
+                    image.src = image.dataset.src || '';
+                    image.addEventListener('load', () => image.classList.add('is-ready'), { once: true });
+                });
+                if (cursor < ordered.length) {
+                    const schedule = 'requestIdleCallback' in window
+                        ? callback => window.requestIdleCallback(callback, { timeout: 180 })
+                        : callback => window.setTimeout(callback, 0);
+                    schedule(appendBatch);
+                }
+            };
+            appendBatch();
+        }
+
 
         function updateCheckBannerVisibility() {
             const lightboxOpen = elements.imageLightbox.classList.contains('open');
@@ -1053,36 +1111,7 @@
                 elements.compareStage.classList.remove('visible');
             }
 
-            elements.thumbStrip.innerHTML = '';
-            galleryEntries
-                .sort((a, b) => Number(b.img.selected) - Number(a.img.selected))
-                .forEach(({ img, index }) => {
-                const thumbBtn = document.createElement('button');
-                thumbBtn.className = 'thumb-btn';
-                if (index === state.currentIndex) thumbBtn.classList.add('active');
-                if (img.selected) thumbBtn.classList.add('selected');
-                const thumbImg = document.createElement('img');
-                thumbImg.loading = 'lazy';
-                thumbImg.decoding = 'async';
-                thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
-                thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
-                thumbBtn.appendChild(thumbImg);
-                if (isPartyGallery) {
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox'; checkbox.checked = partySelected.has(img.fullName); checkbox.title = 'Chọn ảnh tải xuống';
-                    checkbox.style.cssText = 'position:absolute;top:7px;left:7px;width:19px;height:19px;z-index:2;accent-color:#22c55e;';
-                    checkbox.addEventListener('click', event => event.stopPropagation());
-                    checkbox.addEventListener('change', () => { checkbox.checked ? partySelected.add(img.fullName) : partySelected.delete(img.fullName); updatePartyActions(); });
-                    thumbBtn.appendChild(checkbox);
-                }
-                thumbBtn.onclick = () => {
-                    state.currentIndex = index;
-                    render();
-                };
-                elements.thumbStrip.appendChild(thumbBtn);
-                if (thumbObserver) thumbObserver.observe(thumbImg);
-                else { thumbImg.src = thumbImg.dataset.src; thumbImg.addEventListener('load', () => thumbImg.classList.add('is-ready'), { once:true }); }
-            });
+            renderThumbStrip(galleryEntries, isPartyGallery);
 
             renderSelectionList();
             preloadNearbyImages();
@@ -1615,7 +1644,9 @@
             if (!folderId) { setMessage('❌ Đường dẫn album không hợp lệ.', 'error'); return; }
 
             try {
-                const albumQuery = albumSlug ? `?slug=${encodeURIComponent(albumSlug)}` : '';
+                const albumParams = new URLSearchParams({ compact: '1' });
+                if (albumSlug) albumParams.set('slug', albumSlug);
+                const albumQuery = `?${albumParams.toString()}`;
                 const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}${albumQuery}`, { cache: 'no-store' }, 3);
                 const data = await readApiJson(response, 'Không thể tải album');
 
@@ -1625,13 +1656,23 @@
                 state.expiresDays = Number(data.settings?.expiresDays) || 60;
                 state.isFinalized = !!data.isFinalized || state.galleryType === 'party';
                 state.maxSelections = Number(data.settings?.maxSelections) || 0;
-                const mapImage = file => ({
-                    ...file,
-                    fullName: file.fullName || file.shortName || '',
-                    shortName: file.shortName || file.fullName || '',
-                    selected: false,
-                    note: ''
-                });
+                const mapImage = file => {
+                    const image = {
+                        ...file,
+                        fullName: file.fullName || file.shortName || '',
+                        shortName: file.shortName || file.fullName || '',
+                        selected: false,
+                        note: ''
+                    };
+                    // Compact album responses carry only the thumbnail URL;
+                    // derive the other protected sizes locally to avoid
+                    // repeating long URLs hundreds of times in JSON.
+                    image.thumbnail = image.thumbnail || getProtectedDriveImageUrl(image, 'thumb', false);
+                    image.preview = image.preview || getProtectedDriveImageUrl(image, 'preview', false);
+                    image.lightbox = image.lightbox || getProtectedDriveImageUrl(image, 'lightbox', false);
+                    image.originalUrl = image.originalUrl || getProtectedDriveImageUrl(image, 'original', true);
+                    return image;
+                };
                 state.originalImages = (data.files || []).map(mapImage);
                 state.checkImages = (data.checkFiles || []).map(mapImage);
                 state.originalImages.sort(naturalImageCompare);
