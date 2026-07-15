@@ -168,7 +168,19 @@
         .ai-picks-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
         .ai-picks-heading strong { font-size:15px; }
         .ai-picks-heading span { color:var(--text-muted); font-size:12px; }
+        .ai-picks-heading-main { display:flex; align-items:center; gap:8px; min-width:0; }
+        .ai-picks-heading-main > div { min-width:0; }
+        .ai-picks-heading-actions { display:flex; align-items:center; gap:8px; flex:none; }
+        .ai-picks-toggle { display:inline-flex; align-items:center; gap:7px; min-height:36px; padding:6px 10px; border:1px solid rgba(157,168,255,.35); border-radius:999px; background:rgba(12,18,32,.68); color:#e4e9ff; font-size:12px; font-weight:700; cursor:pointer; }
+        .ai-picks-toggle:hover { border-color:rgba(157,168,255,.8); background:rgba(30,41,88,.7); }
+        .ai-picks-toggle .toggle-track { position:relative; width:30px; height:17px; border-radius:999px; background:#475569; transition:background .18s ease; }
+        .ai-picks-toggle .toggle-track::after { content:''; position:absolute; width:13px; height:13px; top:2px; left:2px; border-radius:50%; background:#e2e8f0; transition:transform .18s ease; }
+        .ai-picks-toggle[aria-checked="true"] .toggle-track { background:#6675f5; }
+        .ai-picks-toggle[aria-checked="true"] .toggle-track::after { transform:translateX(13px); background:#fff; }
         .ai-picks-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(110px,1fr)); gap:10px; }
+        .ai-picks-panel.is-collapsed .ai-picks-heading { margin-bottom:0; }
+        .gallery-panel.is-collapsed #gallerySectionsNav, .gallery-panel.is-collapsed #partyGalleryActions, .gallery-panel.is-collapsed #partyDownloadQueue, .gallery-panel.is-collapsed #thumbStrip { display:none !important; }
+        .gallery-panel.is-collapsed .gallery-heading { margin-bottom:0; }
         .ai-pick-card { position:relative; overflow:hidden; border:1px solid rgba(157,168,255,.45); border-radius:14px; background:#0d1320; cursor:pointer; text-align:left; color:#fff; padding:0; }
         .ai-pick-card img { width:100%; aspect-ratio:1; display:block; object-fit:cover; }
         .ai-pick-card .ai-pick-label { display:block; padding:7px 8px; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -189,6 +201,8 @@
         .lightbox-toolbar { bottom:max(18px,env(safe-area-inset-bottom)); }
         .lightbox-toolbar button { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); border-color:rgba(255,255,255,.18); }
         .zoom-tip { background:rgba(18,27,43,.82); backdrop-filter:blur(12px); }
+        .lightbox-group-context { position:absolute; top:max(18px,env(safe-area-inset-top)); left:50%; transform:translateX(-50%); z-index:4; max-width:calc(100vw - 32px); padding:9px 14px; border:1px solid rgba(157,168,255,.38); border-radius:999px; background:rgba(18,27,43,.86); color:#e4e9ff; font-size:13px; font-weight:800; letter-spacing:.01em; text-align:center; backdrop-filter:blur(12px); white-space:nowrap; }
+        .lightbox-group-context[hidden] { display:none; }
 
         @media (max-width: 900px) {
             .content-grid { grid-template-columns: 1fr; }
@@ -408,11 +422,11 @@
         </div>
 
         <div id="aiPicksPanel" class="panel ai-picks-panel" style="display:none;">
-            <div class="ai-picks-heading"><div><strong>▦ Nhóm ảnh tương tự</strong><span id="aiPicksDescription"> Các ảnh gần giống nhau được gom để bạn xem nhanh</span></div><span id="aiPicksCount"></span></div>
+            <div class="ai-picks-heading"><div class="ai-picks-heading-main"><strong>▦ Nhóm ảnh tương tự</strong><span id="aiPicksDescription">Các ảnh gần giống nhau được gom để bạn xem nhanh</span></div><div class="ai-picks-heading-actions"><span id="aiPicksCount"></span><button id="aiPicksToggle" class="ai-picks-toggle" type="button" role="switch" aria-checked="true" aria-label="Bật hoặc tắt nhóm ảnh tương tự"><span class="toggle-track" aria-hidden="true"></span><span id="aiPicksToggleLabel">Đang mở</span></button></div></div>
             <div id="aiPicksGrid" class="ai-picks-grid"></div>
         </div>
 
-        <div class="panel gallery-panel">
+        <div id="galleryPanel" class="panel gallery-panel">
             <div class="gallery-heading"><strong>Thư viện ảnh</strong><span id="galleryCount">0 ảnh</span></div>
             <div id="gallerySectionsNav" class="gallery-sections-nav" style="display:none;"></div>
             <div id="partyGalleryActions" style="display:none;gap:8px;flex-wrap:wrap;margin:0 0 12px;">
@@ -442,6 +456,7 @@
             <input id="compareRange" class="compare-range" type="range" min="0" max="100" value="50" aria-label="Kéo để so sánh ảnh">
             <div class="compare-label compare-label-original">Ảnh gốc</div><div class="compare-label compare-label-check">Ảnh chỉnh sửa</div>
         </div>
+        <div id="lightboxGroupContext" class="lightbox-group-context" hidden aria-live="polite"></div>
         <div id="lightboxLoading" class="lightbox-loading">Đang tải ảnh chất lượng cao…</div>
         <div class="lightbox-toolbar"><button id="lightboxSelectBtn" aria-label="Chọn ảnh">✓ Chọn</button><button id="lightboxNoteBtn" aria-label="Ghi chú">📝 Ghi chú</button><button id="compareToggleBtn" style="display:none" aria-label="So sánh ảnh">↔ So sánh</button><button id="lightboxDownloadBtn" style="display:none" aria-label="Tải ảnh chỉnh sửa">⬇️ Tải ảnh</button><button id="closeLightboxBtn" aria-label="Đóng">×</button></div>
         <div class="zoom-tip">Chụm hai ngón tay/cuộn để zoom · Kéo ảnh để xem vùng khác</div>
@@ -508,6 +523,8 @@
             expiresDays: 60,
             expiresAt: null,
             aiGroups: [],
+            aiGroupsExpanded: true,
+            activeAiGroupIndex: null,
             publicSlug: albumSlug,
             studioName: 'Finder',
             displayName: 'Finder',
@@ -563,10 +580,12 @@
             ,gallerySectionsNav: document.getElementById('gallerySectionsNav')
             ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn'), partyDownloadQueue: document.getElementById('partyDownloadQueue'), partyDownloadQueueText: document.getElementById('partyDownloadQueueText'), partyDownloadNextBtn: document.getElementById('partyDownloadNextBtn'), partyDownloadCancelBtn: document.getElementById('partyDownloadCancelBtn')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
+            aiPicksToggle: document.getElementById('aiPicksToggle'), aiPicksToggleLabel: document.getElementById('aiPicksToggleLabel'), galleryPanel: document.getElementById('galleryPanel'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
             copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
             compareStage: document.getElementById('compareStage'), compareOriginalImage: document.getElementById('compareOriginalImage'), compareCheckImage: document.getElementById('compareCheckImage'), compareClip: document.getElementById('compareClip'), compareDivider: document.getElementById('compareDivider'), compareRange: document.getElementById('compareRange'), compareToggleBtn: document.getElementById('compareToggleBtn'), lightboxDownloadBtn: document.getElementById('lightboxDownloadBtn'),
+            lightboxGroupContext: document.getElementById('lightboxGroupContext'),
             qrModal: document.getElementById('qrModal'), qrImage: document.getElementById('qrImage'), qrLinkText: document.getElementById('qrLinkText'), closeQrBtn: document.getElementById('closeQrBtn')
             ,selectionReopenModal: document.getElementById('selectionReopenModal'), reopenOriginalBtn: document.getElementById('reopenOriginalBtn'), reopenCheckBtn: document.getElementById('reopenCheckBtn')
         };
@@ -754,6 +773,7 @@
             const currentName = preserveFileName || getCurrentImage()?.fullName || '';
             state.viewMode = nextMode;
             state.compareEnabled = false;
+            if (nextMode !== 'original') state.activeAiGroupIndex = null;
             state.images = nextMode === 'check' ? state.checkImages : state.originalImages;
             const nextIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
             state.currentIndex = nextIndex >= 0 ? nextIndex : 0;
@@ -909,18 +929,78 @@
         }
 
         function renderAiPicks() {
-            if (state.viewMode !== 'original' || state.isFinalized || !state.aiGroups.length) { elements.aiPicksPanel.style.display = 'none'; return; }
+            const available = state.viewMode === 'original' && !state.isFinalized && state.aiGroups.length > 0;
+            if (!available) {
+                elements.aiPicksPanel.style.display = 'none';
+                elements.galleryPanel?.classList.remove('is-collapsed');
+                return;
+            }
             elements.aiPicksPanel.style.display = '';
             elements.aiPicksCount.textContent = state.aiGroups.length + ' cụm';
+            const expanded = state.aiGroupsExpanded !== false;
+            elements.aiPicksPanel.classList.toggle('is-collapsed', !expanded);
+            elements.aiPicksGrid.hidden = !expanded;
+            elements.aiPicksToggle?.setAttribute('aria-checked', expanded ? 'true' : 'false');
+            if (elements.aiPicksToggleLabel) elements.aiPicksToggleLabel.textContent = expanded ? 'Đang mở' : 'Đã thu gọn';
+            elements.galleryPanel?.classList.toggle('is-collapsed', expanded);
             elements.aiPicksGrid.innerHTML = '';
+            if (!expanded) return;
             state.aiGroups.forEach((group, groupIndex) => {
                 const first = group[0];
                 const card = document.createElement('button'); card.className = 'ai-pick-card'; card.type = 'button';
                 const image = document.createElement('img'); image.loading = 'lazy'; image.decoding = 'async'; image.src = first.image.thumbnail || first.image.originalUrl || ''; image.alt = 'Nhóm ảnh tương tự ' + (groupIndex + 1);
                 const label = document.createElement('span'); label.className = 'ai-pick-label'; label.textContent = 'Cụm ' + (groupIndex + 1) + ' · ' + group.length + ' ảnh tương tự';
-                card.append(image, label); card.addEventListener('click', () => { state.currentIndex = first.index; render(); elements.currentImageSection.scrollIntoView({ behavior:'smooth', block:'start' }); });
+                card.append(image, label); card.addEventListener('click', () => {
+                    state.activeAiGroupIndex = groupIndex;
+                    const nextIndex = state.images.findIndex(item => item.fullName === first.image.fullName);
+                    state.currentIndex = nextIndex >= 0 ? nextIndex : first.index;
+                    render();
+                    openLightbox();
+                });
                 elements.aiPicksGrid.appendChild(card);
             });
+        }
+
+        function currentAiGroupContext() {
+            if (state.viewMode !== 'original' || !state.aiGroups.length) return null;
+            const current = getCurrentImage();
+            if (!current) return null;
+            const matchesCurrent = group => group.some(item => item.image.fullName === current.fullName);
+            let groupIndex = Number.isInteger(state.activeAiGroupIndex) && state.aiGroups[state.activeAiGroupIndex] && matchesCurrent(state.aiGroups[state.activeAiGroupIndex])
+                ? state.activeAiGroupIndex
+                : state.aiGroups.findIndex(matchesCurrent);
+            if (groupIndex < 0) return null;
+            const group = state.aiGroups[groupIndex];
+            const position = group.findIndex(item => item.image.fullName === current.fullName);
+            if (position < 0) return null;
+            state.activeAiGroupIndex = groupIndex;
+            return { groupIndex, group, position };
+        }
+
+        function setImageByGroupItem(item) {
+            const nextIndex = state.images.findIndex(image => image.fullName === item?.image?.fullName);
+            if (nextIndex < 0) return false;
+            state.currentIndex = nextIndex;
+            return true;
+        }
+
+        function navigateAiGroup(direction) {
+            const context = currentAiGroupContext();
+            if (!context) return false;
+            let targetGroupIndex = context.groupIndex;
+            let targetPosition = context.position + direction;
+            if (targetPosition >= context.group.length) {
+                targetGroupIndex += 1;
+                targetPosition = 0;
+            } else if (targetPosition < 0) {
+                targetGroupIndex -= 1;
+                targetPosition = targetGroupIndex >= 0 ? state.aiGroups[targetGroupIndex].length - 1 : -1;
+            }
+            if (targetGroupIndex < 0 || targetGroupIndex >= state.aiGroups.length) return true;
+            const targetGroup = state.aiGroups[targetGroupIndex];
+            if (!targetGroup || !targetGroup[targetPosition] || !setImageByGroupItem(targetGroup[targetPosition])) return true;
+            state.activeAiGroupIndex = targetGroupIndex;
+            return true;
         }
 
         function createThumbEntry(img, index, isPartyGallery) {
@@ -1168,6 +1248,11 @@
 
         function nextImage() {
             if (!state.images.length) return;
+            if (elements.imageLightbox.classList.contains('open') && navigateAiGroup(1)) {
+                render();
+                updateLightboxContent();
+                return;
+            }
             state.currentIndex = (state.currentIndex + 1) % state.images.length;
             render();
             if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
@@ -1175,6 +1260,11 @@
 
         function prevImage() {
             if (!state.images.length) return;
+            if (elements.imageLightbox.classList.contains('open') && navigateAiGroup(-1)) {
+                render();
+                updateLightboxContent();
+                return;
+            }
             state.currentIndex = (state.currentIndex - 1 + state.images.length) % state.images.length;
             render();
             if (elements.imageLightbox.classList.contains('open')) updateLightboxContent();
@@ -1236,6 +1326,16 @@
         function updateLightboxContent() {
             const current = getCurrentImage();
             if (!current) return;
+            const groupContext = currentAiGroupContext();
+            if (elements.lightboxGroupContext) {
+                if (groupContext) {
+                    elements.lightboxGroupContext.hidden = false;
+                    elements.lightboxGroupContext.textContent = `Cụm ${groupContext.groupIndex + 1} · ${groupContext.position + 1}/${groupContext.group.length} ảnh`;
+                } else {
+                    elements.lightboxGroupContext.hidden = true;
+                    elements.lightboxGroupContext.textContent = '';
+                }
+            }
             const highResolutionUrl = current.lightbox || current.originalUrl || current.preview || current.thumbnail || '';
             const compareOriginal = state.viewMode === 'check' ? findOriginalForCheck(current) : null;
             const isFinalView = state.workflowStatus === 'completed' || state.galleryType === 'party';
@@ -1888,6 +1988,10 @@
             finally { elements.checkAcceptBtn.disabled = false; }
         });
         elements.originalModeBtn.addEventListener('click', () => setViewMode('original'));
+        elements.aiPicksToggle?.addEventListener('click', () => {
+            state.aiGroupsExpanded = state.aiGroupsExpanded === false;
+            renderAiPicks();
+        });
         function jumpToSection(section) {
             section.scrollIntoView({ behavior: 'smooth', block: 'start' });
             window.setTimeout(() => section.focus({ preventScroll: true }), 350);
