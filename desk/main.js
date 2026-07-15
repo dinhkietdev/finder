@@ -9,6 +9,8 @@ const https = require('https');
 const { google } = require('googleapis');
 const sharp = require('sharp');
 const { autoUpdater } = require('electron-updater');
+const { cleanupCullingPreviewCache, createCullingPreview } = require('./culling-preview');
+const { resolveImagePath, getUploadFingerprint, selectFilesToUpload } = require('./upload-fingerprint');
 
 // Đặt tên ở cấp ứng dụng để Dock macOS và taskbar Windows không hiển thị "Electron".
 app.setName('Finder');
@@ -47,20 +49,16 @@ function uploadTiming(completed, total, startedAt) {
     return { rate, etaSeconds };
 }
 
-function resolveImagePath(folderPath, fileName) {
-    const root = path.resolve(String(folderPath || ''));
-    const safeName = path.basename(String(fileName || ''));
-    const target = path.resolve(root, safeName);
-    if (!safeName || (target !== root && !target.startsWith(`${root}${path.sep}`))) throw new Error('Tên tệp ảnh không hợp lệ.');
-    return target;
-}
-
-async function uploadDriveFileWithRetry(drive, { fileName, parentId, localPath, mimeType }) {
+async function uploadDriveFileWithRetry(drive, { fileName, parentId, localPath, mimeType, fingerprint }) {
     let lastError;
     for (let attempt = 0; attempt < 3; attempt++) {
         try {
             return await drive.files.create({
-                resource: { name: fileName, parents: [parentId] },
+                resource: {
+                    name: fileName,
+                    parents: [parentId],
+                    ...(fingerprint?.md5Checksum ? { appProperties: { finderMd5: fingerprint.md5Checksum, finderSize: fingerprint.size } } : {})
+                },
                 media: { mimeType, body: fs.createReadStream(localPath) },
                 fields: 'id'
             });
@@ -92,6 +90,9 @@ const PENDING_UPLOAD_PATH = path.join(userDataPath, 'finder-pending-upload.json'
 const UPLOAD_QUEUE_PATH = path.join(userDataPath, 'finder-upload-queue.json');
 const BACKUP_DIR = path.join(userDataPath, 'backups');
 const QUALITY_CACHE_PATH = path.join(userDataPath, 'finder-quality-cache.json');
+// Culling preview files are kept outside the renderer/IPC payload. Returning
+// a file URL avoids converting every preview buffer into a large Base64 string.
+const CULLING_PREVIEW_DIR = path.join(userDataPath, 'culling-previews');
 let qualityCachePersistTimer = null;
 try {
     if (fs.existsSync(QUALITY_CACHE_PATH)) {
@@ -108,6 +109,7 @@ function scheduleQualityCachePersist() {
         } catch (_) {}
     }, 800);
 }
+
 const AUTH_SESSION_PATH = path.join(userDataPath, 'finder-auth-session.json');
 let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
@@ -661,11 +663,20 @@ ipcMain.handle('get-album-thumbnail', async (event, localPath) => {
         const files = fs.readdirSync(localPath);
         const firstImg = files.find(f => ['.jpg', '.jpeg', '.png', '.webp'].includes(path.extname(f).toLowerCase()));
         if (firstImg) {
-            const fullImgPath = path.join(localPath, firstImg);
-            // Chỉ dùng thumbnail nhỏ cho thư viện desktop; đọc nguyên ảnh
-            // gốc vào Base64 làm tăng RAM rất mạnh với ảnh máy ảnh hiện đại.
-            const bitmap = await sharp(fullImgPath).rotate().resize({ width: 480, height: 320, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 78 }).toBuffer();
-            return `data:image/jpeg;base64,${bitmap.toString('base64')}`;
+            // Chỉ dùng thumbnail nhỏ cho thư viện desktop. Trả về file URL
+            // trong cache thay vì Base64 để IPC/renderer không giữ một chuỗi
+            // lớn trong RAM cho mỗi album.
+            const thumbUri = await createCullingPreview({
+                cacheDir: CULLING_PREVIEW_DIR,
+                folderPath: localPath,
+                file: firstImg,
+                width: 480,
+                height: 320,
+                quality: 78,
+                resolveImagePath
+            });
+            cleanupCullingPreviewCache();
+            return thumbUri;
         }
     } catch (e) {}
     return null;
@@ -699,6 +710,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    cleanupCullingPreviewCache();
     createWindow();
     syncDataToServer(); 
 });
@@ -857,36 +869,25 @@ ipcMain.handle('analyze-image-quality', async (event, { folderPath, imageFiles, 
 });
 
 ipcMain.handle('get-culling-original', async (event, { folderPath, file }) => {
-    const fullPath = path.join(folderPath || '', path.basename(file || ''));
-    if (!fs.existsSync(fullPath)) return { success: false, error: 'Tệp ảnh không còn tồn tại.' };
-    // Culling chỉ cần ảnh đủ rõ để kiểm tra, không cần nhúng toàn bộ file RAW
-    // vào IPC. Giới hạn kích thước trước khi Base64 giúp tránh treo renderer
-    // khi người dùng mở ảnh 40–80 MP.
+    // Chỉ cần preview đủ rõ để kiểm tra. Ghi ra cache tạm rồi trả URL file,
+    // tránh đưa buffer ảnh lớn qua IPC dưới dạng chuỗi Base64.
     try {
-        const preview = await sharp(fullPath)
-            .rotate()
-            .resize({ width: 2400, height: 1800, fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 90, progressive: true })
-            .toBuffer();
-        return { success: true, dataUrl: `data:image/jpeg;base64,${preview.toString('base64')}`, preview: true };
+        const previewUrl = await createCullingPreview({ cacheDir: CULLING_PREVIEW_DIR, folderPath, file, width: 1600, height: 1200, quality: 82, resolveImagePath });
+        cleanupCullingPreviewCache();
+        return { success: true, previewUrl, preview: true };
     } catch (error) {
-        return { success: false, error: 'Không thể tạo ảnh xem culling an toàn.' };
+        return { success: false, error: error.message || 'Không thể tạo ảnh xem culling an toàn.' };
     }
 });
 
 ipcMain.handle('get-culling-preview', async (event, { folderPath, file }) => {
     if (!folderPath || !file) return { success: false, error: 'Không tìm thấy ảnh.' };
-    const fullPath = path.join(folderPath, path.basename(file));
-    if (!fs.existsSync(fullPath)) return { success: false, error: 'Tệp ảnh không còn tồn tại.' };
     try {
-        const preview = await sharp(fullPath)
-            .rotate()
-            .resize({ width: 1800, height: 1400, fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 88 })
-            .toBuffer();
-        return { success: true, dataUrl: `data:image/jpeg;base64,${preview.toString('base64')}` };
+        const previewUrl = await createCullingPreview({ cacheDir: CULLING_PREVIEW_DIR, folderPath, file, width: 1280, height: 1000, quality: 78, resolveImagePath });
+        cleanupCullingPreviewCache();
+        return { success: true, previewUrl };
     } catch (error) {
-        return { success: false, error: 'Không thể mở ảnh xem trước.' };
+        return { success: false, error: error.message || 'Không thể mở ảnh xem trước.' };
     }
 });
 
@@ -1150,9 +1151,8 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         }
         const resumableParty = { folderPath, imageFiles, driveParentId, folderName, galleryName, sectionName, studioName, expiresDays, customerFolderId, sectionFolderId, galleryId, _queueJobId: uploadJobId };
         upsertUploadJob({ id: uploadJobId, type: 'party', status: 'running', createdAt: new Date().toISOString(), completedFiles: 0, failedFiles: [], resumeData: resumableParty });
-        const existingFiles = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
-        const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
-        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        const existingFiles = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name,size,md5Checksum,appProperties)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
+        const { filesToUpload, fingerprints } = await selectFilesToUpload(imageFiles, existingFiles.data.files || [], folderPath);
         let completed = imageFiles.length - filesToUpload.length;
         let failed = 0; let nextIndex = 0; let uploadError = null;
         const startedAt = Date.now();
@@ -1164,9 +1164,10 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType });
+                    const fingerprint = fingerprints.get(fileName) || await getUploadFingerprint(resolveImagePath(folderPath, fileName));
+                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType, fingerprint });
                     completed++;
-                    upsertUploadJob({ id: uploadJobId, type: 'party', status: 'running', completedFiles, failedFiles: failed, resumeData: resumableParty });
+                    upsertUploadJob({ id: uploadJobId, type: 'party', status: 'running', completedFiles: completed, failedFiles: failed, resumeData: resumableParty });
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
                     mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `${fileName} (${completed}/${imageFiles.length})`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds });
                 } catch (error) { failed++; uploadError = error; const timing = uploadTiming(completed, imageFiles.length, startedAt); mainWindow.webContents.send('upload-progress', { progress: Math.round(completed / imageFiles.length * 100), currentFile: `Lỗi: ${fileName}`, completed, total: imageFiles.length, failed, rate: timing.rate, etaSeconds: timing.etaSeconds }); }
@@ -1216,9 +1217,8 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         const sectionFolderId = created.data.id;
         const resumableParty = { folderId, folderPath, imageFiles, sectionName, sectionFolderId, _queueJobId: uploadJobId };
         upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'running', createdAt: new Date().toISOString(), completedFiles: 0, failedFiles: [], resumeData: resumableParty });
-        const existing = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
-        const uploadedNames = new Set((existing.data.files || []).map(file => file.name));
-        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        const existing = await drive.files.list({ q: `'${sectionFolderId}' in parents and trashed = false`, fields: 'files(name,size,md5Checksum,appProperties)', pageSize: 1000, supportsAllDrives: true, includeItemsFromAllDrives: true });
+        const { filesToUpload, fingerprints } = await selectFilesToUpload(imageFiles, existing.data.files || [], folderPath);
         let completed = imageFiles.length - filesToUpload.length; let failed = 0; let nextIndex = 0; let uploadError = null;
         const startedAt = Date.now();
         const worker = async () => {
@@ -1229,7 +1229,8 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType });
+                    const fingerprint = fingerprints.get(fileName) || await getUploadFingerprint(resolveImagePath(folderPath, fileName));
+                    await uploadDriveFileWithRetry(drive, { fileName: path.basename(fileName), parentId: sectionFolderId, localPath: resolveImagePath(folderPath, fileName), mimeType, fingerprint });
                     completed++;
                     upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'running', completedFiles: completed, failedFiles: failed, resumeData: resumableParty });
                     const timing = uploadTiming(completed, imageFiles.length, startedAt);
@@ -1306,13 +1307,12 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
         const existingFiles = await drive.files.list({
             q: `'${originalFolderId}' in parents and trashed = false`,
-            fields: 'files(name)', pageSize: 1000
+            fields: 'files(name,size,md5Checksum,appProperties)', pageSize: 1000
         });
-        const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
+        const { filesToUpload, fingerprints } = await selectFilesToUpload(imageFiles, existingFiles.data.files || [], folderPath);
 
         // Google Drive nhận nhiều file song song nhanh hơn đáng kể. Giới hạn 4
         // luồng để không làm cạn băng thông hoặc bị API giới hạn yêu cầu.
-        const filesToUpload = imageFiles.filter(fileName => !uploadedNames.has(fileName));
         let nextFileIndex = 0;
         let completedFiles = imageFiles.length - filesToUpload.length;
         queueState.completedFiles = completedFiles;
@@ -1328,11 +1328,13 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
 
                 const fileName = filesToUpload[index];
                 try {
+                    const fingerprint = fingerprints.get(fileName) || await getUploadFingerprint(resolveImagePath(folderPath, fileName));
                     await uploadDriveFileWithRetry(drive, {
                         fileName: path.basename(fileName),
                         parentId: originalFolderId,
                         localPath: resolveImagePath(folderPath, fileName),
-                        mimeType: 'image/jpeg'
+                        mimeType: 'image/jpeg',
+                        fingerprint
                     });
                     completedFiles++;
                     queueState.completedFiles = completedFiles;
@@ -1524,10 +1526,9 @@ ipcMain.handle('upload-check-to-drive', async (event, payload = {}) => {
 
         const existingFiles = await drive.files.list({
             q: `'${checkFolderId}' in parents and trashed = false`,
-            fields: 'files(name)', pageSize: 1000
+            fields: 'files(name,size,md5Checksum,appProperties)', pageSize: 1000
         });
-        const uploadedNames = new Set((existingFiles.data.files || []).map(file => file.name));
-        const filesToUpload = imageFiles.filter(file => !uploadedNames.has(file));
+        const { filesToUpload, fingerprints } = await selectFilesToUpload(imageFiles, existingFiles.data.files || [], folderPath);
         let completed = imageFiles.length - filesToUpload.length;
         let nextIndex = 0;
         let uploadError = null;
@@ -1542,11 +1543,13 @@ ipcMain.handle('upload-check-to-drive', async (event, payload = {}) => {
                 try {
                     const ext = path.extname(fileName).toLowerCase();
                     const mimeType = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+                    const fingerprint = fingerprints.get(fileName) || await getUploadFingerprint(resolveImagePath(folderPath, fileName));
                     await uploadDriveFileWithRetry(drive, {
                         fileName: path.basename(fileName),
                         parentId: checkFolderId,
                         localPath: resolveImagePath(folderPath, fileName),
-                        mimeType
+                        mimeType,
+                        fingerprint
                     });
                     completed++;
                     upsertUploadJob({ id: uploadJobId, type: 'check', status: 'running', completedFiles: completed, failedFiles: failed, resumeData: resumableCheck });

@@ -2007,7 +2007,7 @@
             let lastError;
             for (let attempt = 0; attempt < attempts; attempt++) {
                 try {
-                    const response = await fetch(url, options);
+                    const response = await fetch(url, { credentials: 'include', ...(options || {}) });
                     if (response.status < 500 || attempt === attempts - 1) return response;
                 } catch (error) {
                     lastError = error;
@@ -2093,7 +2093,7 @@
             updateAlbumLoadingOverlay();
             if (!folderId && albumSlug) {
                 try {
-                    const resolveResponse = await fetch(`${ONLINE_SERVER}/api/album-by-slug/${encodeURIComponent(albumSlug)}`, { cache: 'no-store' });
+                    const resolveResponse = await fetch(`${ONLINE_SERVER}/api/album-by-slug/${encodeURIComponent(albumSlug)}`, { cache: 'no-store', credentials: 'include' });
                     const resolved = await readApiJson(resolveResponse, 'Không thể tìm album theo đường dẫn');
                     folderId = resolved.folderId;
                     state.publicSlug = resolved.settings?.publicSlug || albumSlug;
@@ -2313,6 +2313,7 @@
                     item.note = item.note || '';
                     const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/toggle-like`, {
                         method: 'POST',
+                        credentials: 'include',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ fileName: item.fullName, isLiked: true, note: item.note })
                     });
@@ -2322,7 +2323,7 @@
                         throw new Error(`${errorData.error || 'Không thể xác nhận ảnh'}${requestId ? ` [requestId=${requestId}]` : ''}`);
                     }
                 }
-                const finalizeResponse = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/finalize`, { method: 'POST' });
+                const finalizeResponse = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/finalize`, { method: 'POST', credentials: 'include' });
                 if (!finalizeResponse.ok) {
                     const errorData = await finalizeResponse.json().catch(() => ({}));
                     const requestId = finalizeResponse.headers.get('x-request-id') || errorData.requestId;

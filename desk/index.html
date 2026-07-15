@@ -575,6 +575,12 @@
         let libraryTypeFilter = 'selection';
         let dashboardMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
         let dashboardAlbums = [];
+        let albumManagementTokens = new Map();
+
+        function managerHeaders(folderId) {
+            const token = albumManagementTokens.get(String(folderId));
+            return token ? { 'x-finder-management-token': token } : {};
+        }
 
         async function checkDriveAccessAfterLogin() {
             const status = await ipcRenderer.invoke('auth-drive-token-status');
@@ -752,7 +758,7 @@
             document.getElementById('image-preview-image').removeAttribute('src');
             modal.style.display = 'flex';
             const result = await ipcRenderer.invoke('get-culling-original', { folderPath: currentFolder, file: item.file });
-            if (result.success) document.getElementById('image-preview-image').src = result.dataUrl;
+            if (result.success) document.getElementById('image-preview-image').src = result.previewUrl;
             else document.getElementById('image-preview-title').textContent = result.error;
         }
 
@@ -873,7 +879,7 @@
         async function getDashboardLiveAlbum(album) {
             try {
                 const [response, settingsResponse] = await Promise.all([
-                    fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`, { cache: 'no-store' }),
+                    fetch(`${ONLINE_SERVER}/api/album/${album.id}/liked/all`, { cache: 'no-store', headers: managerHeaders(album.id) }),
                     fetch(`${ONLINE_SERVER}/api/album/${album.id}/settings`, { cache: 'no-store' })
                 ]);
                 const data = await response.json();
@@ -1012,6 +1018,7 @@
         async function loadDashboard() {
             const recent = document.getElementById('dashboard-recent');
             const history = await ipcRenderer.invoke('get-history');
+            albumManagementTokens = new Map(history.filter(album => album?.id && album?.managementToken).map(album => [String(album.id), album.managementToken]));
             const studioFilter = (document.getElementById('library-studio-filter')?.value || '').trim().toLowerCase();
             const paymentFilter = document.getElementById('library-payment-filter')?.value || '';
             const visibleHistory = history.filter(album => (!studioFilter || String(album.studioName || 'Finder').toLowerCase().includes(studioFilter)) && (!paymentFilter || (album.paymentStatus || 'unpaid') === paymentFilter));
@@ -1708,7 +1715,7 @@
             if (!silent) btn.innerText = "⏳...";
             try {
                 const [res, settingsRes] = await Promise.all([
-                    fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`, { cache: 'no-store' }),
+                    fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`, { cache: 'no-store', headers: managerHeaders(folderId) }),
                     fetch(`${ONLINE_SERVER}/api/album/${folderId}/settings`, { cache: 'no-store' })
                 ]);
                 const data = await res.json();
@@ -1808,7 +1815,7 @@
             
             btn.innerText = "⏳ Quét..."; btn.disabled = true;
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`, { headers: managerHeaders(folderId) });
                 const data = await response.json();
                 if (data.success) {
                     btn.innerText = "⚙️ Đang bốc...";
@@ -1853,7 +1860,7 @@
             document.getElementById('sync-status-msg').innerText = "Đang tải danh sách...";
 
             try {
-                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`);
+                const response = await fetch(`${ONLINE_SERVER}/api/album/${folderId}/liked/all`, { headers: managerHeaders(folderId) });
                 const data = await response.json();
                 if (data.success) {
                     const result = await ipcRenderer.invoke('sync-liked-images-manual', { sourceFolder: syncSourceFolder, likedList: data.liked_files || {} });

@@ -32,9 +32,13 @@ test('health exposes readiness without secrets', async () => {
   const body = await response.json();
   assert.equal(typeof body.oauthStateSecret, 'boolean');
   assert.equal(typeof body.tokenEncryptionKey, 'boolean');
+  assert.equal(typeof body.guestCapabilitySecret, 'boolean');
   assert.equal(typeof body.directDownloads, 'boolean');
   assert.ok(['supabase', 'none'].includes(body.alertSink));
   assert.equal(typeof body.alertWebhook, 'boolean');
+  assert.equal(typeof body.rateLimitMetrics?.requests, 'number');
+  assert.equal(typeof body.rateLimitMetrics?.memoryFallback, 'number');
+  assert.match(response.headers.get('x-ratelimit-limit') || '', /^\d+$/);
 });
 
 test('Drive authorize returns a signed OAuth URL', async () => {
@@ -71,4 +75,16 @@ test('thumbnail cleanup requires the cron secret', async () => {
   // configured; once configured, the same request reaches the 401 guard.
   assert.ok([401, 503].includes(response.status));
   assert.equal((await response.json()).success, false);
+});
+
+test('guest writes cannot create or mutate an unknown album', async () => {
+  const response = await fetch(`${baseUrl}/api/album/unknown-album/toggle-like`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fileName: '01.jpg', isLiked: true })
+  });
+  assert.ok([404, 503].includes(response.status));
+  const body = await response.json();
+  if (response.status === 404) assert.equal(body.code, 'ALBUM_NOT_FOUND');
+  else assert.equal(body.code, 'SUPABASE_REQUIRED');
 });

@@ -8,16 +8,22 @@ const crypto = require('crypto');
 const { PassThrough } = require('stream');
 const { initializeApp, cert, getApps } = require('firebase-admin/app');
 const { getDatabase } = require('firebase-admin/database');
+const { createObservability } = require('./server/observability');
+const { createRateLimitMiddleware } = require('./server/rate-limit');
+const { slugifyAlbumName, canonicalPublicSlug, normalizeDriveFolderId, escapeHtmlAttribute } = require('./server/public-slug');
 
 const app = express();
 app.disable('x-powered-by');
 const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
     || process.env.NODE_ENV === 'production';
 const REQUEST_ID_HEADER = 'x-request-id';
-const ALERT_DEDUPE_MS = 5 * 60 * 1000;
-const alertLastSent = new Map();
 const driveImageMetadataCache = new Map();
 const DRIVE_IMAGE_METADATA_TTL_MS = 5 * 60 * 1000;
+
+function albumExists(folderId) {
+    return Object.prototype.hasOwnProperty.call(albumSettingsDatabase, String(folderId))
+        || Object.prototype.hasOwnProperty.call(albumCacheDatabase, String(folderId));
+}
 
 function encodeAlbumPageCursor(value) {
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
@@ -34,53 +40,7 @@ function decodeAlbumPageCursor(value) {
     }
 }
 
-function createRequestId() {
-    return crypto.randomUUID();
-}
-
-function logStructuredEvent(event, data = {}) {
-    const record = { at: new Date().toISOString(), event, ...data };
-    // Never include Authorization headers, refresh tokens, or request bodies.
-    console.log(JSON.stringify(record));
-    const endpoint = String(process.env.FINDER_LOG_ENDPOINT || '').trim();
-    if (!endpoint) return;
-    fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(process.env.FINDER_LOG_TOKEN ? { authorization: `Bearer ${process.env.FINDER_LOG_TOKEN}` } : {}) },
-        body: JSON.stringify(record),
-        signal: AbortSignal.timeout(1500)
-    }).catch(() => {});
-}
-
-function buildAlertPayload(entry) {
-    const format = String(process.env.FINDER_ALERT_WEBHOOK_FORMAT || 'generic').trim().toLowerCase();
-    const summary = `[Finder] ${entry.event || 'api.error'} ${entry.status || ''} ${entry.method || ''} ${entry.path || ''} requestId=${entry.requestId || 'unknown'}`.trim();
-    if (format === 'discord') {
-        return { content: summary, embeds: [{ title: 'Finder API alert', description: summary, color: 15158332, fields: [{ name: 'Duration', value: `${entry.durationMs || 0} ms`, inline: true }] }] };
-    }
-    if (format === 'slack') return { text: summary, blocks: [{ type: 'section', text: { type: 'mrkdwn', text: `*Finder API alert*\n${summary}` } }] };
-    return { ...entry, alert: true, source: 'finder' };
-}
-
-function sendAlert(entry) {
-    const key = `${entry.status || 'unknown'}:${entry.path || 'unknown'}`;
-    const now = Date.now();
-    const previous = alertLastSent.get(key) || 0;
-    if (now - previous < ALERT_DEDUPE_MS) return;
-    alertLastSent.set(key, now);
-    if (alertLastSent.size > 2000) {
-        for (const [item, sentAt] of alertLastSent) if (now - sentAt > ALERT_DEDUPE_MS * 2) alertLastSent.delete(item);
-    }
-    persistApiAlert(entry).catch(() => {});
-    const endpoint = String(process.env.FINDER_ALERT_WEBHOOK || '').trim();
-    if (!endpoint) return;
-    fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(buildAlertPayload(entry)),
-        signal: AbortSignal.timeout(1500)
-    }).catch(() => {});
-}
+const { createRequestId, logStructuredEvent, sendAlert } = createObservability({ persistApiAlert });
 
 app.use((req, res, next) => {
     const incoming = String(req.get(REQUEST_ID_HEADER) || '').trim();
@@ -99,69 +59,20 @@ app.use((req, res, next) => {
 });
 const allowedOrigins = String(process.env.FINDER_ALLOWED_ORIGINS || 'https://finder-swart-pi.vercel.app,http://localhost:5000,http://localhost:3000')
     .split(',').map(origin => origin.trim()).filter(Boolean);
-app.use(cors({ origin(origin, callback) {
+app.use(cors({ credentials: true, origin(origin, callback) {
     // Native desktop requests do not include Origin; keep them working.
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('Origin không được phép.'));
 } }));
 app.use(bodyParser.json({ limit: process.env.FINDER_JSON_LIMIT || '256kb' }));
 
-// Upstash is used when configured so the limit is shared across Vercel
-// instances. The in-memory bucket remains a short-lived safety net for local
-// development and for an unavailable Redis endpoint.
-const requestBuckets = new Map();
-async function checkDistributedRateLimit(key, limit) {
-    if (isSupabaseConfigured()) {
-        try {
-            const data = await supabaseRequest('rpc/consume_rate_limit', {
-                method: 'POST',
-                body: JSON.stringify({ p_bucket: `finder:rate:${key}`, p_limit: limit, p_window_seconds: 60 })
-            });
-            if (data && typeof data === 'object' && typeof data.allowed === 'boolean') return data;
-        } catch (error) {
-            logStructuredEvent('rate_limit.storage_error', { message: error.message });
-        }
-    }
-    const redisUrl = String(process.env.UPSTASH_REDIS_REST_URL || '').replace(/\/$/, '');
-    const redisToken = String(process.env.UPSTASH_REDIS_REST_TOKEN || '').trim();
-    if (!redisUrl || !redisToken) return null;
-    try {
-        const response = await fetch(`${redisUrl}/pipeline`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${redisToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify([['INCR', key], ['EXPIRE', key, 60]]),
-            signal: AbortSignal.timeout(400)
-        });
-        if (!response.ok) return null;
-        const data = await response.json();
-        const count = Number(data?.[0]?.result);
-        return Number.isFinite(count) ? { allowed: count <= limit, count } : null;
-    } catch (_) { return null; }
-}
-
-app.use('/api/', async (req, res, next) => {
-    // Image bytes are immutable public-gallery assets and are already guarded
-    // by the album/file authorization in the image handler. They are also
-    // cached at the Vercel edge, so counting every thumbnail/lightbox request
-    // against the JSON API bucket makes large galleries throttle their own
-    // settings/status requests. Keep rate limiting for control-plane APIs.
-    if (/^\/album\/[^/]+\/image\/[^/]+$/i.test(req.path)) return next();
-    const key = `${req.ip || 'unknown'}:${req.path.startsWith('/auth/') ? 'auth' : 'api'}`;
-    const now = Date.now();
-    const limit = key.endsWith(':auth') ? 30 : 240;
-    const distributed = await checkDistributedRateLimit(`finder:rate:${key}`, limit);
-    if (distributed && !distributed.allowed) return res.status(429).json({ success: false, requestId: req.requestId, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
-    const bucket = requestBuckets.get(key) || { start: now, count: 0 };
-    if (now - bucket.start > 60_000) { bucket.start = now; bucket.count = 0; }
-    bucket.count += 1;
-    requestBuckets.set(key, bucket);
-    if (bucket.count > limit) return res.status(429).json({ success: false, requestId: req.requestId, error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' });
-    if (requestBuckets.size > 5000) for (const [entry, value] of requestBuckets) if (now - value.start > 120_000) requestBuckets.delete(entry);
-    if (REQUIRE_SUPABASE_STORAGE && !isSupabaseConfigured() && req.path !== '/health' && !req.path.startsWith('/auth/')) {
-        return res.status(503).json({ success: false, code: 'SUPABASE_REQUIRED', requestId: req.requestId, error: 'Máy chủ production chưa cấu hình Supabase.' });
-    }
-    next();
+const rateLimitMiddleware = createRateLimitMiddleware({
+    isSupabaseConfigured,
+    supabaseRequest,
+    logStructuredEvent,
+    requireSupabaseStorage: REQUIRE_SUPABASE_STORAGE
 });
+app.use('/api/', rateLimitMiddleware);
 
 // Credential/session files are only for local development. Keep them out of
 // the public static file handler even if a local deployment directory contains
@@ -192,8 +103,10 @@ app.get('/api/health', (req, res) => {
         storage: isSupabaseConfigured() ? 'supabase' : (REQUIRE_SUPABASE_STORAGE ? 'missing' : 'legacy-local'),
         oauthStateSecret: Boolean(getOAuthStateSecret()),
         tokenEncryptionKey: Boolean(getTokenEncryptionKey()),
+        guestCapabilitySecret: Boolean(guestCapabilitySecret()),
         distributedRateLimit: Boolean(isSupabaseConfigured() || (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)),
         rateLimitBackend: isSupabaseConfigured() ? 'supabase' : (process.env.UPSTASH_REDIS_REST_URL ? 'upstash' : 'memory-fallback'),
+        rateLimitMetrics: rateLimitMiddleware.getMetrics(),
         directDownloads: Boolean(isSupabaseConfigured() && process.env.FINDER_DIRECT_DOWNLOADS !== '0'),
         downloadStorageBucket: String(process.env.FINDER_DOWNLOAD_BUCKET || 'finder-downloads'),
         thumbnailCache: Boolean(isSupabaseConfigured() && String(process.env.FINDER_THUMBNAIL_CACHE || '1') !== '0'),
@@ -720,6 +633,63 @@ function requireAlbumManagement(req, res, folderId) {
     return false;
 }
 
+// Public album links still need a browser-bound capability for writes. This is
+// not a replacement for Studio authentication; it prevents CSRF and scripts
+// on unrelated sites from changing an album just because its slug is known.
+// The capability is derived server-side and is never returned in JSON.
+function guestCapabilitySecret() {
+    return String(process.env.FINDER_GUEST_ACCESS_SECRET || getOAuthStateSecret() || '').trim();
+}
+
+function guestCapabilityToken(folderId) {
+    const secret = guestCapabilitySecret();
+    if (!secret) return '';
+    return crypto.createHmac('sha256', secret).update(`finder-guest:${String(folderId)}`).digest('base64url');
+}
+
+function guestCapabilityCookieName(folderId) {
+    return `finder_guest_${crypto.createHash('sha256').update(String(folderId)).digest('hex').slice(0, 16)}`;
+}
+
+function readRequestCookie(req, name) {
+    const cookies = String(req.get('cookie') || '').split(';');
+    const prefix = `${name}=`;
+    const entry = cookies.find(item => item.trim().startsWith(prefix));
+    return entry ? decodeURIComponent(entry.trim().slice(prefix.length)) : '';
+}
+
+function issueGuestCapability(res, folderId) {
+    const token = guestCapabilityToken(folderId);
+    if (!token) return false;
+    const production = process.env.NODE_ENV === 'production';
+    const sameSite = production ? 'None' : 'Lax';
+    const secure = production ? '; Secure' : '';
+    res.append('Set-Cookie', `${guestCapabilityCookieName(folderId)}=${encodeURIComponent(token)}; Path=/; Max-Age=2592000; HttpOnly; SameSite=${sameSite}${secure}`);
+    return true;
+}
+
+function hasGuestCapability(req, folderId) {
+    const expected = guestCapabilityToken(folderId);
+    const supplied = readRequestCookie(req, guestCapabilityCookieName(folderId));
+    if (!expected || !supplied || expected.length !== supplied.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+}
+
+function requireGuestCapability(req, res, folderId, { issueOnGet = false } = {}) {
+    if (hasGuestCapability(req, folderId)) return true;
+    if (issueOnGet && req.method === 'GET') {
+        issueGuestCapability(res, folderId);
+        return true;
+    }
+    res.status(403).json({ success: false, code: 'GUEST_CAPABILITY_REQUIRED', requestId: req.requestId, error: 'Phiên xem album không hợp lệ. Hãy mở lại link album rồi thử lại.' });
+    return false;
+}
+
+function isSafePublicImageName(value) {
+    const name = String(value || '').trim();
+    return name.length > 0 && name.length <= 255 && path.basename(name) === name && /\.(?:jpe?g|png|webp)$/i.test(name);
+}
+
 // Legacy records may not have a token yet. Allow the owner of the connected
 // Google Drive account to bootstrap that token once; after it is generated,
 // all subsequent calls use the per-album token path above.
@@ -1118,32 +1088,6 @@ app.get('/client.html', (req, res) => {
     res.sendFile(path.join(__dirname, 'client.html'));
 });
 
-// Link chia sẻ ngắn gọn, giữ nguyên URL cũ để các album đã gửi trước đây không
-// bị hỏng. Client sẽ tự resolve slug thành folderId mà không làm lộ mã Drive trên
-// thanh địa chỉ.
-function slugifyAlbumName(value = '') {
-    return String(value)
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase().replace(/đ/g, 'd')
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64) || 'album';
-}
-
-// Older desktop builds appended the raw last characters of a Drive id. Drive
-// ids may contain `_`, which is intentionally normalized by slugifyAlbumName;
-// compare the stored value in the same canonical form so existing links keep
-// working after the desktop is updated.
-function canonicalPublicSlug(value = '') {
-    return slugifyAlbumName(value);
-}
-
-function normalizeDriveFolderId(value, fallback = '') {
-    const id = String(value || '').trim();
-    if (!id || id === '.' || id === '..') return String(fallback || '').trim();
-    return id;
-}
-
 async function findStudioHistoryBySlug(requested) {
     if (!firebaseDb) return null;
     try {
@@ -1396,12 +1340,9 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
         if (driveStudioName) resolvedSettings.studioName = driveStudioName;
     }
     const settings = { ...resolvedSettings, publicSlug: requested };
+    issueGuestCapability(res, match[0]);
     res.json({ success: true, folderId: match[0], settings: publicAlbumSettings(settings) });
 });
-
-function escapeHtmlAttribute(value = '') {
-    return String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
-}
 
 // Social crawlers (Messenger/Zalo) do not execute the client JavaScript. Add
 // server-rendered Open Graph values so a shared album is presented as Finder
@@ -1942,6 +1883,7 @@ app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
 app.get('/api/album/:folderId/settings', async (req, res) => {
     await loadPersistentState();
     const folderId = req.params.folderId;
+    if (albumExists(folderId)) issueGuestCapability(res, folderId);
     res.json({
         success: true,
         settings: publicAlbumSettings(albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', displayName: 'Finder', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' }),
@@ -1979,6 +1921,8 @@ app.post('/api/album/:folderId/check', async (req, res) => {
 app.post('/api/album/:folderId/check/confirm', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+    if (!requireGuestCapability(req, res, folderId)) return;
     const settings = albumSettingsDatabase[folderId] || {};
     if (!settings.checkReady || !settings.checkFolderId) return res.status(400).json({ success: false, error: 'Album chưa có phiên bản CHECK để xác nhận.' });
     settings.checkNeedsRevision = false;
@@ -1993,6 +1937,8 @@ app.post('/api/album/:folderId/check/confirm', async (req, res) => {
 app.post('/api/album/:folderId/finalize', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+    if (!requireGuestCapability(req, res, folderId)) return;
     const settings = albumSettingsDatabase[folderId] || {};
     finalizedDatabase[folderId] = true;
     settings.workflowStatus = 'completed';
@@ -2098,6 +2044,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (!Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId) && !albumCacheDatabase[folderId]) {
             return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', requestId: req.requestId, error: 'Không tìm thấy album.' });
         }
+        issueGuestCapability(res, folderId);
 
         const currentAlbumLikes = likedImagesDatabase[folderId] || {};
         let currentSettings = albumSettingsDatabase[folderId] || { isEnabled: true, text: "FINDERPICTURE STUDIO", maxSelections: 0, originalFolderId: null, checkReady: false, checkVersion: 0, checkNeedsRevision: false, workflowStatus: 'selection_open', selectionReopenedAt: null, paymentStatus: 'unpaid', paymentAmount: 0, publicSlug: `album-${String(folderId).slice(-6).toLowerCase()}`, clientName: 'Album khách hàng', studioName: 'Finder', studioLogo: '', accentColor: '#7c8cff' };
@@ -2377,6 +2324,7 @@ app.get('/api/album/:folderId/meta', async (req, res) => {
         if (!Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId) && !albumCacheDatabase[folderId]) {
             return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
         }
+        issueGuestCapability(res, folderId);
         const settings = albumSettingsDatabase[folderId] || {};
         res.set('Cache-Control', 'private, no-store');
         return res.json({
@@ -2543,9 +2491,11 @@ app.post('/api/album/:folderId/drive-token', async (req, res) => {
 app.post('/api/album/:folderId/toggle-like', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+    if (!requireGuestCapability(req, res, folderId)) return;
     if (finalizedDatabase[folderId]) return res.status(403).json({ error: "Album đã chốt, không thể thay đổi." }); 
     const { fileName, isLiked, note } = req.body;
-    if (!fileName || typeof fileName !== 'string') return res.status(400).json({ error: "Tên ảnh không hợp lệ." });
+    if (!isSafePublicImageName(fileName)) return res.status(400).json({ error: "Tên ảnh không hợp lệ." });
     if (!likedImagesDatabase[folderId]) likedImagesDatabase[folderId] = {};
 
     // Luôn kiểm tra ở server để không thể vượt giới hạn chỉ bằng cách gọi API trực tiếp.
@@ -2573,8 +2523,10 @@ app.post('/api/album/:folderId/toggle-like', async (req, res) => {
 app.post('/api/album/:folderId/check-note', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+    if (!requireGuestCapability(req, res, folderId)) return;
     const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim() : '';
-    if (!fileName) return res.status(400).json({ success: false, error: 'Tên ảnh không hợp lệ.' });
+    if (!isSafePublicImageName(fileName)) return res.status(400).json({ success: false, error: 'Tên ảnh không hợp lệ.' });
     if (!checkNotesDatabase[folderId]) checkNotesDatabase[folderId] = {};
     checkNotesDatabase[folderId][fileName] = String(req.body?.note || '').trim();
     if (checkNotesDatabase[folderId][fileName]) {
@@ -2591,6 +2543,8 @@ app.post('/api/album/:folderId/check-note', async (req, res) => {
 app.get('/api/album/:folderId/liked/all', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
+    if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
+    if (!hasAlbumManagementAccess(req, folderId) && !requireGuestCapability(req, res, folderId, { issueOnGet: true })) return;
     const currentAlbumLikes = likedImagesDatabase[folderId] || {};
     const isFinalized = !!finalizedDatabase[folderId];
     const likedFilesMap = {};
