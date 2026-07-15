@@ -594,6 +594,8 @@
             initialLoadPending: false,
             metadataPending: false,
             aiAnalysisPending: false,
+            aiAnalysisProcessed: 0,
+            aiAnalysisTotal: 0,
             aiGroupsComplete: false,
             aiGroupSourceCount: 0,
             cacheHydrated: false,
@@ -1206,7 +1208,10 @@
             state.images = nextMode === 'check' ? state.checkImages : state.originalImages;
             const nextIndex = currentName ? state.images.findIndex(item => item.fullName === currentName) : -1;
             state.currentIndex = nextIndex >= 0 ? nextIndex : 0;
-            if (nextMode === 'original') { buildAiGroups().then(() => render()).catch(() => render()); }
+            // Use the scheduled path for every original-view transition so
+            // mobile receives the same progress indicator and background
+            // grouping behavior as the initial album load.
+            if (nextMode === 'original') scheduleAiGroups();
             else state.aiGroups = [];
             render();
         }
@@ -1299,10 +1304,43 @@
         // Gom theo thứ tự tên + độ tương đồng thumbnail. Tên file chỉ dùng để
         // giữ đúng thứ tự burst; quyết định ảnh có cùng cụm hay không dựa trên
         // đặc trưng hình ảnh, tránh việc cả album bị đề xuất hàng loạt.
-        async function buildAiGroups(sourceImages = state.images) {
+        function getAiWorkerCount(total) {
+            const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const effectiveType = String(connection?.effectiveType || '').toLowerCase();
+            if (connection?.saveData || effectiveType === 'slow-2g' || effectiveType === '2g') {
+                return Math.min(2, total);
+            }
+            const coarsePointer = Boolean(window.matchMedia?.('(pointer: coarse)').matches);
+            const mobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
+            return Math.min(coarsePointer || mobileUserAgent ? 4 : 8, total);
+        }
+
+        function getAiProgressLabel() {
+            const total = Math.max(
+                Number(state.aiAnalysisTotal) || 0,
+                Number(state.aiGroupSourceCount) || 0,
+                state.originalImages.length
+            );
+            if (!total) return '';
+            const processed = Math.min(total, Math.max(0, Number(state.aiAnalysisProcessed) || 0));
+            return `${processed}/${total} ảnh`;
+        }
+
+        function updateAiAnalysisProgress() {
+            if (!elements.aiPicksDescription || !state.aiAnalysisPending) return;
+            const progress = getAiProgressLabel();
+            const progressSuffix = progress ? ` · ${progress}` : '';
+            const found = state.aiGroups.length ? `Đã tìm ${state.aiGroups.length} cụm` : 'Đang chuẩn bị phân tích';
+            elements.aiPicksDescription.textContent = `${found} · đang phân tích trong nền${progressSuffix}…`;
+        }
+
+        async function buildAiGroups(sourceImages = state.images, runId = aiGroupingRunId) {
             const sourceCount = sourceImages.length;
             const isComplete = !state.pagesPending && !state.pageLoading && sourceCount >= state.originalImages.length;
+            const isActive = () => runId === aiGroupingRunId;
             state.aiGroupSourceCount = sourceCount;
+            state.aiAnalysisTotal = Math.max(sourceCount, state.originalImages.length);
+            state.aiAnalysisProcessed = 0;
             state.aiGroupsComplete = isComplete;
             if (state.viewMode !== 'original' || !sourceImages.length) { state.aiGroups = []; state.aiGroupsComplete = false; return; }
             const ordered = sourceImages.slice().sort(naturalImageCompare);
@@ -1313,10 +1351,17 @@
                 if (Array.isArray(cachedGroups)) {
                     const byName = new Map(ordered.map((image, index) => [image.fullName, { image, index }]));
                     state.aiGroups = cachedGroups.map(group => group.map(name => byName.get(name)).filter(Boolean)).filter(group => group.length >= 2);
+                    state.aiAnalysisProcessed = ordered.length;
+                    updateAiAnalysisProgress();
                     if (state.aiGroups.length || isComplete) return;
                 }
             } catch (_) {}
             const indexed = ordered.map((image, index) => ({ image, index }));
+            // A cache miss with no usable groups falls through to a fresh
+            // signature pass; restart its counter instead of retaining the
+            // cached list length as if those images had just been analysed.
+            state.aiAnalysisProcessed = 0;
+            updateAiAnalysisProgress();
             const signatures = new Map();
             let nextSignatureIndex = 0;
             const signatureWorker = async () => {
@@ -1325,15 +1370,21 @@
                     if (index >= indexed.length) return;
                     const item = indexed[index];
                     try { signatures.set(item.image, await getVisualSignature(item.image)); } catch (_) { signatures.set(item.image, null); }
-                    // Yield between small batches so a large album never
-                    // monopolizes the main thread or floods the image proxy.
-                    if (index % 4 === 3) await new Promise(resolve => {
-                        if ('requestIdleCallback' in window) window.requestIdleCallback(resolve, { timeout: 80 });
-                        else window.setTimeout(resolve, 16);
+                    if (isActive()) {
+                        state.aiAnalysisProcessed = Math.min(indexed.length, state.aiAnalysisProcessed + 1);
+                        updateAiAnalysisProgress();
+                    }
+                    // Yield less often than before; the work is already
+                    // bounded to tiny 12x12 signatures and the larger worker
+                    // pool makes mobile albums finish noticeably sooner.
+                    if (index % 8 === 7) await new Promise(resolve => {
+                        if ('requestIdleCallback' in window) window.requestIdleCallback(resolve, { timeout: 40 });
+                        else window.setTimeout(resolve, 8);
                     });
                 }
             };
-            await Promise.all(Array.from({ length: Math.min(3, indexed.length) }, signatureWorker));
+            await Promise.all(Array.from({ length: getAiWorkerCount(indexed.length) }, signatureWorker));
+            if (!isActive()) return;
             const groups = []; let group = [];
             for (let index = 0; index < indexed.length; index++) {
                 const item = indexed[index];
@@ -1348,6 +1399,8 @@
             }
             if (group.length >= 2) groups.push(group);
             state.aiGroups = groups;
+            state.aiAnalysisProcessed = indexed.length;
+            updateAiAnalysisProgress();
             try { localStorage.setItem(groupCacheKey, JSON.stringify(groups.map(group => group.map(item => item.image.fullName)))); } catch (_) {}
         }
 
@@ -1359,6 +1412,8 @@
             const runId = ++aiGroupingRunId;
             state.aiAnalysisPending = Boolean(sourceImages.length && state.viewMode === 'original');
             state.aiGroupSourceCount = sourceImages.length;
+            state.aiAnalysisTotal = Math.max(sourceImages.length, state.originalImages.length);
+            state.aiAnalysisProcessed = 0;
             state.aiGroupsComplete = !state.pagesPending && !state.pageLoading && sourceImages.length >= state.originalImages.length;
             if (!state.aiAccordionUserInteracted) {
                 state.aiGroupsExpanded = false;
@@ -1368,11 +1423,13 @@
             // Paint the compact “đang phân tích” state immediately instead of
             // leaving a blank section until the first worker finishes.
             if (elements.aiPicksPanel) renderAiPicks();
+            updateAiAnalysisProgress();
             const run = () => {
                 aiGroupingTimer = null;
                 if (state.viewMode !== 'original' || !sourceImages.length) {
                     if (runId === aiGroupingRunId) {
                         state.aiAnalysisPending = false;
+                        state.aiAnalysisProcessed = state.aiAnalysisTotal;
                         updateAlbumLoadingOverlay();
                     }
                     return;
@@ -1383,6 +1440,7 @@
                     .finally(() => {
                         if (runId === aiGroupingRunId) {
                             state.aiAnalysisPending = false;
+                            state.aiAnalysisProcessed = state.aiAnalysisTotal;
                             if (!state.aiAccordionUserInteracted) {
                                 if (state.aiGroupsComplete && state.aiGroups.length) {
                                     state.aiGroupsExpanded = true;
@@ -1446,7 +1504,7 @@
                 : 'Đang phân tích…';
             if (elements.aiPicksDescription) {
                 elements.aiPicksDescription.textContent = stillWorking
-                    ? `Đã tìm ${state.aiGroups.length} cụm${state.aiGroups.length ? ', đang phân tích thêm trong nền…' : ', đang chuẩn bị…'}`
+                    ? `${state.aiGroups.length ? `Đã tìm ${state.aiGroups.length} cụm` : 'Đang chuẩn bị phân tích'} · đang phân tích trong nền${getAiProgressLabel() ? ` · ${getAiProgressLabel()}` : ''}…`
                     : 'Các ảnh gần giống nhau được gom để bạn xem nhanh';
             }
             const expanded = state.aiGroupsExpanded !== false;
@@ -2350,6 +2408,12 @@
             state.pageHasMore = false;
             updateAlbumLoadingOverlay();
             updatePartyActions();
+            // Replace the first-page hint once every Drive page has arrived;
+            // the persistent status line should never keep saying that only
+            // 24 images are open after the background pagination is done.
+            const loadedCount = state.originalImages.length;
+            const checkSuffix = state.checkImages.length ? ` và ${state.checkImages.length} ảnh CHECK` : '';
+            setMessage(`✅ Đã tải đủ ${loadedCount} ảnh${checkSuffix}. Bạn có thể xem và chọn ngay.`, 'success');
             if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
             finalizeClientViewState();
             writeClientBootstrapCache();
