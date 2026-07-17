@@ -84,6 +84,12 @@ app.use((req, res, next) => {
     }
     next();
 });
+// The public desktop URL is a launcher/download fallback. The packaged
+// Electron app continues to load its local desk/index.html directly.
+app.get('/desk/index.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'desk-launch.html'));
+});
+
 app.use(express.static(__dirname, {
     setHeaders(res, filePath) {
         const normalized = filePath.split(path.sep).join('/');

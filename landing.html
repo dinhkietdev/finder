@@ -141,7 +141,7 @@
       <nav class="nav-links" aria-label="Điều hướng">
         <a href="#features">Tính năng</a>
         <a href="#journey">Hành trình nâng cấp</a>
-        <a class="nav-cta" href="/desk/index.html">Mở DK Workflow</a>
+        <a class="nav-cta" data-desktop-launch href="/desk/index.html">Mở DK Workflow</a>
       </nav>
     </div>
   </header>
@@ -154,7 +154,7 @@
           <h1>Biến từng bộ ảnh thành một <span class="gradient">trải nghiệm đáng nhớ.</span></h1>
           <p class="hero-copy">DK Workflow đưa toàn bộ hành trình hậu kỳ — từ lúc ảnh rời máy ảnh, khách hàng lựa chọn, đến khi bộ ảnh hoàn thiện — về một không gian mạch lạc, tinh tế và đầy cảm hứng.</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="/desk/index.html">Bắt đầu với DK Workflow <span>→</span></a>
+            <a class="button button-primary" data-desktop-launch href="/desk/index.html">Bắt đầu với DK Workflow <span>→</span></a>
             <a class="button button-secondary" href="#features">Khám phá tính năng</a>
           </div>
           <p class="hero-note">Được tạo cho nhiếp ảnh gia muốn làm việc nhẹ nhàng hơn và trao đi nhiều giá trị hơn.</p>
@@ -200,13 +200,18 @@
     </section>
 
     <section class="reveal">
-      <div class="wrap"><div class="promise"><h2>Để mỗi lần gửi link cũng là một lần thương hiệu của bạn tỏa sáng.</h2><p>DK Workflow không chỉ bàn giao ảnh. DK Workflow giúp bạn trao đi sự chỉn chu, giữ nhịp giao tiếp với khách hàng và biến quy trình hậu kỳ thành một phần đáng tự hào của dịch vụ.</p><a class="button button-primary" href="/desk/index.html">Mở không gian quản lý <span>↗</span></a></div></div>
+      <div class="wrap"><div class="promise"><h2>Để mỗi lần gửi link cũng là một lần thương hiệu của bạn tỏa sáng.</h2><p>DK Workflow không chỉ bàn giao ảnh. DK Workflow giúp bạn trao đi sự chỉn chu, giữ nhịp giao tiếp với khách hàng và biến quy trình hậu kỳ thành một phần đáng tự hào của dịch vụ.</p><a class="button button-primary" data-desktop-launch href="/desk/index.html">Mở không gian quản lý <span>↗</span></a></div></div>
     </section>
   </main>
 
   <footer><div class="wrap footer-inner"><span>© <span id="year"></span> DK Workflow · Nơi những khoảnh khắc được hoàn thiện.</span><span>Website được phát triển bởi <a href="https://www.facebook.com/inhkiet.704955" target="_blank" rel="noopener">Đình Kiệt Photography</a>.</span></div></footer>
   <script>
     document.getElementById('year').textContent = new Date().getFullYear();
+    document.querySelectorAll('[data-desktop-launch]').forEach(link => link.addEventListener('click', event => {
+      event.preventDefault();
+      window.location.href = 'finder-v2://open';
+      window.setTimeout(() => { window.location.href = link.href; }, 1200);
+    }));
     const reveal = new IntersectionObserver(entries => entries.forEach(entry => { if (entry.isIntersecting) { entry.target.classList.add('visible'); reveal.unobserve(entry.target); } }), { threshold: .08 });
     document.querySelectorAll('.reveal').forEach(el => reveal.observe(el));
   </script>

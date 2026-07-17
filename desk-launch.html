@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d1b">
+  <title>Mở DK Workflow</title>
+  <style>
+    :root { color-scheme: dark; --bg:#080d1b; --panel:#111a30; --line:rgba(173,196,255,.17); --muted:#aab7d3; --violet:#8d7bff; --cyan:#54d6e8; }
+    * { box-sizing:border-box; } body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; color:#f7f8ff; background:radial-gradient(circle at 15% 0,rgba(141,123,255,.23),transparent 34rem),radial-gradient(circle at 90% 85%,rgba(84,214,232,.15),transparent 30rem),var(--bg); font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .card { width:min(690px,100%); padding:42px; border:1px solid var(--line); border-radius:28px; background:rgba(17,26,48,.86); box-shadow:0 28px 90px rgba(0,0,0,.35); text-align:center; }
+    .mark { width:74px; height:74px; padding:9px; margin:0 auto 22px; border-radius:22px; background:#0d1730; box-shadow:0 12px 34px rgba(102,86,255,.32); }
+    h1 { margin:0; font-size:clamp(30px,6vw,52px); letter-spacing:-.05em; line-height:1.04; } h1 span { background:linear-gradient(105deg,#fff,#aaa0ff 55%,#64e6ee); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    p { margin:16px auto 0; max-width:540px; color:var(--muted); line-height:1.65; }
+    .actions { display:flex; justify-content:center; flex-wrap:wrap; gap:10px; margin-top:28px; } a { color:inherit; text-decoration:none; }
+    .button { min-height:48px; display:inline-flex; align-items:center; justify-content:center; padding:0 18px; border-radius:13px; border:1px solid var(--line); font-weight:800; cursor:pointer; transition:transform .2s,box-shadow .2s; } .button:hover { transform:translateY(-2px); }
+    .primary { border:0; background:linear-gradient(135deg,#7667ff,#536cff); box-shadow:0 12px 28px rgba(94,89,255,.3); } .secondary { background:rgba(255,255,255,.045); color:#dce4fa; }
+    .fallback { display:none; margin-top:25px; padding-top:22px; border-top:1px solid var(--line); text-align:left; } .fallback.visible { display:block; animation:show .25s ease both; }
+    .fallback h2 { margin:0 0 7px; font-size:17px; } .fallback p { margin:0 0 14px; font-size:13px; } .download-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; } .download-grid .button { width:100%; }
+    .meta { margin-top:18px; color:#7e8cab; font-size:12px; } .error { color:#ffb4b4; }
+    @keyframes show { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+    @media (max-width:560px) { .card { padding:32px 21px; } .download-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <img class="mark" src="/assets/dk-workflow-mark.svg" alt="DK Workflow">
+    <h1>Mở <span>DK Workflow</span></h1>
+    <p id="status">Đang kiểm tra ứng dụng trên máy của bạn…</p>
+    <div class="actions"><a id="openApp" class="button primary" href="finder-v2://open">Mở ứng dụng</a><a class="button secondary" href="https://github.com/dinhkietdev/finder/releases/latest" target="_blank" rel="noopener">Xem bản phát hành</a></div>
+    <section id="fallback" class="fallback" aria-live="polite">
+      <h2>Chưa mở được ứng dụng?</h2>
+      <p id="fallbackText">Hãy tải đúng phiên bản cho hệ điều hành của bạn rồi mở lại.</p>
+      <div class="download-grid"><a id="macDownload" class="button secondary" href="https://github.com/dinhkietdev/finder/releases/latest" target="_blank" rel="noopener">Tải bản macOS</a><a id="winDownload" class="button secondary" href="https://github.com/dinhkietdev/finder/releases/latest" target="_blank" rel="noopener">Tải bản Windows</a></div>
+    </section>
+    <div id="meta" class="meta">DK Workflow giữ nguyên dữ liệu album và tên thương hiệu đã cấu hình.</div>
+  </main>
+  <script>
+    const releaseApi = 'https://api.github.com/repos/dinhkietdev/finder/releases/latest';
+    const releasePage = 'https://github.com/dinhkietdev/finder/releases/latest';
+    const status = document.getElementById('status');
+    const fallback = document.getElementById('fallback');
+    const fallbackText = document.getElementById('fallbackText');
+    const platform = /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ? 'mac' : /Win/i.test(navigator.platform) ? 'win' : 'other';
+    let launchTimer;
+    function showFallback(message) {
+      clearTimeout(launchTimer); fallback.classList.add('visible'); if (message) fallbackText.textContent = message;
+      status.textContent = 'Bạn có thể tải bản phù hợp và mở DK Workflow trên máy của mình.';
+    }
+    function launchDesktop(event) {
+      event.preventDefault();
+      status.textContent = 'Đang mở DK Workflow…';
+      launchTimer = setTimeout(() => showFallback('Nếu ứng dụng chưa mở, hãy tải bản phù hợp bên dưới rồi cài đặt.'), 1400);
+      window.location.href = 'finder-v2://open';
+    }
+    document.getElementById('openApp').addEventListener('click', launchDesktop);
+    if (platform === 'mac') document.getElementById('winDownload').style.opacity = '.55';
+    if (platform === 'win') document.getElementById('macDownload').style.opacity = '.55';
+    fetch(releaseApi, { headers: { Accept: 'application/vnd.github+json' } }).then(r => r.ok ? r.json() : Promise.reject()).then(release => {
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      const mac = assets.find(a => /\.dmg$/i.test(a.name)); const win = assets.find(a => /\.exe$/i.test(a.name));
+      if (mac) document.getElementById('macDownload').href = mac.browser_download_url;
+      if (win) document.getElementById('winDownload').href = win.browser_download_url;
+      const version = release.tag_name || 'mới nhất';
+      document.getElementById('meta').textContent = `Bản phát hành ${version} · Tải trực tiếp từ GitHub Release.`;
+    }).catch(() => { document.getElementById('meta').textContent = 'Không tải được danh sách bản phát hành. Bạn vẫn có thể mở trang GitHub để tải thủ công.'; });
+  </script>
+</body>
+</html>

@@ -13,7 +13,30 @@ const { cleanupCullingPreviewCache, createCullingPreview } = require('./culling-
 const { resolveImagePath, getUploadFingerprint, selectFilesToUpload } = require('./upload-fingerprint');
 
 // Đặt tên ở cấp ứng dụng để Dock macOS và taskbar Windows không hiển thị "Electron".
-app.setName('Finder');
+const DESKTOP_PROTOCOL = 'finder-v2';
+let pendingProtocolUrl = null;
+function handleProtocolUrl(value) {
+    if (typeof value !== 'string' || !value.startsWith(`${DESKTOP_PROTOCOL}://`)) return;
+    pendingProtocolUrl = value;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+    }
+}
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+    app.quit();
+} else {
+    app.on('second-instance', (event, commandLine) => {
+        const protocolUrl = commandLine.find(value => value.startsWith(`${DESKTOP_PROTOCOL}://`));
+        handleProtocolUrl(protocolUrl);
+    });
+    if (process.platform === 'darwin') {
+        app.on('open-url', (event, url) => { event.preventDefault(); handleProtocolUrl(url); });
+    }
+}
+app.setName('DK Workflow');
 if (process.platform === 'win32') app.setAppUserModelId('com.finder.desktop');
 
 // ---------------------------------------------------------
@@ -685,7 +708,7 @@ ipcMain.handle('get-album-thumbnail', async (event, localPath) => {
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150, height: 760,
-        title: "Finder",
+        title: "DK Workflow",
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
@@ -710,6 +733,12 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+    try {
+        const args = process.defaultApp && process.argv[1] ? [path.resolve(process.argv[1])] : [];
+        app.setAsDefaultProtocolClient(DESKTOP_PROTOCOL, ...args);
+        const startupUrl = process.argv.find(value => value.startsWith(`${DESKTOP_PROTOCOL}://`));
+        handleProtocolUrl(startupUrl);
+    } catch (_) {}
     cleanupCullingPreviewCache();
     createWindow();
     syncDataToServer(); 
