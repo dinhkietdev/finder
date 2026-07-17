@@ -106,6 +106,11 @@ app.get('/assets/client.js', (req, res) => {
     res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
     res.sendFile(path.join(__dirname, 'assets', 'client.js'));
 });
+app.get('/assets/dk-workflow-mark.svg', (req, res) => {
+    res.type('image/svg+xml');
+    res.set('Cache-Control', 'public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000');
+    res.sendFile(path.join(__dirname, 'assets', 'dk-workflow-mark.svg'));
+});
 
 app.use((req, res, next) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
