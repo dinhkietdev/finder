@@ -34,6 +34,7 @@
             galleryType: 'selection',
             gallerySections: [],
             activeGallerySection: 'all',
+            driveFolderId: '',
             expiresDays: 60,
             expiresAt: null,
             aiGroups: [],
@@ -115,6 +116,7 @@
             noteSection: document.getElementById('noteSection'),
             galleryCount: document.getElementById('galleryCount')
             ,gallerySectionsNav: document.getElementById('gallerySectionsNav')
+            ,driveGalleryActions: document.getElementById('driveGalleryActions'), driveAccessBtn: document.getElementById('driveAccessBtn')
             ,partyGalleryActions: document.getElementById('partyGalleryActions'), partySelectAllBtn: document.getElementById('partySelectAllBtn'), partyDownloadBtn: document.getElementById('partyDownloadBtn'), partyDownloadQueue: document.getElementById('partyDownloadQueue'), partyDownloadQueueText: document.getElementById('partyDownloadQueueText'), partyDownloadNextBtn: document.getElementById('partyDownloadNextBtn'), partyDownloadCancelBtn: document.getElementById('partyDownloadCancelBtn')
             ,aiPicksPanel: document.getElementById('aiPicksPanel'), aiPicksGrid: document.getElementById('aiPicksGrid'), aiPicksCount: document.getElementById('aiPicksCount'), aiPicksDescription: document.getElementById('aiPicksDescription'),
             aiPicksToggle: document.getElementById('aiPicksToggle'), aiPicksToggleLabel: document.getElementById('aiPicksToggleLabel'), galleryPanel: document.getElementById('galleryPanel'),
@@ -1712,6 +1714,7 @@
             updateLightboxContent();
         });
         elements.lightboxDownloadBtn.addEventListener('click', downloadCheckImage);
+        elements.driveAccessBtn?.addEventListener('click', openDriveFolder);
         elements.closeLightboxBtn.addEventListener('click', closeLightbox);
         elements.imageLightbox.addEventListener('click', event => {
             if (Date.now() < suppressLightboxCloseUntil) { event.preventDefault(); return; }
@@ -1925,6 +1928,14 @@
             state.gallerySections = Array.isArray(gallerySections) && gallerySections.length
                 ? gallerySections
                 : (Array.isArray(settings.gallerySections) ? settings.gallerySections : []);
+            const firstGalleryFolder = state.gallerySections.find(section => section?.driveFolderId || section?.id);
+            state.driveFolderId = String(
+                settings.driveFolderId
+                || settings.originalFolderId
+                || firstGalleryFolder?.driveFolderId
+                || firstGalleryFolder?.id
+                || ''
+            ).trim();
             if (!state.activeGallerySection) state.activeGallerySection = 'all';
             state.expiresDays = Number(settings.expiresDays) || 60;
             state.isFinalized = !!isFinalized || state.galleryType === 'party';
@@ -1942,6 +1953,26 @@
                 ? configuredStudio.toUpperCase()
                 : 'FINDER';
             state.displayName = String(settings.displayName || state.studioName || 'Finder').trim() || 'Finder';
+            updateDriveAccessButton();
+        }
+
+        function updateDriveAccessButton() {
+            const folderId = String(state.driveFolderId || '').trim();
+            const available = /^[A-Za-z0-9_-]{10,}$/.test(folderId);
+            if (elements.driveGalleryActions) elements.driveGalleryActions.style.display = available ? 'flex' : 'none';
+            if (elements.driveAccessBtn) elements.driveAccessBtn.disabled = !available;
+        }
+
+        function openDriveFolder() {
+            const folderId = String(state.driveFolderId || '').trim();
+            if (!/^[A-Za-z0-9_-]{10,}$/.test(folderId)) {
+                setMessage('Album này chưa có đường dẫn Google Drive để mở.', 'error');
+                return;
+            }
+            const url = `https://drive.google.com/drive/folders/${encodeURIComponent(folderId)}?usp=drive_link`;
+            const opened = window.open(url, '_blank', 'noopener,noreferrer');
+            if (!opened) window.location.href = url;
+            setMessage('Đã mở thư mục Google Drive. Nếu được yêu cầu, hãy đăng nhập tài khoản có quyền truy cập.', 'success');
         }
 
         function applyAlbumMetadata(data = {}) {

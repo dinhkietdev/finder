@@ -329,6 +329,8 @@
         .qr-card button { min-height:42px; padding:9px 18px; border:0; border-radius:11px; background:#0f172a; color:#fff; font-weight:800; cursor:pointer; }
         .download-selected { width:100%; margin-top:2px; }
         .gallery-sections-nav { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+        .drive-gallery-actions { display:flex; align-items:center; gap:9px; flex-wrap:wrap; margin:0 0 12px; }
+        .drive-access-hint { color:var(--text-muted); font-size:12px; }
         .gallery-section-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-main); border-radius:999px; padding:8px 13px; cursor:pointer; font-weight:750; font-size:12px; }
         .gallery-section-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
         .party-download-queue { display:none; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 12px; margin:0 0 12px; border:1px solid rgba(59,130,246,.35); border-radius:12px; background:rgba(30,64,175,.16); color:#dbeafe; font-size:12px; }
