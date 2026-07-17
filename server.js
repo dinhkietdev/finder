@@ -113,7 +113,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('🚀 Hệ thống Server Cloud của FinderPicture Studio đang hoạt động ổn định!');
+    res.sendFile(path.join(__dirname, 'landing.html'));
 });
 
 app.get('/api/health', (req, res) => {
