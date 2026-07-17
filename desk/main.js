@@ -1383,6 +1383,11 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             clientName: folderNameOnDrive,
             displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId,
+            // This handler is exclusively the customer-selection flow. Send
+            // the type explicitly so a stale/legacy Drive folder cannot be
+            // reclassified as a party gallery by a partial settings update.
+            galleryType: 'selection',
+            partyGallery: false,
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
@@ -1426,6 +1431,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             clientName: folderNameOnDrive,
             displayName: String(displayName || 'Finder').trim() || 'Finder',
             originalFolderId,
+            galleryType: 'selection',
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff',

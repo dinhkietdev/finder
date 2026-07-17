@@ -622,6 +622,25 @@ async function persistSupabaseAlbum(folderId) {
     });
 }
 
+// Desktop history sync must not rewrite album settings from a stale process
+// snapshot. Settings include the workflow type, Drive folders and management
+// token, so writing the whole album row here could undo a newer repair/update
+// made by another Desktop instance. Persist only the history document.
+async function persistSupabaseAlbumHistory(folderId) {
+    if (!isSupabaseConfigured()) return;
+    const settings = albumSettingsDatabase[folderId] || {};
+    const history = stripUndefined({
+        desktop: albumHistoryDatabase[folderId] || null,
+        checkHistory: settings.checkHistory || [],
+        gallerySections: settings.gallerySections || []
+    });
+    await supabaseRequest(`albums?id=eq.${encodeURIComponent(folderId)}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ history, updated_at: new Date().toISOString() })
+    });
+}
+
 function createManagementToken() {
     return crypto.randomBytes(32).toString('hex');
 }
@@ -1274,6 +1293,27 @@ app.get('/api/album-by-slug/:slug', async (req, res) => {
             match = [folderId, albumSettingsDatabase[folderId]];
         }
     }
+    // Supabase is the primary store in production.  Resolve the public slug
+    // directly from its indexed column on a cold Vercel instance instead of
+    // relying only on the in-memory cache (or the legacy Firebase resolver).
+    if (!match && isSupabaseConfigured()) {
+        try {
+            const rows = await supabaseRequest(`albums?public_slug=eq.${encodeURIComponent(requested)}&select=id,public_slug,gallery_type,settings,is_finalized,workflow_status,original_folder_id`);
+            const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+            if (row?.id) {
+                const folderId = String(row.id);
+                const rowSettings = row.settings && typeof row.settings === 'object' ? { ...row.settings } : {};
+                if (!rowSettings.publicSlug && row.public_slug) rowSettings.publicSlug = row.public_slug;
+                if (!rowSettings.galleryType && row.gallery_type) rowSettings.galleryType = row.gallery_type;
+                if (!rowSettings.originalFolderId && row.original_folder_id) rowSettings.originalFolderId = row.original_folder_id;
+                albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...rowSettings };
+                if (row.is_finalized) finalizedDatabase[folderId] = true;
+                match = [folderId, albumSettingsDatabase[folderId]];
+            }
+        } catch (error) {
+            console.warn('Không thể đọc slug album từ Supabase:', error.message);
+        }
+    }
     // Resolve from the durable slug index before attempting the legacy Drive
     // scan. This is especially important for Gallery/PSC albums whose internal
     // id is a party UUID, not the customer Drive folder id encoded in the URL.
@@ -1690,13 +1730,17 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         if (isEnabled !== undefined) albumSettingsDatabase[folderId].isEnabled = isEnabled;
         if (text !== undefined) albumSettingsDatabase[folderId].text = text;
         if (maxSelections !== undefined && !preserveBackgroundLimit) albumSettingsDatabase[folderId].maxSelections = nextLimit;
-        if (publicSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
+        // A background sync can come from an older Desktop process that still
+        // has the pre-migration workflow metadata in memory.  It may refresh
+        // harmless UI fields, but it must never change the album identity or
+        // move a selection album into the party/gallery workflow.
+        if (publicSlug && !isBackgroundSync) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
         if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
-        if (originalFolderId !== undefined) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
-        if (galleryType !== undefined) albumSettingsDatabase[folderId].galleryType = galleryType;
-        if (partyGallery !== undefined) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
-        if (Array.isArray(gallerySections)) albumSettingsDatabase[folderId].gallerySections = gallerySections;
+        if (originalFolderId !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
+        if (galleryType !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].galleryType = galleryType;
+        if (partyGallery !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
+        if (Array.isArray(gallerySections) && !isBackgroundSync) albumSettingsDatabase[folderId].gallerySections = gallerySections;
         if (expiresDays !== undefined) albumSettingsDatabase[folderId].expiresDays = Number(expiresDays) || 60;
         if (expiresAt !== undefined) albumSettingsDatabase[folderId].expiresAt = expiresAt || null;
         if (paymentStatus !== undefined) albumSettingsDatabase[folderId].paymentStatus = paymentStatus;
@@ -1781,7 +1825,12 @@ app.post('/api/album/:folderId/manager-history', async (req, res) => {
             managementToken: createManagementToken()
         };
     }
-    await persistState(folderId);
+    // Do not persist the complete album row here. A background Desktop sync
+    // can carry an old in-memory settings snapshot and would otherwise
+    // overwrite a newer workflow type or Drive configuration. Supabase gets
+    // a history-only PATCH; legacy local storage retains the old behavior.
+    if (isSupabaseConfigured()) await persistSupabaseAlbumHistory(folderId);
+    else await persistState(folderId);
     res.json({ success: true });
 });
 
