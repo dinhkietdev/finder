@@ -45,7 +45,7 @@
     }
     .nav-inner { height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
     .brand { display: inline-flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: .17em; }
-    .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; color: #fff; background: linear-gradient(135deg, var(--violet), #5269ff); box-shadow: 0 10px 30px rgba(102, 86, 255, .36); }
+    .brand-mark { display: block; width: 40px; height: 40px; padding: 5px; border-radius: 13px; background: #0d1730; box-shadow: 0 10px 30px rgba(102, 86, 255, .36); }
     .brand span { font-size: 15px; }
     .nav-links { display: flex; align-items: center; gap: 24px; color: var(--muted); font-size: 14px; }
     .nav-links a:hover { color: #fff; }
@@ -137,7 +137,7 @@
 <body>
   <header class="nav">
     <div class="wrap nav-inner">
-      <a class="brand" href="/"><b class="brand-mark">F</b><span>FINDER</span></a>
+      <a class="brand" href="/" aria-label="DK Workflow"><img class="brand-mark" src="/assets/dk-workflow-mark.svg" alt=""><span>DK WORKFLOW</span></a>
       <nav class="nav-links" aria-label="Điều hướng">
         <a href="#features">Tính năng</a>
         <a href="#journey">Hành trình nâng cấp</a>
@@ -162,7 +162,7 @@
         <div class="hero-visual" aria-label="Minh họa quy trình Finder">
           <div class="orbit"></div>
           <div class="dashboard-card">
-            <div class="dash-top"><span class="dash-title">FINDER WORKSPACE</span><span class="status">Đang đồng bộ</span></div>
+            <div class="dash-top"><span class="dash-title">DK WORKFLOW</span><span class="status">Đang đồng bộ</span></div>
             <div class="dash-body"><div class="metric"><strong>528</strong><span>Ảnh trong album</span></div><div class="metric"><strong>07</strong><span>Ảnh khách chọn</span></div></div>
             <div class="progress"><i></i></div>
             <div class="workflow"><span class="active">Lựa chọn</span><span>Chốt ảnh</span><span>CHECK</span><span>FINAL</span></div>

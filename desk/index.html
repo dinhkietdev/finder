@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Finder</title>
+    <title>DK Workflow</title>
     <style>
         :root { --ink: #182230; --muted: #667085; --line: #e7eaf0; --panel: rgba(255,255,255,.88); --brand: #635bff; --brand-dark: #4f46e5; --mint: #10b981; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +11,7 @@
 
         .sidebar { width: 252px; background: #151b2b; color: #cbd5e1; display: flex; flex-direction: column; padding: 22px 14px; box-shadow: 12px 0 35px rgba(15,23,42,.07); z-index: 1; }
         .sidebar-brand { display: flex; align-items: center; gap: 10px; margin: 0 10px 40px; font-size: 21px; font-weight: 800; color: #fff; letter-spacing: -.04em; }
-        .sidebar-brand::before { content: 'F'; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; background: linear-gradient(135deg, #8b84ff, #5a51f5); color: white; font-size: 15px; box-shadow: 0 7px 16px rgba(99,91,255,.34); }
+        .sidebar-brand::before { content: ''; display: block; width: 30px; height: 30px; border-radius: 10px; background: #0d1730 url('/assets/dk-workflow-mark.svg') center / 25px 25px no-repeat; box-shadow: 0 7px 16px rgba(99,91,255,.34); }
         .nav-item { padding: 12px 14px; margin-bottom: 5px; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600; transition: .2s ease; border: 0; }
         .nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
         .nav-item.active { background: rgba(122,115,255,.18); color: #b9b5ff; box-shadow: inset 0 0 0 1px rgba(163,158,255,.12); }
@@ -246,7 +246,7 @@
         </div>
     </div>
     <div class="sidebar">
-        <div class="sidebar-brand">Finder <small id="app-version-label" style="display:block; margin-top:4px; opacity:.55; font-size:10px; font-weight:500;">v—</small></div>
+        <div class="sidebar-brand">DK Workflow <small id="app-version-label" style="display:block; margin-top:4px; opacity:.55; font-size:10px; font-weight:500;">v—</small></div>
         <div class="nav-item active" data-view="view-dashboard" onclick="switchView('view-dashboard', this)">▣ &nbsp;Tổng quan</div>
         <div class="nav-item" data-view="view-upload" onclick="switchView('view-upload', this)">↑ &nbsp;Tạo album</div>
         <div class="nav-item" data-view="view-history" onclick="switchView('view-history', this)">▦ &nbsp;Thư viện</div>

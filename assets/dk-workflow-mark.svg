@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-labelledby="title desc">
+  <title id="title">DK Workflow</title>
+  <desc id="desc">Biểu tượng chữ DK cách điệu như khung ảnh và chuyển động quy trình</desc>
+  <defs>
+    <linearGradient id="dk-violet" x1="22" y1="18" x2="86" y2="94" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9d8cff"/>
+      <stop offset="1" stop-color="#635bff"/>
+    </linearGradient>
+  </defs>
+  <path d="M27 22h31a28 28 0 0 1 28 28v20a28 28 0 0 1-28 28H27V22Z" fill="none" stroke="url(#dk-violet)" stroke-width="10" stroke-linejoin="round"/>
+  <path d="M57 39v42M57 60l30-24M57 60l30 24" fill="none" stroke="#54d6e8" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+</svg>
