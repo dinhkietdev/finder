@@ -1581,6 +1581,12 @@ async function recoverDriveStructureFromRoot(drive, rootId) {
     });
     const root = rootResponse.data;
     if (!root?.id || root.mimeType !== 'application/vnd.google-apps.folder') return null;
+    // Older selection uploads stored the ORIGINAL child folder as the Drive
+    // token root. Treat that folder as the selection source directly instead
+    // of interpreting its image children as a Gallery/PSC section.
+    if (String(root.name || '').trim().toUpperCase() === 'ORIGINAL') {
+        return { folderId: root.id, folderName: 'Album khách hàng', galleryType: 'selection', originalFolderId: root.id, gallerySections: [] };
+    }
     const childResponse = await drive.files.list({
         q: `'${root.id}' in parents and trashed = false`,
         fields: 'files(id,name,mimeType)',
@@ -1704,6 +1710,13 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // The same protection applies to the brand: a legacy local record with no
     // custom brand must not replace an existing Studio name on the server.
     const preserveBackgroundStudio = isBackgroundSync && isDefaultStudioName(incomingStudioName) && !isDefaultStudioName(existingStudioName);
+    // A legacy Desktop process can omit the background-sync marker and still
+    // send its old `party` snapshot. Once an album has been created as a
+    // customer-selection album, never downgrade it to Gallery/PSC from a
+    // stale settings payload; party galleries have their own creation route.
+    const existingWorkflowType = String(albumSettingsDatabase[folderId]?.galleryType || '').toLowerCase();
+    const stalePartyWorkflow = existingWorkflowType === 'selection'
+        && (String(galleryType || '').toLowerCase() === 'party' || partyGallery === true);
     
     if(!albumSettingsDatabase[folderId]) {
         albumSettingsDatabase[folderId] = { 
@@ -1734,13 +1747,13 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         // has the pre-migration workflow metadata in memory.  It may refresh
         // harmless UI fields, but it must never change the album identity or
         // move a selection album into the party/gallery workflow.
-        if (publicSlug && !isBackgroundSync) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
+        if (publicSlug && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
         if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
         if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
-        if (originalFolderId !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
-        if (galleryType !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].galleryType = galleryType;
-        if (partyGallery !== undefined && !isBackgroundSync) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
-        if (Array.isArray(gallerySections) && !isBackgroundSync) albumSettingsDatabase[folderId].gallerySections = gallerySections;
+        if (originalFolderId !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
+        if (galleryType !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].galleryType = galleryType;
+        if (partyGallery !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
+        if (Array.isArray(gallerySections) && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].gallerySections = gallerySections;
         if (expiresDays !== undefined) albumSettingsDatabase[folderId].expiresDays = Number(expiresDays) || 60;
         if (expiresAt !== undefined) albumSettingsDatabase[folderId].expiresAt = expiresAt || null;
         if (paymentStatus !== undefined) albumSettingsDatabase[folderId].paymentStatus = paymentStatus;
