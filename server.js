@@ -2204,11 +2204,18 @@ app.get('/api/album/:folderId', async (req, res) => {
                 ? await recoverDriveStructureFromRoot(drive, tokenRootForRecovery)
                 : await recoverDriveStructureBySlug(drive, requestedSlug);
             if (recovered) {
+                const customStudioName = isDefaultStudioName(currentSettings.studioName)
+                    ? ''
+                    : String(currentSettings.studioName).trim().toUpperCase();
+                const currentClientName = String(currentSettings.clientName || '').trim();
+                const preservedClientName = currentClientName && !/^(original|album khách hàng)$/i.test(currentClientName)
+                    ? currentClientName
+                    : recovered.folderName;
                 currentSettings = {
                     ...currentSettings,
                     publicSlug: requestedSlug,
-                    clientName: recovered.folderName,
-                    displayName: recovered.folderName,
+                    clientName: preservedClientName,
+                    displayName: customStudioName || (isDefaultStudioName(currentSettings.displayName) ? recovered.folderName : currentSettings.displayName),
                     originalFolderId: recovered.originalFolderId,
                     galleryType: recovered.galleryType,
                     partyGallery: recovered.galleryType === 'party',
