@@ -20,7 +20,8 @@
   "license": "ISC",
   "build": {
     "appId": "com.finder.desktop",
-    "productName": "Finder",
+    "productName": "DK Workflow",
+    "icon": "build/icon.png",
     "files": [
       "**/*",
       "!firabase.json",

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -38,6 +38,12 @@ if (!gotSingleInstanceLock) {
 }
 app.setName('DK Workflow');
 if (process.platform === 'win32') app.setAppUserModelId('com.finder.desktop');
+
+// The default Electron menu exposes File/Edit/View/... and makes the app look
+// like an unfinished development build.  The dashboard owns all actions, so
+// remove the native menu on every platform while keeping keyboard shortcuts
+// and the renderer UI intact.
+Menu.setApplicationMenu(null);
 
 // ---------------------------------------------------------
 // 1. CẤU HÌNH BIẾN MÔI TRƯỜNG & ĐƯỜNG DẪN
@@ -709,6 +715,7 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150, height: 760,
         title: "DK Workflow",
+        icon: path.join(__dirname, 'build', 'icon.png'),
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
