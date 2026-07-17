@@ -8,3 +8,7 @@ desk/firabase.json
 desk/firebase-auth-config.js
 **/.env
 **/.env.*
+node_modules
+desk/node_modules
+desk/dist
+.git

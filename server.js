@@ -2203,7 +2203,13 @@ app.get('/api/album/:folderId', async (req, res) => {
             drive = google.drive({ version: 'v3', auth: oauth2Client });
         }
 
-        const requestedSlug = canonicalPublicSlug(req.query?.slug || '');
+        // Pagination requests intentionally omit `slug` after the first page.
+        // Do not canonicalize an omitted value to the fallback slug "album":
+        // that would make every background page look like a legacy recovery
+        // request, rewrite Supabase settings, and can trigger a duplicate
+        // `public_slug=album` conflict (HTTP 500) on Gallery/PSC albums.
+        const rawRequestedSlug = String(req.query?.slug || '').trim();
+        const requestedSlug = rawRequestedSlug ? canonicalPublicSlug(rawRequestedSlug) : '';
         const configuredRootForRecovery = normalizeDriveFolderId(currentSettings.originalFolderId, '');
         const tokenRootForRecovery = normalizeDriveFolderId(/** @type {any} */ (albumOAuth)?.finderDriveFolderId, '');
         const hasUsableGalleryStructure = currentSettings.galleryType === 'party'
