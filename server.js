@@ -84,7 +84,16 @@ app.use((req, res, next) => {
     }
     next();
 });
-app.use(express.static(__dirname));
+app.use(express.static(__dirname, {
+    setHeaders(res, filePath) {
+        const normalized = filePath.split(path.sep).join('/');
+        if (normalized.endsWith('/assets/client.css') || normalized.endsWith('/assets/client.js')) {
+            // The extracted client assets are safe to cache briefly. HTML
+            // remains uncached so album state and bootstrap data stay fresh.
+            res.set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400');
+        }
+    }
+}));
 
 // Keep the extracted client assets discoverable by Vercel's Node builder.
 // The explicit file references are also a reliable fallback when the static

@@ -158,11 +158,15 @@
         let aiGroupingTimer = null;
         let aiGroupingRunId = 0;
         let thumbRenderVersion = 0;
+        let thumbRenderKey = '';
+        const thumbButtonsByIndex = new Map();
         // Keep only a small set of in-flight/completed warmups. The browser
         // owns the decoded image cache; this map prevents duplicate requests
         // while quickly navigating between lightbox images.
         const lightboxWarmCache = new Map();
         const LIGHTBOX_WARM_CACHE_LIMIT = 12;
+        const nearbyImageWarmCache = new Set();
+        const NEARBY_IMAGE_WARM_CACHE_LIMIT = 16;
         const activePointers = new Map();
         const thumbObserver = 'IntersectionObserver' in window
             ? new IntersectionObserver(entries => entries.forEach(entry => {
@@ -1046,6 +1050,7 @@
         function createThumbEntry(img, index, isPartyGallery) {
             const thumbBtn = document.createElement('button');
             thumbBtn.className = 'thumb-btn';
+            thumbBtn.dataset.imageIndex = String(index);
             if (index === state.currentIndex) thumbBtn.classList.add('active');
             if (img.selected) thumbBtn.classList.add('selected');
             const thumbImg = document.createElement('img');
@@ -1069,12 +1074,38 @@
             return { button: thumbBtn, image: thumbImg };
         }
 
+        function syncThumbStates() {
+            thumbButtonsByIndex.forEach((button, index) => {
+                const image = state.images[index];
+                if (!image) return;
+                button.classList.toggle('active', index === state.currentIndex);
+                button.classList.toggle('selected', !!image.selected);
+                const checkbox = button.querySelector('input[type="checkbox"]');
+                if (checkbox) checkbox.checked = partySelected.has(image.fullName);
+            });
+        }
+
         function renderThumbStrip(galleryEntries, isPartyGallery) {
-            const version = ++thumbRenderVersion;
             // Keep the Drive filename order in the strip. Moving selected
             // images to the front made the visible order differ from the
             // lightbox and caused the first image to appear to change.
-            const ordered = galleryEntries.slice().sort((a, b) => naturalImageCompare(a.img, b.img));
+            // `state.images` is kept naturally sorted whenever pages/sections
+            // change, so avoid another O(n log n) sort on every navigation.
+            const ordered = galleryEntries;
+            const firstId = ordered[0]?.img?.id || ordered[0]?.img?.fullName || '';
+            const lastId = ordered[ordered.length - 1]?.img?.id || ordered[ordered.length - 1]?.img?.fullName || '';
+            const nextKey = `${isPartyGallery ? 'party' : 'selection'}:${state.viewMode}:${state.activeGallerySection}:${ordered.length}:${firstId}:${lastId}`;
+            // Navigating or toggling a note should only update classes on the
+            // existing buttons. Rebuilding hundreds of DOM nodes on every
+            // render was a major source of jank on mobile.
+            if (nextKey === thumbRenderKey && thumbButtonsByIndex.size === ordered.length) {
+                syncThumbStates();
+                return;
+            }
+            thumbRenderKey = nextKey;
+            const version = ++thumbRenderVersion;
+            thumbButtonsByIndex.clear();
+            thumbObserver?.disconnect();
             elements.thumbStrip.innerHTML = '';
             let cursor = 0;
             const appendBatch = () => {
@@ -1085,6 +1116,7 @@
                 for (; cursor < end; cursor += 1) {
                     const entry = createThumbEntry(ordered[cursor].img, ordered[cursor].index, isPartyGallery);
                     fragment.appendChild(entry.button);
+                    thumbButtonsByIndex.set(ordered[cursor].index, entry.button);
                     images.push(entry.image);
                 }
                 elements.thumbStrip.appendChild(fragment);
@@ -1258,14 +1290,29 @@
             }
         }
 
+        function warmNearbyImage(url, priority = 'low') {
+            if (!url || nearbyImageWarmCache.has(url)) return;
+            nearbyImageWarmCache.add(url);
+            if (nearbyImageWarmCache.size > NEARBY_IMAGE_WARM_CACHE_LIMIT) {
+                const oldest = nearbyImageWarmCache.values().next().value;
+                if (oldest) nearbyImageWarmCache.delete(oldest);
+            }
+            const preload = new Image();
+            preload.decoding = 'async';
+            preload.fetchPriority = priority;
+            preload.src = url;
+        }
+
         function preloadNearbyImages() {
             [-1, 1, 2].forEach(offset => {
                 const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
-                if (!image?.preview) return;
-                const preload = new Image();
-                preload.decoding = 'async';
-                preload.fetchPriority = offset === 1 ? 'high' : 'low';
-                preload.src = image.preview;
+                if (!image) return;
+                // Warm only the next full preview. The other neighbors use a
+                // small thumbnail and are upgraded when actually opened.
+                const source = offset === 1
+                    ? (image.preview || image.thumbnail || '')
+                    : (image.thumbnail || image.preview || '');
+                warmNearbyImage(source, offset === 1 ? 'high' : 'low');
             });
         }
 
