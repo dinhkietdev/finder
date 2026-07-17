@@ -1717,6 +1717,18 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     const existingWorkflowType = String(albumSettingsDatabase[folderId]?.galleryType || '').toLowerCase();
     const stalePartyWorkflow = existingWorkflowType === 'selection'
         && (String(galleryType || '').toLowerCase() === 'party' || partyGallery === true);
+    const existingSettings = albumSettingsDatabase[folderId] || {};
+    const existingSlug = canonicalPublicSlug(existingSettings.publicSlug || '');
+    const incomingSlug = canonicalPublicSlug(publicSlug || '');
+    const defaultSlugs = new Set(['album', `album-${String(folderId).slice(-6).toLowerCase()}`]);
+    const preserveCustomSlug = Boolean(existingSlug && !defaultSlugs.has(existingSlug) && defaultSlugs.has(incomingSlug));
+    const defaultIdentityNames = new Set(['finder', 'finder studio', 'original', 'album khách hàng']);
+    const existingDisplayName = String(existingSettings.displayName || '').trim().toLowerCase();
+    const existingClientName = String(existingSettings.clientName || '').trim().toLowerCase();
+    const preserveCustomDisplayName = Boolean(existingDisplayName && !defaultIdentityNames.has(existingDisplayName)
+        && defaultIdentityNames.has(String(displayName || '').trim().toLowerCase()));
+    const preserveCustomClientName = Boolean(existingClientName && !defaultIdentityNames.has(existingClientName)
+        && defaultIdentityNames.has(String(clientName || '').trim().toLowerCase()));
     
     if(!albumSettingsDatabase[folderId]) {
         albumSettingsDatabase[folderId] = { 
@@ -1747,9 +1759,9 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         // has the pre-migration workflow metadata in memory.  It may refresh
         // harmless UI fields, but it must never change the album identity or
         // move a selection album into the party/gallery workflow.
-        if (publicSlug && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
-        if (clientName !== undefined) albumSettingsDatabase[folderId].clientName = clientName;
-        if (displayName !== undefined) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
+        if (publicSlug && !isBackgroundSync && !stalePartyWorkflow && !preserveCustomSlug) albumSettingsDatabase[folderId].publicSlug = slugifyAlbumName(publicSlug);
+        if (clientName !== undefined && !preserveCustomClientName) albumSettingsDatabase[folderId].clientName = clientName;
+        if (displayName !== undefined && !preserveCustomDisplayName) albumSettingsDatabase[folderId].displayName = String(displayName || 'Finder').trim() || 'Finder';
         if (originalFolderId !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].originalFolderId = originalFolderId;
         if (galleryType !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].galleryType = galleryType;
         if (partyGallery !== undefined && !isBackgroundSync && !stalePartyWorkflow) albumSettingsDatabase[folderId].partyGallery = Boolean(partyGallery);
