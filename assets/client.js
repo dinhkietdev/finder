@@ -131,6 +131,7 @@
         const partySelected = new Set();
         let partyDownloadQueue = [];
         let partyDownloadIndex = 0;
+        let partyDownloadBusy = false;
         let zoomScale = 1;
         let robotMessageTimeout = null;
         let robotMessageInterval = null;
@@ -565,20 +566,14 @@
             return state.publicSlug ? `${ONLINE_SERVER}/a/${encodeURIComponent(state.publicSlug)}` : `${ONLINE_SERVER}/client.html?id=${encodeURIComponent(folderId || '')}`;
         }
 
-        function downloadCheckImage() {
+        async function downloadCheckImage() {
             if (state.viewMode !== 'check' && state.galleryType !== 'party') return;
             const current = getCurrentImage();
             if (!current?.id) return;
-            const url = getProtectedDriveImageUrl(current, 'original', true);
-            if (!url) return;
-            const link = document.createElement('a');
-            link.href = url;
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.download = current.fullName || 'finder-check-image';
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
+            const method = await saveImageForVisitor(current);
+            if (method === 'share') {
+                setMessage('Đã mở bảng chia sẻ. Hãy chọn “Lưu hình ảnh” để đưa ảnh vào thư viện Ảnh trên iPhone.', 'success');
+            }
         }
 
         function isMobileDownloadDevice() {
@@ -586,17 +581,48 @@
                 || /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
         }
 
-        function triggerPartyDownload(image) {
+        async function saveImageForVisitor(image) {
             if (!image?.id) return;
+            const url = getProtectedDriveImageUrl(image, 'original', true);
+            if (!url) return;
+            const fileName = image.fullName || 'dk-workflow-image';
+            // iOS does not allow a website to write directly into Photos. On
+            // supported Safari versions, hand the downloaded File to the
+            // native share sheet so the visitor can choose “Save Image”.
+            // Browsers without file sharing keep the normal download path.
+            if (isMobileDownloadDevice() && typeof navigator.share === 'function') {
+                try {
+                    const response = await fetch(url, { credentials: 'include' });
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const type = blob.type || 'image/jpeg';
+                        const file = new File([blob], fileName, { type });
+                        const canShareFiles = typeof navigator.canShare !== 'function'
+                            || navigator.canShare({ files: [file] });
+                        if (canShareFiles) {
+                            await navigator.share({ files: [file], title: 'DK Workflow', text: 'Lưu ảnh vào thư viện Ảnh' });
+                            return 'share';
+                        }
+                    }
+                } catch (error) {
+                    // Closing the share sheet is not a download failure. For
+                    // other errors, fall through to the browser download.
+                    if (error?.name === 'AbortError') return 'cancelled';
+                }
+            }
             const link = document.createElement('a');
-            link.href = getProtectedDriveImageUrl(image, 'original', true);
-            if (!link.href) return;
+            link.href = url;
             link.target = '_blank';
             link.rel = 'noopener';
-            link.download = image.fullName || 'finder-gallery-image';
+            link.download = fileName;
             document.body.appendChild(link);
             link.click();
             link.remove();
+            return 'download';
+        }
+
+        async function triggerPartyDownload(image) {
+            return saveImageForVisitor(image);
         }
 
         function updatePartyDownloadQueue() {
@@ -608,18 +634,27 @@
                 return;
             }
             queue.classList.add('visible');
-            elements.partyDownloadQueueText.textContent = `Đã tải ${partyDownloadIndex}/${partyDownloadQueue.length}. Nhấn từng lần để tải tiếp trên điện thoại.`;
-            elements.partyDownloadNextBtn.textContent = `Tải ảnh tiếp theo (${partyDownloadIndex + 1}/${partyDownloadQueue.length})`;
-            elements.partyDownloadNextBtn.disabled = false;
+            elements.partyDownloadQueueText.textContent = isMobileDownloadDevice()
+                ? `Đã lưu ${partyDownloadIndex}/${partyDownloadQueue.length}. Nhấn từng lần để mở bảng chia sẻ và chọn “Lưu hình ảnh”.`
+                : `Đã tải ${partyDownloadIndex}/${partyDownloadQueue.length}.`;
+            elements.partyDownloadNextBtn.textContent = isMobileDownloadDevice()
+                ? `Lưu ảnh tiếp theo (${partyDownloadIndex + 1}/${partyDownloadQueue.length})`
+                : `Tải ảnh tiếp theo (${partyDownloadIndex + 1}/${partyDownloadQueue.length})`;
+            elements.partyDownloadNextBtn.disabled = partyDownloadBusy;
         }
 
-        function downloadNextPartyImage() {
-            if (state.galleryType !== 'party' || partyDownloadIndex >= partyDownloadQueue.length) return;
-            // One click creates one browser download. This is intentional on
-            // mobile because Safari/Chrome block a burst of automatic tabs.
-            triggerPartyDownload(partyDownloadQueue[partyDownloadIndex]);
-            partyDownloadIndex += 1;
+        async function downloadNextPartyImage() {
+            if (state.galleryType !== 'party' || partyDownloadBusy || partyDownloadIndex >= partyDownloadQueue.length) return;
+            partyDownloadBusy = true;
             updatePartyDownloadQueue();
+            try {
+                const method = await triggerPartyDownload(partyDownloadQueue[partyDownloadIndex]);
+                if (method === 'cancelled') return;
+                partyDownloadIndex += 1;
+            } finally {
+                partyDownloadBusy = false;
+                updatePartyDownloadQueue();
+            }
         }
 
         function cancelPartyDownloadQueue() {
@@ -635,10 +670,9 @@
             if (isMobileDownloadDevice()) {
                 partyDownloadQueue = selected;
                 partyDownloadIndex = 0;
-                setMessage(`Đã chuẩn bị ${selected.length} ảnh. Trên điện thoại, hãy nhấn tải từng ảnh để trình duyệt cho phép tải xuống.`, 'success');
+                setMessage(`Đã chuẩn bị ${selected.length} ảnh. Mỗi lần nhấn sẽ mở bảng chia sẻ để bạn chọn “Lưu hình ảnh”.`, 'success');
                 updatePartyDownloadQueue();
-                // The first download still happens directly inside the user's
-                // tap, so mobile browsers do not classify it as a popup.
+                // The first share still starts inside the user's tap.
                 downloadNextPartyImage();
                 return;
             }
@@ -800,7 +834,21 @@
             elements.aiPicksDescription.textContent = `${found} · đang phân tích trong nền${progressSuffix}…`;
         }
 
+        function isAiGroupingAllowed() {
+            // Gallery/PSC and FINAL are delivery-only views. They must never
+            // spend CPU/network time running the selection-only culling pass.
+            return state.galleryType !== 'party'
+                && !state.isFinalized
+                && state.workflowStatus !== 'completed';
+        }
+
         async function buildAiGroups(sourceImages = state.images, runId = aiGroupingRunId) {
+            if (!isAiGroupingAllowed()) {
+                state.aiGroups = [];
+                state.aiGroupsComplete = false;
+                state.aiAnalysisPending = false;
+                return;
+            }
             const sourceCount = sourceImages.length;
             const isComplete = !state.pagesPending && !state.pageLoading && sourceCount >= state.originalImages.length;
             const isActive = () => runId === aiGroupingRunId;
@@ -876,6 +924,19 @@
         function scheduleAiGroups(sourceImages = state.images) {
             window.clearTimeout(aiGroupingTimer);
             const runId = ++aiGroupingRunId;
+            if (!isAiGroupingAllowed()) {
+                state.aiAnalysisPending = false;
+                state.aiAnalysisProcessed = 0;
+                state.aiAnalysisTotal = 0;
+                state.aiGroupSourceCount = 0;
+                state.aiGroupsComplete = false;
+                state.aiGroups = [];
+                state.aiGroupsExpanded = false;
+                state.galleryExpanded = true;
+                renderAiPicks();
+                updateAlbumLoadingOverlay();
+                return;
+            }
             state.aiAnalysisPending = Boolean(sourceImages.length && state.viewMode === 'original');
             state.aiGroupSourceCount = sourceImages.length;
             state.aiAnalysisTotal = Math.max(sourceImages.length, state.originalImages.length);
@@ -1260,6 +1321,7 @@
             elements.lightboxSelectBtn.style.display = canEditSelection ? '' : 'none';
             elements.lightboxNoteBtn.style.display = canEditNote ? '' : 'none';
             elements.lightboxDownloadBtn.style.display = isCheckView || isPartyGallery ? '' : 'none';
+            elements.lightboxDownloadBtn.textContent = isMobileDownloadDevice() ? '💾 Lưu vào Ảnh' : '⬇️ Tải ảnh';
             if (elements.partyGalleryActions) elements.partyGalleryActions.style.display = isPartyGallery ? 'flex' : 'none';
             if (isFinalView) {
                 elements.compareToggleBtn.style.display = 'none';

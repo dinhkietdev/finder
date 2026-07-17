@@ -1425,11 +1425,17 @@ app.get('/a/:slug', async (req, res) => {
         const requested = canonicalPublicSlug(req.params.slug);
         const matchEntry = Object.entries(albumSettingsDatabase).find(([, settings]) => canonicalPublicSlug(settings?.publicSlug) === requested);
         const match = matchEntry?.[1] || null;
-        const title = 'Finder - Ứng dụng bàn giao và chọn ảnh';
-        const description = match?.galleryType === 'party' ? 'Gallery ảnh tiệc / PSC trên Finder' : 'Gallery ảnh khách hàng trên Finder';
+        const domain = process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app';
+        const configuredBrand = String(match?.studioName || '').trim();
+        const shareBrand = isDefaultStudioName(configuredBrand) ? 'DK Workflow' : configuredBrand.toUpperCase();
+        const title = `${shareBrand} · DK Workflow - Ứng dụng bàn giao và chọn ảnh`;
+        const description = match?.galleryType === 'party'
+            ? `Gallery ảnh tiệc / PSC trên ${shareBrand}`
+            : `Gallery ảnh khách hàng trên ${shareBrand}`;
         const source = fs.readFileSync(path.join(__dirname, 'client.html'), 'utf8');
-        const canonicalUrl = `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${encodeURIComponent(req.params.slug)}`;
-        const meta = `<meta name="description" content="${escapeHtmlAttribute(title)}"><meta property="og:title" content="${escapeHtmlAttribute(title)}"><meta property="og:description" content="${escapeHtmlAttribute(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="Finder"><meta property="og:url" content="${escapeHtmlAttribute(canonicalUrl)}"><meta property="og:locale" content="vi_VN"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="${escapeHtmlAttribute(title)}"><meta name="twitter:description" content="${escapeHtmlAttribute(description)}">`;
+        const canonicalUrl = `https://${domain}/a/${encodeURIComponent(req.params.slug)}`;
+        const shareImageUrl = `https://${domain}/assets/dk-workflow-share.png`;
+        const meta = `<meta name="description" content="${escapeHtmlAttribute(title)}"><meta property="og:title" content="${escapeHtmlAttribute(title)}"><meta property="og:description" content="${escapeHtmlAttribute(description)}"><meta property="og:type" content="website"><meta property="og:site_name" content="DK Workflow"><meta property="og:url" content="${escapeHtmlAttribute(canonicalUrl)}"><meta property="og:image" content="${escapeHtmlAttribute(shareImageUrl)}"><meta property="og:image:secure_url" content="${escapeHtmlAttribute(shareImageUrl)}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:image:alt" content="DK Workflow - Ứng dụng bàn giao và chọn ảnh"><meta property="og:locale" content="vi_VN"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${escapeHtmlAttribute(title)}"><meta name="twitter:description" content="${escapeHtmlAttribute(description)}"><meta name="twitter:image" content="${escapeHtmlAttribute(shareImageUrl)}">`;
         const withoutStaticSocialMeta = source
             .replace(/\s*<meta property="og:[^"]+" content="[^"]*">/g, '')
             .replace(/\s*<meta name="twitter:[^"]+" content="[^"]*">/g, '')
