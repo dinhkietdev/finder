@@ -1,8 +1,8 @@
 {
   "name": "finder",
-  "productName": "Finder",
+  "productName": "DK Workflow",
   "version": "1.0.0",
-  "description": "Ứng dụng quản lý album Finder",
+  "description": "Ứng dụng quản lý album DK Workflow",
   "main": "main.js",
   "scripts": {
     "start": "electron ."
