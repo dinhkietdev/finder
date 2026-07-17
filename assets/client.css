@@ -72,7 +72,7 @@
         .empty-state { color: var(--text-muted); font-size: 13px; padding: 12px 0; }
 
         .thumb-strip { display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px 2px; }
-        .thumb-btn { position:relative; flex: 0 0 92px; border: 2px solid transparent; border-radius: 12px; overflow: hidden; padding: 0; background: #000; cursor: pointer; }
+        .thumb-btn { position:relative; flex: 0 0 92px; border: 2px solid transparent; border-radius: 12px; overflow: hidden; padding: 0; background: #000; cursor: zoom-in; }
         .thumb-btn img { width: 92px; height: 92px; object-fit: cover; display: block; }
         .thumb-btn.active { border-color: var(--accent); }
         .thumb-btn.selected::after { content: '✓'; position: absolute; color: #fff; background: rgba(34,197,94,0.95); padding: 4px 6px; border-radius: 999px; font-size: 10px; margin: 6px; }

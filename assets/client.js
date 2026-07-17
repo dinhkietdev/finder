@@ -1111,7 +1111,10 @@
         function createThumbEntry(img, index, isPartyGallery) {
             const thumbBtn = document.createElement('button');
             thumbBtn.className = 'thumb-btn';
+            thumbBtn.type = 'button';
             thumbBtn.dataset.imageIndex = String(index);
+            thumbBtn.setAttribute('aria-label', `Mở ảnh ${index + 1} ở chế độ toàn màn hình`);
+            thumbBtn.title = 'Mở ảnh lớn';
             if (index === state.currentIndex) thumbBtn.classList.add('active');
             if (img.selected) thumbBtn.classList.add('selected');
             const thumbImg = document.createElement('img');
@@ -1131,6 +1134,10 @@
             thumbBtn.onclick = () => {
                 state.currentIndex = index;
                 render();
+                // A thumbnail is an image entry, not only a navigation item.
+                // Open the same full-screen lightbox used by the main viewer
+                // on every client mode (selection, CHECK, FINAL and gallery).
+                openLightbox();
             };
             return { button: thumbBtn, image: thumbImg };
         }
