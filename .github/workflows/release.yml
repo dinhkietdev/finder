@@ -40,7 +40,7 @@ jobs:
           ## Finder desktop
 
           macOS: kéo Finder vào Applications. Nếu Gatekeeper cảnh báo app chưa notarize, Control-click → Open.
-          Windows: chạy Finder-Setup-*.exe.
+          Windows: chạy DK-Workflow-Setup-*.exe.
 
           Bản phát hành có kiểm tra API smoke trước khi đóng gói. Ảnh Drive dùng proxy thumbnail riêng tư; không cấp quyền anyone/reader.
           EOF

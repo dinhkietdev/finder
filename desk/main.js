@@ -212,7 +212,18 @@ function hasLocalDriveTokens() {
 }
 
 function removeLocalDriveTokens() {
-    for (const tokenPath of [LOCAL_TOKEN_ENCRYPTED_PATH, LOCAL_TOKEN_PATH]) {
+    // Remove stale credentials from the canonical directory and the legacy
+    // app-data directories. Without clearing the legacy copies, the startup
+    // migration can import the same revoked token again after a restart.
+    const tokenPaths = [LOCAL_TOKEN_ENCRYPTED_PATH, LOCAL_TOKEN_PATH, LOCAL_DRIVE_CLIENT_PATH];
+    for (const directory of legacyHistoryDirectories) {
+        tokenPaths.push(
+            path.join(directory, 'finderpicture-session.enc'),
+            path.join(directory, 'finderpicture-session.json'),
+            path.join(directory, 'finder-drive-client.json')
+        );
+    }
+    for (const tokenPath of new Set(tokenPaths)) {
         try { fs.unlinkSync(tokenPath); } catch (_) {}
     }
 }
@@ -409,6 +420,7 @@ ipcMain.handle('drive-account', async () => {
         return { success: true, user: result.data.user || {} };
     } catch (error) {
         logDriveDiagnostic('drive-account', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('drive-account-stale', error);
         return { success: false, error: friendlyDriveError(error) };
     }
 });
@@ -1078,6 +1090,17 @@ function isGoogleTokenError(error) {
     return /invalid_(request|grant|client)|unauthorized_client|invalid credentials|unauthenticated|401/i.test(String(error?.message || error));
 }
 
+function isStaleDriveCredentialError(error) {
+    const message = String(error?.message || error || '');
+    const status = Number(error?.code || error?.response?.status || error?.status) || 0;
+    return status === 401 || /unauthorized_client|invalid_grant|invalid_client|token has been expired or revoked|invalid credentials/i.test(message);
+}
+
+function clearStaleDriveSession(stage, error) {
+    logDriveDiagnostic(stage, error);
+    removeLocalDriveTokens();
+}
+
 function friendlyDriveError(error) {
     if (String(error?.message || error) === 'DRIVE_REAUTH_REQUIRED') {
         return 'Phiên Google Drive đã hết hạn. Hãy bấm “Đăng nhập lại Google Drive” rồi thử lại.';
@@ -1126,14 +1149,20 @@ function authenticateLegacyLocalDrive(requireFullDriveScope = false, forceReauth
                             if (tokens.refresh_token && (!tokens.expiry_date || Number(tokens.expiry_date) < Date.now() + 60000)) {
                                 let refreshed;
                                 try { refreshed = await postServerJson('/api/auth/drive-refresh', { refreshToken: tokens.refresh_token }, serverAuthHeaders()); }
-                                catch (error) { throw new Error(`DRIVE_REFRESH_FAILED: ${error.message}`); }
+                                catch (error) {
+                                    if (isStaleDriveCredentialError(error)) {
+                                        clearStaleDriveSession('oauth-refresh-stale-legacy', error);
+                                        throw new Error('DRIVE_REAUTH_REQUIRED');
+                                    }
+                                    throw new Error(`DRIVE_REFRESH_FAILED: ${error.message}`);
+                                }
                                 if (!refreshed.access_token) throw new Error('DRIVE_REFRESH_FAILED: Server không trả access token mới.');
                                 tokens.access_token = refreshed.access_token;
                                 tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
                                 writeLocalDriveTokens(tokens);
                             }
                             oauth2Client.setCredentials(tokens); resolve(oauth2Client);
-                        })().catch(() => reject(new Error('DRIVE_REAUTH_REQUIRED')));
+                        })().catch(error => reject(error?.message === 'DRIVE_REAUTH_REQUIRED' ? error : new Error('DRIVE_REAUTH_REQUIRED')));
                         return;
                     }
                 } catch (_) {
@@ -1193,7 +1222,13 @@ function authenticateCasi(requireFullDriveScope = false, forceReauth = false) {
                         tokens.expiry_date = refreshed.expiry_date || Date.now() + 3600000;
                         writeLocalDriveTokens(tokens);
                     }
-                } catch (_) { return false; }
+                } catch (error) {
+                    if (isStaleDriveCredentialError(error)) {
+                        clearStaleDriveSession('oauth-refresh-stale-online', error);
+                        throw new Error('DRIVE_REAUTH_REQUIRED');
+                    }
+                    return false;
+                }
             }
             oauth2Client = createClient(clientId); oauth2Client.setCredentials(tokens); return true;
         };
@@ -1264,6 +1299,7 @@ ipcMain.handle('list-drive-folders', async (event, parentId) => {
         return { success: true, folders: response.data.files || [] };
     } catch (error) {
         logDriveDiagnostic('list-drive-folders', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('list-drive-folders-stale', error);
         if (isEmptyJsonError(error)) {
             removeLocalDriveTokens();
             return { success: false, error: 'Google Drive trả về phản hồi rỗng. Phiên đăng nhập cần được cấp lại (DRIVE_EMPTY_RESPONSE). Hãy mở log: ' + DRIVE_LOG_PATH };
@@ -1286,6 +1322,7 @@ ipcMain.handle('create-drive-folder', async (event, payload = {}) => {
         return { success: true, folder: result.data };
     } catch (error) {
         logDriveDiagnostic('create-drive-folder', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('create-drive-folder-stale', error);
         return { success: false, error: friendlyDriveError(error) };
     }
 });
@@ -1374,6 +1411,7 @@ ipcMain.handle('upload-party-gallery', async (event, payload = {}) => {
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: 0, expiresAt: metadata.expiresAt };
     } catch (error) {
         logDriveDiagnostic('upload-party-gallery', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('upload-party-gallery-stale', error);
         upsertUploadJob({ id: uploadJobId, type: 'party', status: 'paused', error: friendlyDriveError(error), resumeData: { folderPath, imageFiles, driveParentId, folderName, galleryName, sectionName, studioName, expiresDays, customerFolderId, sectionFolderId, galleryId, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error) };
     } finally { uploadInProgress = false; }
@@ -1434,6 +1472,7 @@ ipcMain.handle('append-party-gallery', async (event, payload = {}) => {
         return { success: true, completed, failed, folderLink: album.link, gallerySections: response.gallerySections || sections };
     } catch (error) {
         logDriveDiagnostic('append-party-gallery', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('append-party-gallery-stale', error);
         upsertUploadJob({ id: uploadJobId, type: 'party-append', status: 'paused', error: friendlyDriveError(error), resumeData: { folderId, folderPath, imageFiles, sectionName, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error) };
     }
@@ -1636,6 +1675,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: failedFiles.length };
     } catch (error) {
         logDriveDiagnostic('upload-to-drive', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('upload-to-drive-stale', error);
         if (isEmptyJsonError(error)) {
             removeLocalDriveTokens();
             if (resumableUpload) upsertUploadJob({ id: uploadJobId, type: 'original', status: 'paused', completedFiles: queueState.completedFiles, failedFiles: queueState.failedFiles, error: 'DRIVE_EMPTY_RESPONSE', resumeData: { ...resumableUpload, _queueJobId: uploadJobId } });
@@ -1770,6 +1810,7 @@ ipcMain.handle('upload-check-to-drive', async (event, payload = {}) => {
         return { success: true, count: imageFiles.length, selectedCount, countMatched: selectedCount === null || selectedCount === imageFiles.length, checkFolderId };
     } catch (error) {
         logDriveDiagnostic('upload-check-to-drive', error);
+        if (isStaleDriveCredentialError(error)) clearStaleDriveSession('upload-check-to-drive-stale', error);
         upsertUploadJob({ id: uploadJobId, type: 'check', status: 'paused', error: friendlyDriveError(error), resumeData: { folderId, folderPath, allowCountMismatch: true, checkFolderId: currentCheckFolderId, _queueJobId: uploadJobId } });
         return { success: false, error: friendlyDriveError(error) };
     } finally { uploadInProgress = false; }

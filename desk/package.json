@@ -47,7 +47,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "Finder-Setup-${version}.${ext}"
+      "artifactName": "DK-Workflow-Setup-${version}.${ext}"
     }
   }
 }
