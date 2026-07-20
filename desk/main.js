@@ -39,6 +39,21 @@ if (!gotSingleInstanceLock) {
 app.setName('DK Workflow');
 if (process.platform === 'win32') app.setAppUserModelId('com.finder.desktop');
 
+// Keep the desktop data directory stable across branding changes. Electron
+// derives `userData` from app.name, so changing Finder -> DK Workflow would
+// otherwise make every existing local album appear to disappear after an
+// update. The canonical directory remains Finder for backwards compatibility.
+const defaultUserDataPath = app.getPath('userData');
+const stableUserDataPath = path.join(app.getPath('appData'), 'Finder');
+try {
+    fs.mkdirSync(stableUserDataPath, { recursive: true });
+    app.setPath('userData', stableUserDataPath);
+} catch (error) {
+    // Keep the app usable if a platform refuses to change the path. The
+    // migration below still imports history from the legacy directories.
+    console.warn('Không thể cố định thư mục dữ liệu Finder:', error.message);
+}
+
 // The default Electron menu exposes File/Edit/View/... and makes the app look
 // like an unfinished development build.  The dashboard owns all actions, so
 // remove the native menu on every platform while keeping keyboard shortcuts
@@ -111,6 +126,13 @@ function slugifyAlbumName(value = '') {
 
 const userDataPath = app.getPath('userData');
 const historyFilePath = path.join(userDataPath, 'finderpicture-history.json');
+const legacyHistoryDirectories = [...new Set([
+    defaultUserDataPath,
+    path.join(app.getPath('appData'), 'Finder'),
+    path.join(app.getPath('appData'), 'DK Workflow'),
+    path.join(app.getPath('appData'), 'finderpicture-studio'),
+    path.join(app.getPath('appData'), 'finder')
+])].filter(directory => directory !== userDataPath);
 const LOCAL_TOKEN_PATH = path.join(userDataPath, 'finderpicture-session.json');
 const LOCAL_TOKEN_ENCRYPTED_PATH = path.join(userDataPath, 'finderpicture-session.enc');
 const LOCAL_DRIVE_CLIENT_PATH = path.join(userDataPath, 'finder-drive-client.json');
@@ -144,6 +166,7 @@ let FIREBASE_AUTH_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 try { FIREBASE_AUTH_API_KEY = require('./firebase-auth-config').apiKey || FIREBASE_AUTH_API_KEY; } catch (error) {}
 let currentAuthSession = null;
 let driveAuthPromise = null;
+let historyMigrationCompleted = false;
 
 function canUseSecureStorage() {
     try { return Boolean(safeStorage && safeStorage.isEncryptionAvailable && safeStorage.isEncryptionAvailable()); }
@@ -336,6 +359,9 @@ async function revokePublicDrivePermissions(drive, fileId) {
     } catch (error) { console.warn('Không thể kiểm tra quyền Drive công khai:', error.message); }
 }
 
+// Import history and credentials before loading the session so a branding
+// update cannot leave the app looking like a fresh installation.
+migrateLegacyHistoryFiles();
 currentAuthSession = loadAuthSession();
 
 ipcMain.handle('auth-session', () => currentAuthSession || loadAuthSession());
@@ -465,17 +491,132 @@ ipcMain.handle('open-macos-signature-fix', () => {
 // ---------------------------------------------------------
 // 3. LOGIC LƯU TRỮ (KẾT HỢP LOCAL & FIREBASE)
 // ---------------------------------------------------------
+function readHistoryRecords(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) return [];
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        if (Array.isArray(parsed)) return parsed.filter(item => item && typeof item === 'object');
+        if (Array.isArray(parsed?.albums)) return parsed.albums.filter(item => item && typeof item === 'object');
+    } catch (error) {
+        console.warn('Không thể đọc lịch sử album:', filePath, error.message);
+    }
+    return [];
+}
+
+function historyRecordKey(album, index) {
+    const key = album?.id || album?.folderId || album?.publicSlug;
+    return key ? String(key) : `legacy-record-${index}`;
+}
+
+function historyRecordTime(album) {
+    const values = [album?.updatedAt, album?.statusUpdatedAt, album?.createdAt, album?.date];
+    for (const value of values) {
+        const time = Date.parse(String(value || ''));
+        if (Number.isFinite(time)) return time;
+    }
+    return 0;
+}
+
+function mergeHistoryRecords(sources) {
+    const merged = new Map();
+    let anonymousIndex = 0;
+    for (const source of sources) {
+        for (const album of source) {
+            const key = historyRecordKey(album, anonymousIndex++);
+            const previous = merged.get(key);
+            if (!previous) {
+                merged.set(key, { ...album });
+                continue;
+            }
+            const previousTime = historyRecordTime(previous);
+            const incomingTime = historyRecordTime(album);
+            const newer = incomingTime >= previousTime ? album : previous;
+            const older = newer === album ? previous : album;
+            // Preserve fields older builds did not know about (for example
+            // localPath and Drive metadata), while newer state wins.
+            merged.set(key, { ...older, ...newer });
+        }
+    }
+    return [...merged.values()].sort((a, b) => historyRecordTime(b) - historyRecordTime(a));
+}
+
+function findHistoryFiles(directory) {
+    try {
+        if (!fs.existsSync(directory) || !fs.statSync(directory).isDirectory()) return [];
+        return fs.readdirSync(directory)
+            .filter(file => /^finderpicture-history(?:-[^/]+)?\.json$/i.test(file))
+            .map(file => path.join(directory, file));
+    } catch (_) { return []; }
+}
+
+function migrateLegacySupportFiles() {
+    const fileNames = [
+        'finderpicture-session.enc',
+        'finderpicture-session.json',
+        'finder-drive-client.json',
+        'finder-auth-session.json',
+        'finder-upload-queue.json',
+        'finder-pending-upload.json',
+        'finder-quality-cache.json',
+        'finder-drive.log'
+    ];
+    try { fs.mkdirSync(userDataPath, { recursive: true }); } catch (_) { return; }
+    for (const directory of legacyHistoryDirectories) {
+        for (const fileName of fileNames) {
+            const source = path.join(directory, fileName);
+            const target = path.join(userDataPath, fileName);
+            try {
+                if (!fs.existsSync(target) && fs.existsSync(source) && fs.statSync(source).isFile()) {
+                    fs.copyFileSync(source, target);
+                    console.info(`Đã khôi phục dữ liệu Finder cũ: ${fileName}`);
+                }
+            } catch (error) {
+                console.warn(`Không thể khôi phục ${fileName}:`, error.message);
+            }
+        }
+    }
+}
+
+function migrateLegacyHistoryFiles() {
+    if (historyMigrationCompleted) return;
+    historyMigrationCompleted = true;
+    migrateLegacySupportFiles();
+    const files = [
+        ...findHistoryFiles(userDataPath),
+        ...legacyHistoryDirectories.flatMap(findHistoryFiles)
+    ];
+    const uniqueFiles = [...new Set(files)];
+    const sources = uniqueFiles.map(readHistoryRecords).filter(records => records.length > 0);
+    if (!sources.length) return;
+
+    const merged = mergeHistoryRecords(sources);
+    try {
+        fs.mkdirSync(userDataPath, { recursive: true });
+        fs.writeFileSync(historyFilePath, JSON.stringify(merged, null, 2), 'utf8');
+        const importedFiles = uniqueFiles.filter(filePath => filePath !== historyFilePath && readHistoryRecords(filePath).length > 0);
+        if (importedFiles.length) console.info(`Đã hợp nhất ${merged.length} album từ dữ liệu Finder cũ.`);
+    } catch (error) {
+        historyMigrationCompleted = false;
+        console.warn('Không thể lưu lịch sử album đã hợp nhất:', error.message);
+    }
+}
+
 function getAlbumHistory() {
+    migrateLegacyHistoryFiles();
     const filePath = getStudioHistoryFilePath();
     if (!fs.existsSync(filePath)) return [];
-    try { return JSON.parse(fs.readFileSync(filePath, 'utf8')); } 
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.albums) ? parsed.albums : []);
+    }
     catch (e) { return []; }
 }
 
 function getStudioHistoryFilePath() {
-    return currentAuthSession?.uid
-        ? path.join(userDataPath, `finderpicture-history-${currentAuthSession.uid}.json`)
-        : historyFilePath;
+    // Keep one canonical history for this desktop installation. Previously
+    // this path changed with Firebase UID, so sign-out/session expiry made
+    // existing albums disappear from the library.
+    return historyFilePath;
 }
 
 function createHistoryBackup(reason = 'manual') {
@@ -494,7 +635,13 @@ function saveAlbumToHistory(albumData) {
     const initialStatus = albumData.status || 'Đang chờ khách chọn';
     albumData.statusHistory = albumData.statusHistory || [{ status: initialStatus, at: new Date().toISOString(), source: 'create' }];
     const history = getAlbumHistory();
-    history.unshift(albumData);
+    const existingIndex = history.findIndex(item => String(item.id || '') === String(albumData.id || ''));
+    if (existingIndex >= 0) {
+        history[existingIndex] = { ...history[existingIndex], ...albumData };
+        history.unshift(history.splice(existingIndex, 1)[0]);
+    } else {
+        history.unshift(albumData);
+    }
     // Lưu vào máy tính để UI app chạy mượt mà
     fs.writeFileSync(getStudioHistoryFilePath(), JSON.stringify(history, null, 2), 'utf8');
 
