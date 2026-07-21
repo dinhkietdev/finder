@@ -75,6 +75,7 @@
             savedViewState: null,
             savedViewStateLoaded: false,
             viewStateRestored: false,
+            viewModeUserInteracted: false,
             pendingViewFullName: '',
             likedList: {},
             checkNotes: {}
@@ -372,17 +373,20 @@
             return true;
         }
 
+        function openLatestCheckViewIfNeeded() {
+            if (state.viewModeUserInteracted || !shouldOpenLatestCheckByDefault()) return false;
+            state.viewMode = 'check';
+            state.images = state.checkImages;
+            state.currentIndex = 0;
+            state.pendingViewFullName = '';
+            state.viewStateRestored = true;
+            return true;
+        }
+
         function applyClientViewState() {
+            if (openLatestCheckViewIfNeeded()) return;
             if (state.viewStateRestored) return;
             const saved = readClientViewState();
-            if (shouldOpenLatestCheckByDefault()) {
-                state.viewMode = 'check';
-                state.images = state.checkImages;
-                state.currentIndex = 0;
-                state.pendingViewFullName = '';
-                state.viewStateRestored = true;
-                return;
-            }
             if (!saved) {
                 state.viewStateRestored = true;
                 return;
@@ -795,6 +799,7 @@
         function setViewMode(mode, preserveFileName = '') {
             const nextMode = mode === 'check' && state.checkReady ? 'check' : 'original';
             const currentName = preserveFileName || getCurrentImage()?.fullName || '';
+            state.viewModeUserInteracted = true;
             state.viewMode = nextMode;
             state.compareEnabled = false;
             if (nextMode !== 'original') state.activeAiGroupIndex = null;
@@ -1337,6 +1342,14 @@
         }
 
         function render() {
+            // CHECK/FINAL must use the latest CHECK collection for both the
+            // main viewer and the thumbnail library. A warm original cache
+            // can briefly survive while the new CHECK metadata arrives, so
+            // repair the active collection before painting the gallery.
+            if (state.viewMode === 'check' && state.checkImages.length && state.images !== state.checkImages) {
+                state.images = state.checkImages;
+                state.currentIndex = Math.min(state.currentIndex, Math.max(0, state.images.length - 1));
+            }
             if (!state.images.length) {
                 elements.mainImage.src = '';
                 elements.photoName.textContent = 'Không có ảnh nào';
@@ -2292,6 +2305,7 @@
                 // first original image as before.
                 state.images = state.viewMode === 'check' && state.checkReady ? state.checkImages : state.originalImages;
                 state.currentIndex = Math.min(state.currentIndex, Math.max(0, state.images.length - 1));
+                openLatestCheckViewIfNeeded();
                 applyClientViewState();
                 state.aiGroups = [];
                 render();
@@ -2379,6 +2393,7 @@
                 }
                 if (revisionChanged) render();
                 if (checkChanged) {
+                    state.viewModeUserInteracted = false;
                     state.checkFolderId = nextCheckFolderId;
                     state.checkUpdatedAt = nextCheckUpdatedAt;
                     await loadAlbum();

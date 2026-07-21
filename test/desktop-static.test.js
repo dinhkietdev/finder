@@ -68,8 +68,9 @@ test('fresh CHECK opens by default while reopened selections stay on originals',
   assert.match(source, /function shouldOpenLatestCheckByDefault\(\)/);
   assert.match(source, /\['check_pending', 'revision_requested', 'completed'\]\.includes\(status\)/);
   assert.match(source, /reopenedAt > checkAt/);
-  assert.match(source, /if \(shouldOpenLatestCheckByDefault\(\)\)/);
+  assert.match(source, /function openLatestCheckViewIfNeeded\(\)/);
   assert.match(source, /state\.viewMode = 'check';/);
+  assert.match(source, /state\.viewMode === 'check' && state\.checkImages\.length/);
 });
 
 test('network album snapshots remove deleted Drive files after cached hydration', () => {
