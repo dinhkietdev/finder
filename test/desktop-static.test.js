@@ -52,7 +52,7 @@ test('confirmed albums use the compact full thumbnail path', () => {
   assert.match(serverSource, /fullResponse = String\(req\.query\?\.full \|\| ''\) === '1'/);
   assert.match(serverSource, /compactResponse = fullResponse \|\| String\(req\.query\?\.compact \|\| ''\) === '1'/);
   assert.match(clientSource, /workflowStatus === 'selection_confirmed'/);
-  assert.match(clientSource, /new URLSearchParams\(\{ full: '1', compact: '1' \}\)/);
+  assert.match(clientSource, /new URLSearchParams\(\{ full: '1', compact: '1', refresh: '1' \}\)/);
   assert.match(clientSource, /eagerThumbnails/);
 });
 
@@ -70,4 +70,15 @@ test('fresh CHECK opens by default while reopened selections stay on originals',
   assert.match(source, /reopenedAt > checkAt/);
   assert.match(source, /if \(shouldOpenLatestCheckByDefault\(\)\)/);
   assert.match(source, /state\.viewMode = 'check';/);
+});
+
+test('network album snapshots remove deleted Drive files after cached hydration', () => {
+  const clientSource = fs.readFileSync('assets/client.js', 'utf8');
+  const serverSource = fs.readFileSync('server.js', 'utf8');
+  assert.match(clientSource, /networkOriginalKeys/);
+  assert.match(clientSource, /reconcileNetworkAlbumSnapshot\(\)/);
+  assert.match(clientSource, /state\.originalImages = state\.originalImages\.filter/);
+  assert.match(serverSource, /const refreshRequested = String\(req\.query\?\.refresh \|\| ''\) === '1'/);
+  assert.match(serverSource, /!refreshRequested && !pagedResponse/);
+  assert.match(clientSource, /new URLSearchParams\(\{ full: '1', compact: '1', refresh: '1' \}\)/);
 });

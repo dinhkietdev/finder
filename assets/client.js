@@ -66,6 +66,11 @@
             // Its thumbnail index can therefore be fetched in one compact
             // response and painted without waiting for cursor pages.
             eagerThumbnails: false,
+            // A warm local bootstrap can contain files that were deleted in
+            // Drive. Keep identities from the current network snapshot so
+            // stale cached thumbnails are removed after pagination finishes.
+            networkOriginalKeys: null,
+            networkCheckKeys: null,
             cacheHydrated: false,
             savedViewState: null,
             savedViewStateLoaded: false,
@@ -569,6 +574,32 @@
             });
             target.sort(naturalImageCompare);
             applyMetadataToImages(incoming);
+        }
+
+        function imageIdentity(image) {
+            return String(image?.id || image?.fullName || image?.shortName || '');
+        }
+
+        function addNetworkImageIdentities(originalImages = [], checkImages = []) {
+            if (!state.networkOriginalKeys) state.networkOriginalKeys = new Set();
+            if (!state.networkCheckKeys) state.networkCheckKeys = new Set();
+            originalImages.forEach(image => {
+                const key = imageIdentity(image);
+                if (key) state.networkOriginalKeys.add(key);
+            });
+            checkImages.forEach(image => {
+                const key = imageIdentity(image);
+                if (key) state.networkCheckKeys.add(key);
+            });
+        }
+
+        function reconcileNetworkAlbumSnapshot() {
+            if (!(state.networkOriginalKeys instanceof Set) || !(state.networkCheckKeys instanceof Set)) return;
+            state.originalImages = state.originalImages.filter(image => state.networkOriginalKeys.has(imageIdentity(image)));
+            state.checkImages = state.checkImages.filter(image => state.networkCheckKeys.has(imageIdentity(image)));
+            state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
+            state.images = state.viewMode === 'check' && state.checkReady ? state.checkImages : state.originalImages;
+            state.currentIndex = Math.min(state.currentIndex, Math.max(0, state.images.length - 1));
         }
 
         function warmLightboxImage(url, priority = 'low') {
@@ -2114,8 +2145,11 @@
                 const response = await fetchWithRetry(`${ONLINE_SERVER}/api/album/${folderId}?${params.toString()}`, { cache: 'default' }, 3);
                 const data = await readApiJson(response, 'Không thể tải thêm ảnh');
                 const currentName = getCurrentImage()?.fullName || '';
-                mergeAlbumImages(state.originalImages, (data.files || []).map(mapAlbumImage));
-                mergeAlbumImages(state.checkImages, (data.checkFiles || []).map(mapAlbumImage));
+                const freshOriginalImages = (data.files || []).map(mapAlbumImage);
+                const freshCheckImages = (data.checkFiles || []).map(mapAlbumImage);
+                addNetworkImageIdentities(freshOriginalImages, freshCheckImages);
+                mergeAlbumImages(state.originalImages, freshOriginalImages);
+                mergeAlbumImages(state.checkImages, freshCheckImages);
                 state.checkReady = Boolean(state.checkFolderId && state.checkImages.length);
                 applyClientViewState();
                 state.pageCursor = data.nextCursor || null;
@@ -2130,6 +2164,7 @@
             state.pageLoading = false;
             state.pagesPending = false;
             state.pageHasMore = false;
+            reconcileNetworkAlbumSnapshot();
             updateAlbumLoadingOverlay();
             updatePartyActions();
             // Replace the first-page hint once every Drive page has arrived;
@@ -2197,7 +2232,7 @@
             try {
                 const confirmedBootstrap = window.__FINDER_ALBUM_BOOTSTRAP__?.workflowStatus === 'selection_confirmed';
                 const albumParams = confirmedBootstrap
-                    ? new URLSearchParams({ full: '1', compact: '1' })
+                    ? new URLSearchParams({ full: '1', compact: '1', refresh: '1' })
                     : new URLSearchParams({ paged: '1', compact: '1', limit: '24' });
                 if (albumSlug) albumParams.set('slug', albumSlug);
                 const albumQuery = `?${albumParams.toString()}`;
@@ -2219,11 +2254,20 @@
                 applyAlbumSettings(data.settings || {}, data.isFinalized, data.gallerySections);
                 const freshOriginalImages = (data.files || []).map(mapAlbumImage);
                 const freshCheckImages = (data.checkFiles || []).map(mapAlbumImage);
+                state.networkOriginalKeys = new Set();
+                state.networkCheckKeys = new Set();
+                addNetworkImageIdentities(freshOriginalImages, freshCheckImages);
+                const networkSnapshotComplete = !data.hasMore && !data.nextCursor;
                 if (cacheHydrated && state.originalImages.length) {
                     // Keep the warm bootstrap visible while the first network
                     // page arrives; merge prevents a 120→24 flicker on mobile.
-                    mergeAlbumImages(state.originalImages, freshOriginalImages);
-                    mergeAlbumImages(state.checkImages, freshCheckImages);
+                    if (networkSnapshotComplete) {
+                        state.originalImages = freshOriginalImages;
+                        state.checkImages = freshCheckImages;
+                    } else {
+                        mergeAlbumImages(state.originalImages, freshOriginalImages);
+                        mergeAlbumImages(state.checkImages, freshCheckImages);
+                    }
                 } else {
                     state.originalImages = freshOriginalImages;
                     state.checkImages = freshCheckImages;

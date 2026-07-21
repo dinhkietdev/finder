@@ -2209,6 +2209,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         // image bytes), so reopening a locked album does not make the client
         // wait for cursor pages before it can paint every thumbnail.
         const fullResponse = String(req.query?.full || '') === '1';
+        const refreshRequested = String(req.query?.refresh || '') === '1';
         const compactResponse = fullResponse || String(req.query?.compact || '') === '1';
         const pagedResponse = !fullResponse && String(req.query?.paged || '') === '1';
         const pageSize = Math.max(8, Math.min(48, Number(req.query?.limit) || 24));
@@ -2224,7 +2225,7 @@ app.get('/api/album/:folderId', async (req, res) => {
         });
         const responseFile = file => compactResponse ? compactFile(file) : file;
 
-        if (!pagedResponse && albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
+        if (!refreshRequested && !pagedResponse && albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             const cachedFiles = albumCacheDatabase[folderId].map(responseFile);
             const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(responseFile);
             if (fullResponse) res.set('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=120');
