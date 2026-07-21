@@ -843,7 +843,13 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
         // This makes the legacy-token bootstrap reliable even when the access
         // token expired while Finder was closed, without forcing a new OAuth
         // window when the machine has no Drive session at all.
-        await refreshDriveAccessForManagement();
+        // Never leave the settings modal blocked by a stalled OAuth refresh.
+        // If refresh is slow, continue with the current credential and let
+        // the server return a precise authentication error instead.
+        await Promise.race([
+            refreshDriveAccessForManagement(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Làm mới phiên Google Drive quá thời gian.')), 8000))
+        ]).catch(error => logDriveDiagnostic('update-album-settings-drive-refresh', error));
         syncResult = await new Promise((resolve) => {
             const payload = JSON.stringify({ maxSelections: nextLimit, reopenSelection: true });
             const req = https.request({ 
@@ -876,7 +882,9 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
                     resolve({ success: parsed.success !== false, ...parsed });
                 });
             });
-            req.on('error', resolve); req.write(payload); req.end();
+            req.setTimeout(20000, () => req.destroy(new Error('Máy chủ không phản hồi sau 20 giây.')));
+            req.on('error', error => resolve({ success: false, error: error.message || 'Không thể kết nối máy chủ.' }));
+            req.write(payload); req.end();
         });
         if (!syncResult?.success) {
             logDriveDiagnostic('update-album-settings', syncResult?.error || syncResult);
