@@ -357,6 +357,29 @@ function driveAccessHeaders(auth = oauth2Client) {
     return accessToken ? { 'x-finder-drive-access-token': accessToken } : {};
 }
 
+// Return a current short-lived Drive access token without opening an OAuth
+// window. The Google client can refresh an existing credential in-process;
+// only a missing/revoked session should be handled by the explicit reconnect
+// button in the UI.
+async function refreshDriveAccessForManagement() {
+    if (oauth2Client) {
+        try {
+            const result = await oauth2Client.getAccessToken();
+            if (result?.token) {
+                oauth2Client.setCredentials({ ...oauth2Client.credentials, access_token: result.token, expiry_date: Date.now() + 3500000 });
+                return result.token;
+            }
+        } catch (_) {}
+    }
+    if (hasLocalDriveTokens()) {
+        try {
+            const auth = await authenticateCasi(true);
+            return auth?.credentials?.access_token || '';
+        } catch (_) {}
+    }
+    return oauth2Client?.credentials?.access_token || '';
+}
+
 async function revokePublicDrivePermissions(drive, fileId) {
     if (!drive || !fileId) return;
     try {
@@ -820,9 +843,7 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
         // This makes the legacy-token bootstrap reliable even when the access
         // token expired while Finder was closed, without forcing a new OAuth
         // window when the machine has no Drive session at all.
-        if (!oauth2Client && hasLocalDriveTokens()) {
-            try { await authenticateCasi(true); } catch (_) {}
-        }
+        await refreshDriveAccessForManagement();
         syncResult = await new Promise((resolve) => {
             const payload = JSON.stringify({ maxSelections: nextLimit, reopenSelection: true });
             const req = https.request({ 
@@ -858,6 +879,7 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
             req.on('error', resolve); req.write(payload); req.end();
         });
         if (!syncResult?.success) {
+            logDriveDiagnostic('update-album-settings', syncResult?.error || syncResult);
             return {
                 success: false,
                 error: syncResult?.error || 'Server không lưu được giới hạn mới. Hãy kiểm tra kết nối Google Drive rồi thử lại.',
