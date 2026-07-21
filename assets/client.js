@@ -170,6 +170,14 @@
         let lightboxPointerMoved = false;
         let suppressLightboxCloseUntil = 0;
         let lightboxPanStart = null;
+        let compareZoomScale = 1;
+        let comparePanX = 0;
+        let comparePanY = 0;
+        let comparePanPointer = null;
+        let comparePinchStartDistance = 0;
+        let comparePinchStartScale = 1;
+        let comparePointerMoved = false;
+        const comparePointers = new Map();
         // When the lightbox is opened from “Ảnh đã chọn”, keep a separate
         // navigation context so arrows/swipes stay inside that subset instead
         // of jumping through the full gallery.
@@ -1654,6 +1662,52 @@
             elements.compareDivider.style.left = `${value}%`;
         }
 
+        function clampComparePan() {
+            if (compareZoomScale <= 1) {
+                comparePanX = 0;
+                comparePanY = 0;
+                return;
+            }
+            const rect = elements.compareStage.getBoundingClientRect();
+            const maxX = Math.max(0, (rect.width * compareZoomScale - rect.width) / 2);
+            const maxY = Math.max(0, (rect.height * compareZoomScale - rect.height) / 2);
+            comparePanX = Math.max(-maxX, Math.min(maxX, comparePanX));
+            comparePanY = Math.max(-maxY, Math.min(maxY, comparePanY));
+        }
+
+        function applyCompareZoom() {
+            compareZoomScale = Math.max(1, Math.min(4, compareZoomScale));
+            clampComparePan();
+            const transform = `translate(${comparePanX}px, ${comparePanY}px) scale(${compareZoomScale})`;
+            [elements.compareOriginalImage, elements.compareCheckImage].forEach(image => {
+                image.style.transform = transform;
+                image.style.transformOrigin = 'center';
+                image.classList.toggle('compare-zoomed', compareZoomScale > 1);
+                image.classList.toggle('compare-panning', comparePanPointer !== null);
+            });
+        }
+
+        function setCompareZoomOrigin(clientX, clientY, previousScale = compareZoomScale, nextScale = compareZoomScale) {
+            const rect = elements.compareStage.getBoundingClientRect();
+            if (!rect.width || !rect.height || previousScale <= 0) return;
+            const localX = (clientX - (rect.left + rect.width / 2) - comparePanX) / previousScale;
+            const localY = (clientY - (rect.top + rect.height / 2) - comparePanY) / previousScale;
+            comparePanX -= localX * (nextScale - previousScale);
+            comparePanY -= localY * (nextScale - previousScale);
+        }
+
+        function resetCompareZoom() {
+            compareZoomScale = 1;
+            comparePanX = 0;
+            comparePanY = 0;
+            comparePanPointer = null;
+            comparePinchStartDistance = 0;
+            comparePinchStartScale = 1;
+            comparePointerMoved = false;
+            comparePointers.clear();
+            applyCompareZoom();
+        }
+
         function updateLightboxContent() {
             const current = getLightboxCurrentImage();
             if (!current) return;
@@ -1694,7 +1748,9 @@
                 progressiveLightboxImage(elements.compareCheckImage, `check:${current.id || current.fullName}`, previewResolutionUrl, highResolutionUrl);
                 elements.compareRange.value = '50';
                 updateCompareSlider();
+                resetCompareZoom();
             } else {
+                resetCompareZoom();
                 progressiveLightboxImage(elements.lightboxImage, current.id || current.fullName, previewResolutionUrl, highResolutionUrl);
             }
             zoomScale = 1;
@@ -1877,14 +1933,19 @@
             if (Date.now() < suppressLightboxCloseUntil) { event.preventDefault(); return; }
             if (event.target === elements.imageLightbox && Date.now() - lastLightboxSwipeAt >= 350) closeLightbox();
         });
-        elements.imageLightbox.addEventListener('dblclick', event => { setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom(); });
+        elements.imageLightbox.addEventListener('dblclick', event => {
+            if (event.target.closest?.('#compareStage')) return;
+            setZoomOrigin(event.clientX, event.clientY); zoomScale = zoomScale > 1 ? 1 : 2.5; applyZoom();
+        });
         elements.imageLightbox.addEventListener('wheel', event => {
+            if (event.target.closest?.('#compareStage')) return;
             event.preventDefault();
             setZoomOrigin(event.clientX, event.clientY);
             zoomScale += event.deltaY < 0 ? 0.25 : -0.25;
             applyZoom();
         }, { passive: false });
         elements.imageLightbox.addEventListener('pointerdown', event => {
+            if (event.target.closest?.('#compareStage')) return;
             if (event.target.closest('button')) return;
             elements.imageLightbox.setPointerCapture?.(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1908,6 +1969,7 @@
             }
         });
         elements.imageLightbox.addEventListener('pointermove', event => {
+            if (event.target.closest?.('#compareStage')) return;
             if (!activePointers.has(event.pointerId)) return;
             const previous = activePointers.get(event.pointerId);
             activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -1923,6 +1985,7 @@
             }
         });
         ['pointerup', 'pointercancel'].forEach(type => elements.imageLightbox.addEventListener(type, event => {
+            if (event.target.closest?.('#compareStage')) return;
             if (type === 'pointerup' && lightboxPointerMoved) {
                 lastLightboxSwipeAt = Date.now();
                 suppressLightboxCloseUntil = Date.now() + 450;
@@ -1943,6 +2006,71 @@
             if (panPointer === event.pointerId) panPointer = null;
             if (!panPointer) elements.lightboxImage.classList.remove('panning');
             if (activePointers.size === 0) { lightboxPointerMoved = false; lightboxPanStart = null; }
+        }));
+        // Comparison mode has its own zoom/pan state so both the original and
+        // edited layers move together while the comparison divider stays put.
+        elements.compareStage.addEventListener('dblclick', event => {
+            if (event.target.closest?.('.compare-range')) return;
+            const previousScale = compareZoomScale;
+            const nextScale = compareZoomScale > 1 ? 1 : 2.5;
+            setCompareZoomOrigin(event.clientX, event.clientY, previousScale, nextScale);
+            compareZoomScale = nextScale;
+            applyCompareZoom();
+        });
+        elements.compareStage.addEventListener('wheel', event => {
+            if (event.target.closest?.('.compare-range')) return;
+            event.preventDefault();
+            const previousScale = compareZoomScale;
+            const nextScale = Math.max(1, Math.min(4, compareZoomScale + (event.deltaY < 0 ? 0.25 : -0.25)));
+            setCompareZoomOrigin(event.clientX, event.clientY, previousScale, nextScale);
+            compareZoomScale = nextScale;
+            applyCompareZoom();
+        }, { passive: false });
+        elements.compareStage.addEventListener('pointerdown', event => {
+            if (event.target.closest?.('.compare-range')) return;
+            event.stopPropagation();
+            elements.compareStage.setPointerCapture?.(event.pointerId);
+            comparePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (comparePointers.size === 1) {
+                comparePointerMoved = false;
+                if (compareZoomScale > 1) {
+                    comparePanPointer = event.pointerId;
+                    [elements.compareOriginalImage, elements.compareCheckImage].forEach(image => image.classList.add('compare-panning'));
+                }
+            } else if (comparePointers.size === 2) {
+                comparePanPointer = null;
+                const [a, b] = [...comparePointers.values()];
+                comparePinchStartDistance = Math.hypot(a.x - b.x, a.y - b.y);
+                comparePinchStartScale = compareZoomScale;
+                setCompareZoomOrigin((a.x + b.x) / 2, (a.y + b.y) / 2);
+            }
+        });
+        elements.compareStage.addEventListener('pointermove', event => {
+            if (!comparePointers.has(event.pointerId)) return;
+            event.stopPropagation();
+            const previous = comparePointers.get(event.pointerId);
+            comparePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            if (Math.abs(event.clientX - previous.x) > 2 || Math.abs(event.clientY - previous.y) > 2) comparePointerMoved = true;
+            if (comparePointers.size === 2 && comparePinchStartDistance) {
+                const [a, b] = [...comparePointers.values()];
+                const nextScale = Math.max(1, Math.min(4, comparePinchStartScale * (Math.hypot(a.x - b.x, a.y - b.y) / comparePinchStartDistance)));
+                setCompareZoomOrigin((a.x + b.x) / 2, (a.y + b.y) / 2, compareZoomScale, nextScale);
+                compareZoomScale = nextScale;
+                applyCompareZoom();
+            } else if (comparePanPointer === event.pointerId && compareZoomScale > 1) {
+                comparePanX += event.clientX - previous.x;
+                comparePanY += event.clientY - previous.y;
+                applyCompareZoom();
+            }
+        });
+        ['pointerup', 'pointercancel'].forEach(type => elements.compareStage.addEventListener(type, event => {
+            if (!comparePointers.has(event.pointerId)) return;
+            event.stopPropagation();
+            comparePointers.delete(event.pointerId);
+            if (comparePointers.size < 2) comparePinchStartDistance = 0;
+            if (comparePanPointer === event.pointerId) comparePanPointer = null;
+            applyCompareZoom();
+            if (!comparePointers.size) comparePointerMoved = false;
         }));
         // Fallback cho WebView/mobile cũ không phát Pointer Events. Trên trình
         // duyệt hiện đại pointerup đã xử lý, mốc thời gian tránh chuyển ảnh 2 lần.

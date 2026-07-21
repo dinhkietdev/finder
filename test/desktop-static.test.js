@@ -89,3 +89,13 @@ test('review tabs show original photos before edited CHECK photos', () => {
   const bar = html.slice(html.indexOf('id="reviewModeBar"'), html.indexOf('</div>', html.indexOf('id="reviewModeBar"')) + 6);
   assert.ok(bar.indexOf('id="originalModeBtn"') < bar.indexOf('id="checkModeBtn"'));
 });
+
+test('comparison lightbox supports shared zoom and pan', () => {
+  const source = fs.readFileSync('assets/client.js', 'utf8');
+  const css = fs.readFileSync('assets/client.css', 'utf8');
+  assert.match(source, /compareZoomScale/);
+  assert.match(source, /applyCompareZoom\(\)/);
+  assert.match(source, /elements\.compareStage\.addEventListener\('wheel'/);
+  assert.match(source, /elements\.compareStage\.addEventListener\('pointermove'/);
+  assert.match(css, /\.compare-image\.compare-zoomed/);
+});
