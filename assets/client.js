@@ -62,6 +62,10 @@
             aiAnalysisTotal: 0,
             aiGroupsComplete: false,
             aiGroupSourceCount: 0,
+            // A confirmed selection is read-only while RAW/CHECK is prepared.
+            // Its thumbnail index can therefore be fetched in one compact
+            // response and painted without waiting for cursor pages.
+            eagerThumbnails: false,
             cacheHydrated: false,
             savedViewState: null,
             savedViewStateLoaded: false,
@@ -160,6 +164,10 @@
         let lightboxPointerMoved = false;
         let suppressLightboxCloseUntil = 0;
         let lightboxPanStart = null;
+        // When the lightbox is opened from “Ảnh đã chọn”, keep a separate
+        // navigation context so arrows/swipes stay inside that subset instead
+        // of jumping through the full gallery.
+        let lightboxNavigation = null;
         let aiGroupingTimer = null;
         let aiGroupingRunId = 0;
         let thumbRenderVersion = 0;
@@ -282,6 +290,20 @@
 
         function getCurrentImage() {
             return state.images[state.currentIndex] || null;
+        }
+
+        function getSelectedLightboxImages() {
+            return state.originalImages.filter(image => image && image.selected);
+        }
+
+        function getLightboxCurrentImage() {
+            if (lightboxNavigation?.mode === 'selection') {
+                const selected = getSelectedLightboxImages();
+                const index = selected.findIndex(image => image.fullName === lightboxNavigation.fullName);
+                if (index >= 0) return selected[index];
+                lightboxNavigation = null;
+            }
+            return getCurrentImage();
         }
 
         function getProtectedDriveImageUrl(image, size = 'original', download = true) {
@@ -1136,9 +1158,13 @@
             if (index === state.currentIndex) thumbBtn.classList.add('active');
             if (img.selected) thumbBtn.classList.add('selected');
             const thumbImg = document.createElement('img');
-            thumbImg.loading = 'lazy';
+            const eagerThumbnails = state.eagerThumbnails;
+            thumbImg.loading = eagerThumbnails ? 'eager' : 'lazy';
+            thumbImg.fetchPriority = eagerThumbnails ? 'low' : 'auto';
             thumbImg.decoding = 'async';
-            thumbImg.dataset.src = img.thumbnail || img.originalUrl || '';
+            const thumbnailSource = img.thumbnail || img.originalUrl || '';
+            if (eagerThumbnails) thumbImg.src = thumbnailSource;
+            else thumbImg.dataset.src = thumbnailSource;
             thumbImg.alt = img.shortName || img.fullName || 'Ảnh';
             thumbBtn.appendChild(thumbImg);
             if (isPartyGallery) {
@@ -1198,7 +1224,8 @@
                 if (version !== thumbRenderVersion) return;
                 const fragment = document.createDocumentFragment();
                 const images = [];
-                const end = Math.min(cursor + 48, ordered.length);
+                const batchSize = state.eagerThumbnails ? 120 : 48;
+                const end = Math.min(cursor + batchSize, ordered.length);
                 for (; cursor < end; cursor += 1) {
                     const entry = createThumbEntry(ordered[cursor].img, ordered[cursor].index, isPartyGallery);
                     fragment.appendChild(entry.button);
@@ -1206,13 +1233,23 @@
                     images.push(entry.image);
                 }
                 elements.thumbStrip.appendChild(fragment);
-                if (thumbObserver) images.forEach(image => thumbObserver.observe(image));
+                if (state.eagerThumbnails) {
+                    images.forEach(image => {
+                        const button = image.closest('.thumb-btn');
+                        const markReady = () => { image.classList.add('is-ready'); button?.classList.add('is-ready'); };
+                        image.addEventListener('load', markReady, { once: true });
+                        image.addEventListener('error', markReady, { once: true });
+                        if (image.complete) markReady();
+                    });
+                } else if (thumbObserver) images.forEach(image => thumbObserver.observe(image));
                 else images.forEach(image => {
                     image.src = image.dataset.src || '';
                     image.addEventListener('load', () => image.classList.add('is-ready'), { once: true });
                 });
                 if (cursor < ordered.length) {
-                    const schedule = 'requestIdleCallback' in window
+                    const schedule = state.eagerThumbnails
+                        ? callback => window.setTimeout(callback, 0)
+                        : 'requestIdleCallback' in window
                         ? callback => window.requestIdleCallback(callback, { timeout: 180 })
                         : callback => window.setTimeout(callback, 0);
                     schedule(appendBatch);
@@ -1404,9 +1441,13 @@
         }
 
         function preloadLightboxNeighbors() {
-            if (!state.images.length) return;
+            const navigationImages = lightboxNavigation?.mode === 'selection' ? getSelectedLightboxImages() : state.images;
+            const navigationIndex = lightboxNavigation?.mode === 'selection'
+                ? navigationImages.findIndex(image => image.fullName === lightboxNavigation.fullName)
+                : state.currentIndex;
+            if (!navigationImages.length || navigationIndex < 0) return;
             [1, -1].forEach(offset => {
-                const image = state.images[(state.currentIndex + offset + state.images.length) % state.images.length];
+                const image = navigationImages[(navigationIndex + offset + navigationImages.length) % navigationImages.length];
                 if (!image) return;
                 const preview = image.preview || image.thumbnail || image.originalUrl || '';
                 // Warm only the lightweight preview. The full lightbox image
@@ -1437,7 +1478,7 @@
                 card.append(thumb, info);
                 card.addEventListener('click', () => {
                     setViewMode(state.viewMode, item.fullName);
-                    openLightbox();
+                    openLightbox({ mode: 'selection', fullName: item.fullName });
                 });
                 elements.selectionList.appendChild(card);
             });
@@ -1445,6 +1486,18 @@
 
         function nextImage() {
             if (!state.images.length) return;
+            if (elements.imageLightbox.classList.contains('open') && lightboxNavigation?.mode === 'selection') {
+                const selected = getSelectedLightboxImages();
+                const currentPosition = selected.findIndex(image => image.fullName === lightboxNavigation.fullName);
+                if (!selected.length || currentPosition < 0) return;
+                const next = selected[(currentPosition + 1) % selected.length];
+                lightboxNavigation.fullName = next.fullName;
+                const stateIndex = state.images.findIndex(image => image.fullName === next.fullName);
+                if (stateIndex >= 0) state.currentIndex = stateIndex;
+                render();
+                updateLightboxContent();
+                return;
+            }
             if (elements.imageLightbox.classList.contains('open') && navigateAiGroup(1)) {
                 render();
                 updateLightboxContent();
@@ -1458,6 +1511,18 @@
 
         function prevImage() {
             if (!state.images.length) return;
+            if (elements.imageLightbox.classList.contains('open') && lightboxNavigation?.mode === 'selection') {
+                const selected = getSelectedLightboxImages();
+                const currentPosition = selected.findIndex(image => image.fullName === lightboxNavigation.fullName);
+                if (!selected.length || currentPosition < 0) return;
+                const previous = selected[(currentPosition - 1 + selected.length) % selected.length];
+                lightboxNavigation.fullName = previous.fullName;
+                const stateIndex = state.images.findIndex(image => image.fullName === previous.fullName);
+                if (stateIndex >= 0) state.currentIndex = stateIndex;
+                render();
+                updateLightboxContent();
+                return;
+            }
             if (elements.imageLightbox.classList.contains('open') && navigateAiGroup(-1)) {
                 render();
                 updateLightboxContent();
@@ -1523,11 +1588,16 @@
         }
 
         function updateLightboxContent() {
-            const current = getCurrentImage();
+            const current = getLightboxCurrentImage();
             if (!current) return;
-            const groupContext = currentAiGroupContext();
+            const groupContext = lightboxNavigation?.mode === 'selection' ? null : currentAiGroupContext();
             if (elements.lightboxGroupContext) {
-                if (groupContext) {
+                if (lightboxNavigation?.mode === 'selection') {
+                    const selected = getSelectedLightboxImages();
+                    const position = selected.findIndex(image => image.fullName === current.fullName);
+                    elements.lightboxGroupContext.hidden = false;
+                    elements.lightboxGroupContext.textContent = `Ảnh đã chọn · ${Math.max(0, position) + 1}/${selected.length} ảnh`;
+                } else if (groupContext) {
                     elements.lightboxGroupContext.hidden = false;
                     elements.lightboxGroupContext.textContent = `Cụm ${groupContext.groupIndex + 1} · ${groupContext.position + 1}/${groupContext.group.length} ảnh`;
                 } else {
@@ -1567,8 +1637,11 @@
             preloadLightboxNeighbors();
         }
 
-        function openLightbox() {
+        function openLightbox(options = {}) {
             if (!getCurrentImage()) return;
+            lightboxNavigation = options.mode === 'selection' && options.fullName
+                ? { mode: 'selection', fullName: options.fullName }
+                : null;
             state.compareEnabled = false;
             elements.imageLightbox.classList.add('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'false');
@@ -1579,6 +1652,7 @@
         function closeLightbox() {
             elements.imageLightbox.classList.remove('open');
             elements.imageLightbox.setAttribute('aria-hidden', 'true');
+            lightboxNavigation = null;
             activePointers.clear();
             panPointer = null;
             updateCheckBannerVisibility();
@@ -1961,6 +2035,7 @@
             state.checkVersion = Number(settings.checkVersion) || 1;
             state.checkNeedsRevision = Boolean(settings.checkNeedsRevision);
             state.workflowStatus = settings.workflowStatus || (state.checkReady ? 'check_pending' : 'selection_open');
+            state.eagerThumbnails = state.workflowStatus === 'selection_confirmed';
             state.expiresAt = settings.expiresAt || null;
             state.selectionReopenedAt = settings.selectionReopenedAt || null;
             state.selectionConfirmedAt = settings.selectionConfirmedAt || null;
@@ -2097,7 +2172,10 @@
             }
 
             try {
-                const albumParams = new URLSearchParams({ paged: '1', compact: '1', limit: '24' });
+                const confirmedBootstrap = window.__FINDER_ALBUM_BOOTSTRAP__?.workflowStatus === 'selection_confirmed';
+                const albumParams = confirmedBootstrap
+                    ? new URLSearchParams({ full: '1', compact: '1' })
+                    : new URLSearchParams({ paged: '1', compact: '1', limit: '24' });
                 if (albumSlug) albumParams.set('slug', albumSlug);
                 const albumQuery = `?${albumParams.toString()}`;
                 // Images and mutable selections are fetched independently. The

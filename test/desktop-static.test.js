@@ -45,3 +45,20 @@ test('explicit limit saves reopen selection even when the value is unchanged', (
   assert.match(source, /if \(hasLimitUpdate && !isBackgroundSync\) \{/);
   assert.match(source, /Older desktop builds did not send `reopenSelection`/);
 });
+
+test('confirmed albums use the compact full thumbnail path', () => {
+  const serverSource = fs.readFileSync('server.js', 'utf8');
+  const clientSource = fs.readFileSync('assets/client.js', 'utf8');
+  assert.match(serverSource, /fullResponse = String\(req\.query\?\.full \|\| ''\) === '1'/);
+  assert.match(serverSource, /compactResponse = fullResponse \|\| String\(req\.query\?\.compact \|\| ''\) === '1'/);
+  assert.match(clientSource, /workflowStatus === 'selection_confirmed'/);
+  assert.match(clientSource, /new URLSearchParams\(\{ full: '1', compact: '1' \}\)/);
+  assert.match(clientSource, /eagerThumbnails/);
+});
+
+test('selected-photo lightbox navigates only the selected subset', () => {
+  const source = fs.readFileSync('assets/client.js', 'utf8');
+  assert.match(source, /lightboxNavigation/);
+  assert.match(source, /getSelectedLightboxImages/);
+  assert.match(source, /openLightbox\(\{ mode: 'selection', fullName: item\.fullName \}\)/);
+});

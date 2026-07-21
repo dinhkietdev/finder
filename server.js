@@ -1451,7 +1451,12 @@ app.get('/a/:slug', async (req, res) => {
         // preparing this HTML shell. Bootstrap that safe public id into the
         // client so it can start the Drive request immediately instead of
         // making a second `/api/album-by-slug` round-trip.
-        const bootstrap = matchEntry ? { folderId: matchEntry[0], publicSlug: requested } : null;
+        const bootstrap = matchEntry ? {
+            folderId: matchEntry[0],
+            publicSlug: requested,
+            workflowStatus: match?.workflowStatus || null,
+            isFinalized: Boolean(finalizedDatabase[matchEntry[0]])
+        } : null;
         const bootstrapScript = bootstrap
             ? `<script>window.__FINDER_ALBUM_BOOTSTRAP__=${JSON.stringify(bootstrap).replace(/</g, '\\u003c')};</script>`
             : '';
@@ -2199,8 +2204,13 @@ app.get('/api/album/:folderId', async (req, res) => {
         // compact request, so declaring these helpers below the cache return
         // would hit the temporal-dead-zone and turn the next request into a
         // 500 error.
-        const compactResponse = String(req.query?.compact || '') === '1';
-        const pagedResponse = String(req.query?.paged || '') === '1';
+        // Confirmed albums can request the complete compact thumbnail index in
+        // one response. The payload contains only ids/names/thumb URLs (never
+        // image bytes), so reopening a locked album does not make the client
+        // wait for cursor pages before it can paint every thumbnail.
+        const fullResponse = String(req.query?.full || '') === '1';
+        const compactResponse = fullResponse || String(req.query?.compact || '') === '1';
+        const pagedResponse = !fullResponse && String(req.query?.paged || '') === '1';
         const pageSize = Math.max(8, Math.min(48, Number(req.query?.limit) || 24));
         const pageCursor = decodeAlbumPageCursor(req.query?.cursor);
         if (!pageCursor) return res.status(400).json({ success: false, code: 'ALBUM_CURSOR_INVALID', error: 'Cursor tải ảnh không hợp lệ.' });
@@ -2217,7 +2227,17 @@ app.get('/api/album/:folderId', async (req, res) => {
         if (!pagedResponse && albumCacheDatabase[folderId] && albumCacheDatabase[folderId].length > 0 && (!hasCheckFolder || Object.prototype.hasOwnProperty.call(albumCheckCacheDatabase, folderId))) {
             const cachedFiles = albumCacheDatabase[folderId].map(responseFile);
             const cachedCheckFiles = (albumCheckCacheDatabase[folderId] || []).map(responseFile);
-            return res.json({ success: true, folderId, files: cachedFiles, checkFiles: cachedCheckFiles, gallerySections: currentSettings.gallerySections || [], liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
+            if (fullResponse) res.set('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=120');
+            return res.json({
+                success: true,
+                folderId,
+                files: cachedFiles,
+                checkFiles: cachedCheckFiles,
+                gallerySections: currentSettings.gallerySections || [],
+                ...(fullResponse ? {} : { liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {} }),
+                settings: publicAlbumSettings(currentSettings),
+                isFinalized
+            });
         }
 
         albumStage = 'drive-auth';
@@ -2457,7 +2477,17 @@ app.get('/api/album/:folderId', async (req, res) => {
 
         albumCacheDatabase[folderId] = files;
         if (hasCheckFolder) albumCheckCacheDatabase[folderId] = checkFiles;
-        res.json({ success: true, folderId, files: files.map(responseFile), checkFiles: checkFiles.map(responseFile), gallerySections: sections, liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {}, settings: publicAlbumSettings(currentSettings), isFinalized });
+        if (fullResponse) res.set('Cache-Control', 'public, max-age=10, s-maxage=30, stale-while-revalidate=120');
+        res.json({
+            success: true,
+            folderId,
+            files: files.map(responseFile),
+            checkFiles: checkFiles.map(responseFile),
+            gallerySections: sections,
+            ...(fullResponse ? {} : { liked_list: currentAlbumLikes, check_notes: checkNotesDatabase[folderId] || {} }),
+            settings: publicAlbumSettings(currentSettings),
+            isFinalized
+        });
     } catch (error) {
         console.error('Album load failed:', JSON.stringify({ folderId: req.params.folderId, stage: albumStage, message: error.message }));
         res.status(500).json({ error: error.message, stage: albumStage, folderId: req.params.folderId });
