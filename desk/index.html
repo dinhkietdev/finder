@@ -1653,21 +1653,30 @@
             if (!folderIdBeingEdited) return;
             
             const newLimit = document.getElementById('edit-limit-input').value;
+            const saveButton = document.querySelector('#edit-limit-modal .btn-success');
             // 🚨 SỬA LỖI TẠI ĐÂY: Phải giam lại ID trước khi gọi hàm đóng Modal (Vì hàm đóng Modal sẽ xóa biến ID này)
             const targetFolderId = folderIdBeingEdited;
-            
-            closeEditLimitModal();
-            
-            const result = await ipcRenderer.invoke('update-album-settings', { 
-                folderId: targetFolderId, 
-                maxSelections: newLimit 
-            });
-            
-            if (result.success) {
-                alert("Đã cập nhật giới hạn ảnh thành công và đồng bộ lên Cloud!");
-                loadAlbumHistory(); 
-                if (document.getElementById('view-dashboard').classList.contains('active')) loadDashboard();
-            } else alert(result.error || 'Không thể cập nhật giới hạn ảnh.');
+
+            if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Đang lưu…'; }
+            try {
+                const result = await ipcRenderer.invoke('update-album-settings', {
+                    folderId: targetFolderId,
+                    maxSelections: newLimit
+                });
+
+                if (result?.success) {
+                    closeEditLimitModal();
+                    showToast(`Đã cập nhật giới hạn ${Number(newLimit) > 0 ? `${Number(newLimit)} ảnh` : 'không giới hạn'} và mở lại luồng chọn ảnh. Các ảnh cũ vẫn được giữ nguyên.`, 'success');
+                    await loadAlbumHistory();
+                    if (document.getElementById('view-dashboard').classList.contains('active')) await loadDashboard();
+                } else {
+                    showToast(`Không thể cập nhật số lượng: ${result?.error || 'Lỗi không xác định.'}`, 'error', 8000);
+                }
+            } catch (error) {
+                showToast(`Không thể cập nhật số lượng: ${error?.message || error}`, 'error', 8000);
+            } finally {
+                if (saveButton) { saveButton.disabled = false; saveButton.textContent = 'Lưu thay đổi'; }
+            }
         }
         // ================= KẾT THÚC =================
 

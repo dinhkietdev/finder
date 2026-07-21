@@ -813,24 +813,68 @@ ipcMain.handle('update-album-settings', async (event, { folderId, maxSelections 
     const history = getAlbumHistory();
     const index = history.findIndex(a => a.id === folderId);
     const nextLimit = parseInt(maxSelections) || 0;
+    let syncResult = null;
 
     try {
-        const syncResult = await new Promise((resolve) => {
+        // Refresh an existing local Drive session before sending the request.
+        // This makes the legacy-token bootstrap reliable even when the access
+        // token expired while Finder was closed, without forcing a new OAuth
+        // window when the machine has no Drive session at all.
+        if (!oauth2Client && hasLocalDriveTokens()) {
+            try { await authenticateCasi(true); } catch (_) {}
+        }
+        syncResult = await new Promise((resolve) => {
             const payload = JSON.stringify({ maxSelections: nextLimit, reopenSelection: true });
             const req = https.request({ 
                 hostname: ONLINE_DOMAIN, port: 443, 
                 path: `/api/album/${folderId}/settings`, 
                 method: 'POST', 
-                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), ...serverAuthHeaders(), ...albumManagementHeaders(folderId) }
-            }, (res) => { let body = ''; res.on('data', chunk => body += chunk); res.on('end', () => { if (res.statusCode >= 400) return resolve({ success: false }); try { resolve({ success: JSON.parse(body || '{}').success !== false }); } catch (_) { resolve({ success: false }); } }); });
+                // Legacy albums may not have a management token in the local
+                // history. The connected Drive access token is the one-time
+                // owner proof accepted by the server to bootstrap that token.
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(payload),
+                    ...serverAuthHeaders(),
+                    ...driveAccessHeaders(oauth2Client),
+                    ...albumManagementHeaders(folderId)
+                }
+            }, (res) => {
+                let body = '';
+                res.on('data', chunk => body += chunk);
+                res.on('end', () => {
+                    let parsed = {};
+                    try { parsed = JSON.parse(body || '{}'); } catch (_) {
+                        parsed = { error: `Máy chủ trả về dữ liệu không hợp lệ (HTTP ${res.statusCode}).` };
+                    }
+                    if (res.statusCode >= 400) {
+                        const requestId = res.headers['x-request-id'] || parsed.requestId;
+                        const detail = parsed.error?.message || parsed.error || `Máy chủ từ chối yêu cầu (HTTP ${res.statusCode}).`;
+                        return resolve({ success: false, error: `${detail}${requestId ? ` [requestId=${requestId}]` : ''}`, code: parsed.code, statusCode: res.statusCode, requestId });
+                    }
+                    resolve({ success: parsed.success !== false, ...parsed });
+                });
+            });
             req.on('error', resolve); req.write(payload); req.end();
         });
-        if (!syncResult?.success) return { success: false, error: 'Server không lưu được giới hạn mới.' };
+        if (!syncResult?.success) {
+            return {
+                success: false,
+                error: syncResult?.error || 'Server không lưu được giới hạn mới. Hãy kiểm tra kết nối Google Drive rồi thử lại.',
+                code: syncResult?.code,
+                statusCode: syncResult?.statusCode,
+                requestId: syncResult?.requestId
+            };
+        }
     } catch (e) { return { success: false, error: e.message }; }
 
     if (index !== -1) {
         createHistoryBackup('before-settings-change');
         history[index].maxSelections = nextLimit;
+        // A legacy album can receive its management token when the Drive
+        // proof is accepted by the server. Persist it locally so subsequent
+        // edits use the stable per-album token instead of re-bootstrap.
+        if (syncResult.managementToken) history[index].managementToken = syncResult.managementToken;
         history[index].rawSynced = false;
         delete history[index].rawSyncedAt;
         // Đổi giới hạn đồng nghĩa mở lại luồng chọn ảnh. Giữ nguyên các ảnh

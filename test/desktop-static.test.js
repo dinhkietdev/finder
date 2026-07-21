@@ -28,3 +28,14 @@ test('culling preview uses a local URL instead of Base64 IPC data', () => {
   assert.doesNotMatch(handler, /data:image\/jpeg;base64/);
   assert.doesNotMatch(source, /data:image\/jpeg;base64/);
 });
+
+test('desktop limit editing can bootstrap legacy albums and exposes server errors', () => {
+  const source = fs.readFileSync('desk/main.js', 'utf8');
+  const start = source.indexOf("ipcMain.handle('update-album-settings'");
+  const end = source.indexOf("ipcMain.handle('get-album-thumbnail'", start);
+  const handler = source.slice(start, end);
+  assert.match(handler, /driveAccessHeaders\(oauth2Client\)/);
+  assert.match(handler, /managementToken/);
+  assert.match(handler, /requestId/);
+  assert.match(handler, /statusCode/);
+});
