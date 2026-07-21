@@ -83,3 +83,9 @@ test('network album snapshots remove deleted Drive files after cached hydration'
   assert.match(serverSource, /!refreshRequested && !pagedResponse/);
   assert.match(clientSource, /new URLSearchParams\(\{ full: '1', compact: '1', refresh: '1' \}\)/);
 });
+
+test('review tabs show original photos before edited CHECK photos', () => {
+  const html = fs.readFileSync('client.html', 'utf8');
+  const bar = html.slice(html.indexOf('id="reviewModeBar"'), html.indexOf('</div>', html.indexOf('id="reviewModeBar"')) + 6);
+  assert.ok(bar.indexOf('id="originalModeBtn"') < bar.indexOf('id="checkModeBtn"'));
+});
