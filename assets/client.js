@@ -50,6 +50,7 @@
             displayName: 'Finder',
             compareEnabled: false,
             selectionReopenedAt: null,
+            selectionConfirmedAt: null,
             pageCursor: null,
             pageHasMore: false,
             pageLoading: false,
@@ -1947,6 +1948,7 @@
             state.workflowStatus = settings.workflowStatus || (state.checkReady ? 'check_pending' : 'selection_open');
             state.expiresAt = settings.expiresAt || null;
             state.selectionReopenedAt = settings.selectionReopenedAt || null;
+            state.selectionConfirmedAt = settings.selectionConfirmedAt || null;
             state.publicSlug = settings.publicSlug || state.publicSlug;
             const configuredStudio = String(settings.studioName || '').trim();
             state.studioName = configuredStudio && !/^(finder|finder studio)$/i.test(configuredStudio)
@@ -2301,7 +2303,11 @@
                     const requestId = finalizeResponse.headers.get('x-request-id') || errorData.requestId;
                     throw new Error(`${errorData.error || 'Không thể chốt album'}${requestId ? ` [requestId=${requestId}]` : ''}`);
                 }
+                const finalizedData = await finalizeResponse.json().catch(() => ({}));
                 state.isFinalized = true;
+                state.workflowStatus = finalizedData.workflowStatus || 'selection_confirmed';
+                state.selectionConfirmedAt = finalizedData.selectionConfirmedAt || new Date().toISOString();
+                state.expiresAt = finalizedData.expiresAt || null;
                 render();
                 showRobotStatus('Em đã tiếp nhận, em sẽ edit ảnh sớm nhé 💙', true);
                 setMessage(`✔️ Đã chốt ${selectedImages.length} ảnh đã chọn và gửi về ứng dụng.`, 'success');

@@ -11,6 +11,7 @@ const { getDatabase } = require('firebase-admin/database');
 const { createObservability } = require('./server/observability');
 const { createRateLimitMiddleware } = require('./server/rate-limit');
 const { slugifyAlbumName, canonicalPublicSlug, normalizeDriveFolderId, escapeHtmlAttribute } = require('./server/public-slug');
+const { confirmSelection, confirmCheck, reopenSelection, WORKFLOW_STATUS } = require('./server/workflow-state');
 
 const app = express();
 app.disable('x-powered-by');
@@ -1809,7 +1810,12 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // reopenSelection) reopen the album. Startup/background sync must not.
     if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) {
         delete finalizedDatabase[folderId];
-        albumSettingsDatabase[folderId].selectionReopenedAt = new Date().toISOString();
+        // Reopening a selection must leave the album in the selection flow.
+        // Otherwise an old COMPLETED value makes the client render FINAL even
+        // though the customer is allowed to choose more images again. Keep
+        // the previous CHECK files available for comparison, but clear the
+        // final-only timestamps until the next CHECK is accepted.
+        albumSettingsDatabase[folderId] = reopenSelection(albumSettingsDatabase[folderId]);
     }
     // Keep the request alive briefly so Vercel can finish the small settings
     // write before freezing the function, but never let a Firebase network
@@ -2012,6 +2018,9 @@ app.post('/api/album/:folderId/check', async (req, res) => {
     await loadPersistentState();
     const { folderId } = req.params;
     if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
+    if (!finalizedDatabase[folderId]) {
+        return res.status(409).json({ success: false, code: 'SELECTION_NOT_CONFIRMED', error: 'Khách chưa chốt lựa chọn. Hãy hoàn tất bước chọn ảnh trước khi upload CHECK.' });
+    }
     const checkFolderId = typeof req.body?.checkFolderId === 'string' ? req.body.checkFolderId.trim() : '';
     if (!checkFolderId) return res.status(400).json({ success: false, error: 'Thiếu mã thư mục CHECK.' });
     const current = albumSettingsDatabase[folderId] || { isEnabled: true, text: 'FINDERPICTURE STUDIO', maxSelections: 0 };
@@ -2040,15 +2049,14 @@ app.post('/api/album/:folderId/check/confirm', async (req, res) => {
     const { folderId } = req.params;
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
+    if (!finalizedDatabase[folderId]) return res.status(409).json({ success: false, code: 'SELECTION_NOT_CONFIRMED', error: 'Album chưa được chốt lựa chọn.' });
     const settings = albumSettingsDatabase[folderId] || {};
     if (!settings.checkReady || !settings.checkFolderId) return res.status(400).json({ success: false, error: 'Album chưa có phiên bản CHECK để xác nhận.' });
-    settings.checkNeedsRevision = false;
-    settings.checkAcceptedAt = new Date().toISOString();
-    settings.expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-    settings.workflowStatus = 'completed';
-    albumSettingsDatabase[folderId] = settings;
+    const completedSettings = confirmCheck(settings, undefined, settings.expiresDays || 60);
+    finalizedDatabase[folderId] = true;
+    albumSettingsDatabase[folderId] = completedSettings;
     await persistState(folderId);
-    res.json({ success: true, completedAt: settings.checkAcceptedAt, expiresAt: settings.expiresAt, checkVersion: settings.checkVersion || 1 });
+    res.json({ success: true, completedAt: completedSettings.checkAcceptedAt, expiresAt: completedSettings.expiresAt, checkVersion: completedSettings.checkVersion || 1 });
 });
 
 app.post('/api/album/:folderId/finalize', async (req, res) => {
@@ -2057,13 +2065,20 @@ app.post('/api/album/:folderId/finalize', async (req, res) => {
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
     const settings = albumSettingsDatabase[folderId] || {};
+    if (settings.galleryType === 'party' || settings.partyGallery) {
+        return res.status(409).json({ success: false, code: 'PARTY_GALLERY_FINAL', error: 'Gallery tiệc đã ở chế độ FINAL và không dùng luồng chọn ảnh.' });
+    }
+    if (settings.workflowStatus === WORKFLOW_STATUS.COMPLETED) {
+        return res.status(409).json({ success: false, code: 'ALBUM_ALREADY_FINAL', error: 'Album đã ở trạng thái FINAL và không thể chốt lựa chọn lại.' });
+    }
+    const selectionConfirmedAt = new Date().toISOString();
     finalizedDatabase[folderId] = true;
-    settings.workflowStatus = 'completed';
-    settings.finalizedAt = settings.finalizedAt || new Date().toISOString();
-    settings.expiresAt = settings.expiresAt || new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
-    albumSettingsDatabase[folderId] = settings;
+    // This endpoint is called by the customer's "Chốt lựa chọn" button. It
+    // locks the selected originals so RAW can be collected, but it is not the
+    // final delivery transition. FINAL is reached only by /check/confirm.
+    albumSettingsDatabase[folderId] = confirmSelection(settings, selectionConfirmedAt);
     await persistState(folderId);
-    res.json({ success: true, workflowStatus: settings.workflowStatus, finalizedAt: settings.finalizedAt, expiresAt: settings.expiresAt });
+    res.json({ success: true, workflowStatus: WORKFLOW_STATUS.SELECTION_CONFIRMED, selectionConfirmedAt, isFinalized: true, expiresAt: null });
 });
 
 app.delete('/api/album/:folderId', async (req, res) => {
