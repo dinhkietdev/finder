@@ -123,6 +123,7 @@
             aiPicksToggle: document.getElementById('aiPicksToggle'), aiPicksToggleLabel: document.getElementById('aiPicksToggleLabel'), galleryPanel: document.getElementById('galleryPanel'),
             galleryToggle: document.getElementById('galleryToggle'), galleryToggleLabel: document.getElementById('galleryToggleLabel'),
             albumLoadingModal: document.getElementById('albumLoadingModal'), albumLoadingProgress: document.getElementById('albumLoadingProgress'),
+            aiLoadingNotice: document.getElementById('aiLoadingNotice'),
             brandTitle: document.getElementById('brandTitle'),
             albumStatusPill: document.getElementById('albumStatusPill'),
             copyShareBtn: document.getElementById('copyShareBtn'), showQrBtn: document.getElementById('showQrBtn'),
@@ -226,6 +227,7 @@
         }
 
         function updateAlbumLoadingOverlay() {
+            updateAiLoadingNotice();
             if (!state.initialLoadPending) {
                 setAlbumLoadingVisible(false);
                 return;
@@ -248,6 +250,18 @@
             }
             if (elements.albumLoadingProgress) elements.albumLoadingProgress.textContent = progress.join(' ');
             setAlbumLoadingVisible(true);
+        }
+
+        function updateAiLoadingNotice() {
+            const notice = elements.aiLoadingNotice;
+            if (!notice) return;
+            const active = state.viewMode === 'original'
+                && state.galleryType !== 'party'
+                && !state.isFinalized
+                && state.workflowStatus !== 'completed'
+                && (state.initialLoadPending || state.pagesPending || state.pageLoading || state.aiAnalysisPending);
+            notice.classList.toggle('visible', active);
+            notice.setAttribute('aria-hidden', active ? 'false' : 'true');
         }
 
         function escapeHtml(value = '') {
@@ -830,6 +844,7 @@
         }
 
         function updateAiAnalysisProgress() {
+            updateAiLoadingNotice();
             if (!elements.aiPicksDescription || !state.aiAnalysisPending) return;
             const progress = getAiProgressLabel();
             const progressSuffix = progress ? ` · ${progress}` : '';
@@ -2024,7 +2039,12 @@
             // 24 images are open after the background pagination is done.
             const loadedCount = state.originalImages.length;
             const checkSuffix = state.checkImages.length ? ` và ${state.checkImages.length} ảnh CHECK` : '';
-            setMessage(`✅ Đã tải đủ ${loadedCount} ảnh${checkSuffix}. Bạn có thể xem và chọn ngay.`, 'success');
+            const loadedHint = state.workflowStatus === 'completed'
+                ? 'Bạn có thể xem và lưu ảnh.'
+                : state.isFinalized
+                ? 'Bạn có thể xem lại ảnh đã chốt.'
+                : 'Bạn có thể xem và chọn ngay.';
+            setMessage(`✅ Đã tải đủ ${loadedCount} ảnh${checkSuffix}. ${loadedHint}`, 'success');
             if (state.viewMode === 'original') scheduleAiGroups(state.originalImages);
             finalizeClientViewState();
             writeClientBootstrapCache();
@@ -2137,11 +2157,18 @@
                 // pass runs after the remaining Drive pages finish loading.
                 if (state.viewMode === 'original') scheduleAiGroups(getAiWarmWindow());
                 scheduleRobotAssistant();
-                setMessage(state.checkReady
+                const albumReadyMessage = state.checkReady
                     ? '✅ Ảnh chỉnh sửa đã sẵn sàng. Bạn có thể chuyển sang ảnh gốc đã chọn để đối chiếu.'
+                    : state.workflowStatus === 'completed'
+                    ? '✅ Album đã hoàn thành. Bạn có thể xem và lưu ảnh.'
+                    : state.isFinalized
+                    ? (state.pagesPending
+                        ? `✅ Đã mở ${state.originalImages.length} ảnh đầu tiên. Phần còn lại đang tải nền; bạn có thể xem lại ảnh đã chốt.`
+                        : '✅ Album đã chốt. Bạn có thể xem lại ảnh đã chốt.')
                     : state.pagesPending
                     ? `✅ Đã mở ${state.originalImages.length} ảnh đầu tiên. Phần còn lại đang tải nền; bạn có thể xem và chọn ngay.`
-                    : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.', 'success');
+                    : '✅ Đã tải album. Bạn có thể vuốt xem ảnh, chọn ảnh và ghi chú ngay bây giờ.';
+                setMessage(albumReadyMessage, 'success');
                 metadataResponsePromise
                     .then(response => response ? readApiJson(response, 'Không thể tải trạng thái album') : null)
                     .then(data => {

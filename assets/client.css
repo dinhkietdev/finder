@@ -283,6 +283,8 @@
         .check-ready-banner { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:30; width:min(620px,calc(100vw - 28px)); padding:12px 16px; border:1px solid rgba(59,217,160,.38); border-radius:14px; background:rgba(11,42,39,.94); box-shadow:0 12px 32px rgba(0,0,0,.28); color:#b9f8dc; text-align:center; font-size:13px; font-weight:750; backdrop-filter:blur(16px); }
         .finalized-banner.visible + .check-ready-banner.visible { bottom:max(76px,calc(env(safe-area-inset-bottom) + 62px)); }
         .check-ready-banner.visible { display:block; animation:checkBannerIn .24s ease-out both; }
+        .ai-loading-notice { display:none; position:fixed; left:50%; bottom:max(14px,env(safe-area-inset-bottom)); transform:translateX(-50%); z-index:26; width:min(560px,calc(100vw - 120px)); padding:9px 14px; border:1px solid rgba(124,140,255,.38); border-radius:999px; background:rgba(15,23,42,.93); box-shadow:0 10px 28px rgba(0,0,0,.28); color:#dbe5ff; text-align:center; font-size:12px; font-weight:700; backdrop-filter:blur(14px); pointer-events:none; }
+        .ai-loading-notice.visible { display:block; animation:checkBannerIn .2s ease-out both; }
         @keyframes checkBannerIn { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
         .selection-reopen-modal { display:none; position:fixed; inset:0; z-index:1150; align-items:center; justify-content:center; padding:20px; background:rgba(2,6,14,.72); backdrop-filter:blur(8px); }
         .selection-reopen-modal.open { display:flex; }
@@ -310,6 +312,7 @@
             .finalized-banner { bottom:max(10px,env(safe-area-inset-bottom)); width:calc(100vw - 20px); font-size:12px; }
             .check-ready-banner { bottom:max(10px,env(safe-area-inset-bottom)); width:calc(100vw - 20px); font-size:12px; }
             .finalized-banner.visible + .check-ready-banner.visible { bottom:max(68px,calc(env(safe-area-inset-bottom) + 58px)); }
+            .ai-loading-notice { bottom:max(72px,calc(env(safe-area-inset-bottom) + 58px)); width:calc(100vw - 24px); border-radius:13px; font-size:12px; }
         }
 
         /* Album landing/branding layer */

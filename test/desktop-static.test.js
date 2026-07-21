@@ -39,3 +39,9 @@ test('desktop limit editing can bootstrap legacy albums and exposes server error
   assert.match(handler, /requestId/);
   assert.match(handler, /statusCode/);
 });
+
+test('explicit limit saves reopen selection even when the value is unchanged', () => {
+  const source = fs.readFileSync('server.js', 'utf8');
+  assert.match(source, /if \(hasLimitUpdate && !isBackgroundSync\) \{/);
+  assert.match(source, /Older desktop builds did not send `reopenSelection`/);
+});

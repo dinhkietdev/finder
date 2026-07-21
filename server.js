@@ -1808,7 +1808,13 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
     // đã chốt; vì vậy các ảnh cũ không bị mất và server nhận được ảnh mới.
     // Explicit admin edits (including older desktop builds that do not send
     // reopenSelection) reopen the album. Startup/background sync must not.
-    if (hasLimitUpdate && !isBackgroundSync && (reopenSelection === true || previousLimit === undefined || Number(previousLimit) !== nextLimit)) {
+    // Any explicit limit save is an intentional request to reopen the
+    // selection flow, even when the new value is identical to the current
+    // one. Older desktop builds did not send `reopenSelection`; requiring the
+    // flag made a retry with the same value appear to do nothing and left the
+    // album stuck at `selection_confirmed`. Background synchronisation remains
+    // read-only so a stale desktop snapshot cannot reopen an album by itself.
+    if (hasLimitUpdate && !isBackgroundSync) {
         delete finalizedDatabase[folderId];
         // Reopening a selection must leave the album in the selection flow.
         // Otherwise an old COMPLETED value makes the client render FINAL even
