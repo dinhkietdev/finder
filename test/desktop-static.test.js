@@ -62,3 +62,12 @@ test('selected-photo lightbox navigates only the selected subset', () => {
   assert.match(source, /getSelectedLightboxImages/);
   assert.match(source, /openLightbox\(\{ mode: 'selection', fullName: item\.fullName \}\)/);
 });
+
+test('fresh CHECK opens by default while reopened selections stay on originals', () => {
+  const source = fs.readFileSync('assets/client.js', 'utf8');
+  assert.match(source, /function shouldOpenLatestCheckByDefault\(\)/);
+  assert.match(source, /\['check_pending', 'revision_requested', 'completed'\]\.includes\(status\)/);
+  assert.match(source, /reopenedAt > checkAt/);
+  assert.match(source, /if \(shouldOpenLatestCheckByDefault\(\)\)/);
+  assert.match(source, /state\.viewMode = 'check';/);
+});

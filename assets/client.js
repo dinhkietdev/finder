@@ -352,9 +352,32 @@
             }
         }
 
+        // A newly uploaded CHECK is the customer's current review target.
+        // Do not let a stale `viewMode: original` value from localStorage
+        // hide it on the next visit.  When the studio explicitly reopens the
+        // selection flow, the reopen timestamp wins so the original gallery
+        // remains the default while the previous CHECK stays available above.
+        function shouldOpenLatestCheckByDefault() {
+            if (state.galleryType === 'party' || !state.checkReady) return false;
+            const status = String(state.workflowStatus || '');
+            if (!['check_pending', 'revision_requested', 'completed'].includes(status)) return false;
+            const checkAt = Date.parse(state.checkUpdatedAt || '');
+            const reopenedAt = Date.parse(state.selectionReopenedAt || '');
+            if (Number.isFinite(checkAt) && Number.isFinite(reopenedAt) && reopenedAt > checkAt) return false;
+            return true;
+        }
+
         function applyClientViewState() {
             if (state.viewStateRestored) return;
             const saved = readClientViewState();
+            if (shouldOpenLatestCheckByDefault()) {
+                state.viewMode = 'check';
+                state.images = state.checkImages;
+                state.currentIndex = 0;
+                state.pendingViewFullName = '';
+                state.viewStateRestored = true;
+                return;
+            }
             if (!saved) {
                 state.viewStateRestored = true;
                 return;
