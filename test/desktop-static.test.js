@@ -124,3 +124,13 @@ test('Supabase REST writes abort instead of keeping Vercel functions open', () =
   assert.match(source, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
   assert.match(source, /PERSISTENT_STATE_UNAVAILABLE/);
 });
+
+test('interrupted upload sessions can be cancelled without deleting Drive files', () => {
+  const main = fs.readFileSync('desk/main.js', 'utf8');
+  const html = fs.readFileSync('desk/index.html', 'utf8');
+  assert.match(main, /ipcMain\.handle\('cancel-upload-job'/);
+  assert.match(main, /removeUploadJob\(id\)/);
+  assert.match(html, /id="btn-cancel-resume-upload"/);
+  assert.match(html, /ipcRenderer\.invoke\('cancel-upload-job'/);
+  assert.match(html, /Google Drive sẽ không bị xóa/);
+});

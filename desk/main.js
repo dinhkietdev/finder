@@ -430,6 +430,15 @@ ipcMain.handle('app-version', () => app.getVersion());
 ipcMain.handle('get-pending-upload', () => {
     return pendingUploadResumeData();
 });
+ipcMain.handle('cancel-upload-job', (event, jobId) => {
+    const id = String(jobId || '').trim();
+    if (!id) return { success: false, error: 'Thiếu mã phiên upload.' };
+    const queue = readUploadQueue();
+    const exists = queue.jobs.some(job => String(job.id) === id);
+    if (!exists) return { success: false, error: 'Không tìm thấy phiên upload cũ.' };
+    removeUploadJob(id);
+    return { success: true, cancelled: true, jobId: id };
+});
 ipcMain.handle('get-upload-queue', () => {
     const queue = readUploadQueue();
     return queue.jobs.filter(job => ['pending', 'paused', 'running'].includes(job.status)).map(job => ({
