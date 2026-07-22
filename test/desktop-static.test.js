@@ -49,6 +49,7 @@ test('explicit limit saves reopen selection even when the value is unchanged', (
   // leave the settings request pending until Desktop's timeout.
   assert.match(source, /reopenSelection: reopenSelectionState/);
   assert.match(source, /reopenSelectionState\(albumSettingsDatabase\[folderId\]\)/);
+  assert.match(source, /app\.post\('\/api\/album\/:folderId\/settings', asyncRoute\(async/);
 });
 
 test('confirmed albums use the compact full thumbnail path', () => {

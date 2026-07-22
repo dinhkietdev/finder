@@ -15,6 +15,10 @@ const { confirmSelection, confirmCheck, reopenSelection: reopenSelectionState, W
 
 const app = express();
 app.disable('x-powered-by');
+// Express 4 does not forward rejected async handlers to error middleware by
+// itself. Keep the album-creation endpoint from leaving the HTTP connection
+// open when a transition or persistence step throws unexpectedly.
+const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
     || process.env.NODE_ENV === 'production';
 const REQUEST_ID_HEADER = 'x-request-id';
@@ -1762,7 +1766,7 @@ async function requireDriveCreationProof(req, res) {
     }
 }
 
-app.post('/api/album/:folderId/settings', async (req, res) => {
+app.post('/api/album/:folderId/settings', asyncRoute(async (req, res) => {
     const { folderId } = req.params;
     try {
         // A first upload has a new Drive folder id. Read only that id instead
@@ -1920,7 +1924,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         console.warn('Không thể lưu settings album:', JSON.stringify({ message: persistenceResult.reason?.message, code: persistenceResult.reason?.code }));
     }
     res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending, driveBrandingSaved });
-});
+}));
 
 // Desktop history is cached locally for responsiveness, but its durable copy
 // now lives in Supabase instead of the legacy Firebase studioAlbumHistory node.
