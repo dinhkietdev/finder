@@ -121,7 +121,10 @@ test('upload finalization has bounded network waits', () => {
 test('Supabase REST writes abort instead of keeping Vercel functions open', () => {
   const source = fs.readFileSync('server.js', 'utf8');
   assert.match(source, /SUPABASE_REQUEST_TIMEOUT_MS/);
-  assert.match(source, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
+  assert.match(source, /AbortSignal\.timeout\(requestTimeoutMs\)/);
+  assert.match(source, /timeoutMs: ALBUM_STATE_REQUEST_TIMEOUT_MS/);
+  assert.match(source, /DRIVE_PROOF_TIMEOUT_MS/);
+  assert.match(source, /promiseWithTimeout\(/);
   assert.match(source, /PERSISTENT_STATE_UNAVAILABLE/);
   assert.match(source, /loadSupabaseAlbumState\(folderId\)/);
   assert.match(source, /albums\?id=eq\./);

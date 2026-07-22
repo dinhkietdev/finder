@@ -30,6 +30,11 @@ function createRateLimitMiddleware({
             try {
                 const data = await supabaseRequest('rpc/consume_rate_limit', {
                     method: 'POST',
+                    // Rate limiting is a safety check, not a prerequisite for
+                    // serving the album. Fail open to the local bucket quickly
+                    // when Supabase is slow so a transient control-plane delay
+                    // cannot make Desktop album creation hit its 12s deadline.
+                    timeoutMs: 900,
                     body: JSON.stringify({ p_bucket: `finder:rate:${key}`, p_limit: limit, p_window_seconds: 60 })
                 });
                 if (data && typeof data === 'object' && typeof data.allowed === 'boolean') return data;

@@ -176,6 +176,24 @@ let supabaseUrl = '';
 let supabaseServiceKey = '';
 let supabaseLoadPromise = null;
 const SUPABASE_REQUEST_TIMEOUT_MS = Math.max(3000, Math.min(30000, Number(process.env.FINDER_SUPABASE_REQUEST_TIMEOUT_MS) || 10000));
+// Control-plane requests must leave room for the remaining album-creation
+// stages (Drive proof and durable writes) inside the desktop's 12s deadline.
+// Individual callers can opt into a shorter budget without weakening normal
+// data reads and writes.
+const ALBUM_STATE_REQUEST_TIMEOUT_MS = 1800;
+const DRIVE_PROOF_TIMEOUT_MS = 3500;
+
+function promiseWithTimeout(task, timeoutMs, message, code = 'REQUEST_TIMEOUT') {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            const error = new Error(message);
+            error.code = code;
+            reject(error);
+        }, timeoutMs);
+    });
+    return Promise.race([Promise.resolve(task), timeout]).finally(() => clearTimeout(timer));
+}
 
 function isSupabaseConfigured() {
     return Boolean(supabaseUrl && supabaseServiceKey);
@@ -306,7 +324,10 @@ async function persistDriveTokenRecord(folderId, value) {
 
 async function supabaseRequest(resource, options = {}) {
     if (!isSupabaseConfigured()) return null;
-    const { signal: providedSignal, ...requestOptions } = options;
+    const { signal: providedSignal, timeoutMs, ...requestOptions } = options;
+    const requestTimeoutMs = Number.isFinite(Number(timeoutMs))
+        ? Math.max(300, Math.min(SUPABASE_REQUEST_TIMEOUT_MS, Number(timeoutMs)))
+        : SUPABASE_REQUEST_TIMEOUT_MS;
     const response = await fetch(`${supabaseUrl}/rest/v1/${resource}`, {
         ...requestOptions,
         headers: {
@@ -315,7 +336,7 @@ async function supabaseRequest(resource, options = {}) {
             'Content-Type': 'application/json',
             ...(requestOptions.headers || {})
         },
-        signal: providedSignal || AbortSignal.timeout(SUPABASE_REQUEST_TIMEOUT_MS)
+        signal: providedSignal || AbortSignal.timeout(requestTimeoutMs)
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 400)}`);
@@ -928,7 +949,9 @@ async function persistAlbumSettings(folderId) {
 async function loadSupabaseAlbumState(folderId) {
     if (!isSupabaseConfigured()) return false;
     const encodedId = encodeURIComponent(String(folderId));
-    const rows = await supabaseRequest(`albums?id=eq.${encodedId}&select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at&limit=1`);
+    const rows = await supabaseRequest(`albums?id=eq.${encodedId}&select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at&limit=1`, {
+        timeoutMs: ALBUM_STATE_REQUEST_TIMEOUT_MS
+    });
     const row = Array.isArray(rows) ? rows[0] : null;
     if (!row) return false;
     const id = String(row.id || folderId);
@@ -1721,7 +1744,16 @@ async function requireDriveCreationProof(req, res) {
     }
     try {
         client.setCredentials({ access_token: accessToken });
-        await google.drive({ version: 'v3', auth: client }).about.get({ fields: 'user(emailAddress)' });
+        // googleapis uses gaxios, whose default timeout is effectively
+        // unbounded in some desktop/network environments. Bound this proof so
+        // a stalled Google request cannot consume the entire desktop request
+        // deadline and leave the user stuck at “máy chủ không phản hồi”.
+        await promiseWithTimeout(
+            google.drive({ version: 'v3', auth: client }).about.get({ fields: 'user(emailAddress)' }),
+            DRIVE_PROOF_TIMEOUT_MS,
+            'Google Drive xác thực quá thời gian.',
+            'DRIVE_PROOF_TIMEOUT'
+        );
         return true;
     } catch (error) {
         console.warn('Drive creation proof failed:', JSON.stringify({ code: error.code, message: error.message }));
