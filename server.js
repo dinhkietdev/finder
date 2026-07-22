@@ -175,6 +175,7 @@ let firebaseMigrationPromise = null;
 let supabaseUrl = '';
 let supabaseServiceKey = '';
 let supabaseLoadPromise = null;
+const SUPABASE_REQUEST_TIMEOUT_MS = Math.max(3000, Math.min(30000, Number(process.env.FINDER_SUPABASE_REQUEST_TIMEOUT_MS) || 10000));
 
 function isSupabaseConfigured() {
     return Boolean(supabaseUrl && supabaseServiceKey);
@@ -305,14 +306,16 @@ async function persistDriveTokenRecord(folderId, value) {
 
 async function supabaseRequest(resource, options = {}) {
     if (!isSupabaseConfigured()) return null;
+    const { signal: providedSignal, ...requestOptions } = options;
     const response = await fetch(`${supabaseUrl}/rest/v1/${resource}`, {
-        ...options,
+        ...requestOptions,
         headers: {
             apikey: supabaseServiceKey,
             Authorization: `Bearer ${supabaseServiceKey}`,
             'Content-Type': 'application/json',
-            ...(options.headers || {})
-        }
+            ...(requestOptions.headers || {})
+        },
+        signal: providedSignal || AbortSignal.timeout(SUPABASE_REQUEST_TIMEOUT_MS)
     });
     const text = await response.text();
     if (!response.ok) throw new Error(`Supabase ${response.status}: ${text.slice(0, 400)}`);
@@ -1705,7 +1708,12 @@ async function requireDriveCreationProof(req, res) {
 }
 
 app.post('/api/album/:folderId/settings', async (req, res) => {
-    await loadPersistentState();
+    try {
+        await loadPersistentState();
+    } catch (error) {
+        logStructuredEvent('album.settings.state_load_error', { requestId: req.requestId, folderId: req.params.folderId, message: error.message });
+        return res.status(503).json({ success: false, code: 'PERSISTENT_STATE_UNAVAILABLE', requestId: req.requestId, error: 'Kho dữ liệu đang phản hồi chậm. Hãy thử lại sau ít giây.' });
+    }
     const { folderId } = req.params;
     // The first desktop upload creates the album settings and receives the
     // freshly generated management token in the response. Once settings
@@ -2654,7 +2662,12 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
 });
 
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
-    await loadPersistentState();
+    try {
+        await loadPersistentState();
+    } catch (error) {
+        logStructuredEvent('album.drive_token.state_load_error', { requestId: req.requestId, folderId: req.params.folderId, message: error.message });
+        return res.status(503).json({ success: false, code: 'PERSISTENT_STATE_UNAVAILABLE', requestId: req.requestId, error: 'Kho dữ liệu đang phản hồi chậm. Hãy thử lại sau ít giây.' });
+    }
     if (!(await requireAlbumManagementOrDriveBootstrap(req, res, req.params.folderId))) return;
     if ((!firebaseDb && !isSupabaseConfigured()) || !req.body?.tokens) return res.status(503).json({ error: 'Chưa cấu hình kho dữ liệu hoặc thiếu token.' });
     const metadata = req.body?.driveFolderId || req.body?.galleryType || req.body?.gallerySections

@@ -71,6 +71,11 @@ let updateCheckStarted = false;
 
 const ONLINE_DOMAIN = 'finder-swart-pi.vercel.app'; 
 const ONLINE_SERVER = `https://${ONLINE_DOMAIN}`;
+// Never let a slow Vercel/Supabase request keep the Electron IPC handler
+// pending forever. Uploads are resumable, so a bounded failure is safer than
+// leaving the UI at the last "Đang đồng bộ tệp" progress event indefinitely.
+const ONLINE_REQUEST_TIMEOUT_MS = Math.max(5000, Math.min(30000, Number(process.env.FINDER_ONLINE_REQUEST_TIMEOUT_MS) || 12000));
+const ALBUM_TOKEN_SYNC_TIMEOUT_MS = Math.max(3000, Math.min(15000, Number(process.env.FINDER_ALBUM_TOKEN_SYNC_TIMEOUT_MS) || 6000));
 // Google Drive cho phép nhiều request upload song song. Giới hạn 6 luồng để
 // tận dụng băng thông nhưng vẫn tránh làm nghẽn máy hoặc bị quota 429.
 const MAX_CONCURRENT_UPLOADS = Math.max(2, Math.min(8, Number(process.env.FINDER_UPLOAD_CONCURRENCY) || 6));
@@ -282,7 +287,7 @@ function pendingUploadResumeData() {
     return { ...job.resumeData, _queueJobId: job.id, _queueStatus: job.status, _queueCompletedFiles: job.completedFiles || 0, _queueFailedFiles: job.failedFiles || [] };
 }
 
-function postJson(url, payload, headers = {}) {
+function postJson(url, payload, headers = {}, timeoutMs = ONLINE_REQUEST_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
         const data = JSON.stringify(payload);
         const request = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data), ...headers } }, response => {
@@ -298,11 +303,12 @@ function postJson(url, payload, headers = {}) {
                 } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${url} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
         });
+        request.setTimeout(timeoutMs, () => request.destroy(new Error(`Máy chủ không phản hồi sau ${Math.round(timeoutMs / 1000)} giây.`)));
         request.on('error', reject); request.write(data); request.end();
     });
 }
 
-function getServerJson(pathname, headers = {}) {
+function getServerJson(pathname, headers = {}, timeoutMs = ONLINE_REQUEST_TIMEOUT_MS) {
     return new Promise((resolve, reject) => {
         const request = https.request({ hostname: ONLINE_DOMAIN, port: 443, path: pathname, method: 'GET', headers }, response => {
             let body = ''; response.on('data', chunk => body += chunk);
@@ -317,12 +323,13 @@ function getServerJson(pathname, headers = {}) {
                 } catch (error) { reject(new Error(`Phản hồi máy chủ không hợp lệ từ ${pathname} (HTTP ${response.statusCode}). Nội dung: ${(body || '(rỗng)').slice(0, 180)}`)); }
             });
         });
+        request.setTimeout(timeoutMs, () => request.destroy(new Error(`Máy chủ không phản hồi sau ${Math.round(timeoutMs / 1000)} giây.`)));
         request.on('error', reject); request.end();
     });
 }
 
-function postServerJson(pathname, payload, headers = {}) {
-    return postJson(`${ONLINE_SERVER}${pathname}`, payload, headers);
+function postServerJson(pathname, payload, headers = {}, timeoutMs = ONLINE_REQUEST_TIMEOUT_MS) {
+    return postJson(`${ONLINE_SERVER}${pathname}`, payload, headers, timeoutMs);
 }
 
 function albumManagementHeaders(folderId) {
@@ -1671,7 +1678,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         // Drive ids may contain `_`; normalize the complete slug so the API
         // resolver and the generated client link always use the same value.
         const publicSlug = slugifyAlbumName(`${folderNameOnDrive}-${String(googleDriveFolderId).slice(-6)}`);
-        const wmPayload = JSON.stringify({
+        const wmPayload = {
             isEnabled: watermarkToggle,
             text: watermarkText,
             maxSelections: maxSelections,
@@ -1687,33 +1694,32 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
             studioName: String(studioName || 'Finder').trim().toUpperCase(),
             studioLogo: studioLogo || '',
             accentColor: accentColor || '#7c8cff'
-        });
-        const wmOptions = { hostname: ONLINE_DOMAIN, port: 443, path: `/api/album/${googleDriveFolderId}/settings`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(wmPayload), ...serverAuthHeaders(), ...driveAccessHeaders(auth), ...albumManagementHeaders(googleDriveFolderId) } };
-        let settingsResult = {};
-        await new Promise((resolve, reject) => {
-            let body = '';
-            const wmReq = https.request(wmOptions, (res) => {
-                res.on('data', chunk => body += chunk);
-                res.on('end', () => {
-                    try { settingsResult = JSON.parse(body || '{}'); }
-                    catch (_) { return reject(new Error(`Không thể lưu cấu hình album (HTTP ${res.statusCode}).`)); }
-                    if (res.statusCode >= 400 || !settingsResult.success) return reject(new Error(settingsResult.error || `Không thể lưu cấu hình album (HTTP ${res.statusCode}).`));
-                    resolve();
-                });
-            });
-            wmReq.on('error', reject); wmReq.write(wmPayload); wmReq.end();
+        };
+        // Use the shared bounded request helper here. The previous inline
+        // https.request had no timeout, so a slow Vercel/Supabase response
+        // left the entire upload IPC call pending forever.
+        const settingsResult = await postServerJson(`/api/album/${googleDriveFolderId}/settings`, wmPayload, {
+            ...serverAuthHeaders(),
+            ...driveAccessHeaders(auth),
+            ...albumManagementHeaders(googleDriveFolderId)
         });
 
         // The album token is generated by the settings creation response. Now
         // that the album has a management token, store its Drive session using
         // the server-side encryption path so the public client can use the
         // private image proxy after a cold start.
+        let tokenSyncWarning = '';
         try {
             if (settingsResult.managementToken && hasLocalDriveTokens()) {
                 const tokens = readLocalDriveTokens();
-                await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens, driveFolderId: originalFolderId, galleryType: 'selection' }, { ...driveAccessHeaders(auth), 'x-finder-management-token': settingsResult.managementToken });
+                // Token persistence is needed for private image previews, but
+                // it must not make a completed Drive upload appear frozen.
+                await postServerJson(`/api/album/${googleDriveFolderId}/drive-token`, { tokens, driveFolderId: originalFolderId, galleryType: 'selection' }, { ...driveAccessHeaders(auth), 'x-finder-management-token': settingsResult.managementToken }, ALBUM_TOKEN_SYNC_TIMEOUT_MS);
             }
-        } catch (error) { console.warn('Không thể lưu token theo album:', error.message); }
+        } catch (error) {
+            tokenSyncWarning = `Token Drive chưa đồng bộ xong: ${error.message}`;
+            console.warn('Không thể lưu token theo album:', error.message);
+        }
 
         const publicLink = `https://${ONLINE_DOMAIN}/a/${publicSlug}`;
         
@@ -1746,7 +1752,7 @@ ipcMain.handle('upload-to-drive', async (event, payload) => {
         });
 
         removeUploadJob(uploadJobId);
-        return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: failedFiles.length };
+        return { success: true, folderLink: publicLink, completed: imageFiles.length, failed: failedFiles.length, syncWarning: tokenSyncWarning || (settingsResult.persistencePending ? 'Cấu hình album đang được đồng bộ nền.' : '') };
     } catch (error) {
         logDriveDiagnostic('upload-to-drive', error);
         if (isStaleDriveCredentialError(error)) clearStaleDriveSession('upload-to-drive-stale', error);

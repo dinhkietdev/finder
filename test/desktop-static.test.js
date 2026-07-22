@@ -109,3 +109,18 @@ test('album settings writes run in parallel with a bounded Vercel deadline', () 
   assert.match(handler, /Promise\.allSettled\(\[brandingTask, persistenceTask\]\)/);
   assert.match(handler, /persistencePending/);
 });
+
+test('upload finalization has bounded network waits', () => {
+  const source = fs.readFileSync('desk/main.js', 'utf8');
+  assert.match(source, /ONLINE_REQUEST_TIMEOUT_MS/);
+  assert.match(source, /request\.setTimeout\(timeoutMs/);
+  assert.match(source, /postServerJson\(`\/api\/album\/\$\{googleDriveFolderId\}\/settings`/);
+  assert.match(source, /ALBUM_TOKEN_SYNC_TIMEOUT_MS/);
+});
+
+test('Supabase REST writes abort instead of keeping Vercel functions open', () => {
+  const source = fs.readFileSync('server.js', 'utf8');
+  assert.match(source, /SUPABASE_REQUEST_TIMEOUT_MS/);
+  assert.match(source, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
+  assert.match(source, /PERSISTENT_STATE_UNAVAILABLE/);
+});

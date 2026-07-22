@@ -1321,7 +1321,8 @@
             if (result.success) { 
                 pendingResumeData = null;
                 document.getElementById('resume-upload-box').style.display = 'none';
-                document.getElementById('upload-status').innerHTML = '🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b>';
+                const syncWarning = result.syncWarning ? `<div style="margin-top:6px;color:#b45309;font-size:12px;">${escapeHtml(result.syncWarning)}</div>` : '';
+                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hệ thống thành công!</b>${syncWarning}`;
                 showUploadSuccess(result.folderLink);
             } else { 
                 document.getElementById('upload-status').innerHTML = `<span style="color:#ef4444;">Gặp sự cố: ${escapeHtml(result.error || 'Lỗi không xác định')}</span>`;
@@ -1343,7 +1344,8 @@
             if (result.success) {
                 pendingResumeData = null;
                 document.getElementById('resume-upload-box').style.display = 'none';
-                document.getElementById('upload-status').innerHTML = '🎉 <b style="color:#10b981;">Tải lên hoàn tất!</b>';
+                const syncWarning = result.syncWarning ? `<div style="margin-top:6px;color:#b45309;font-size:12px;">${escapeHtml(result.syncWarning)}</div>` : '';
+                document.getElementById('upload-status').innerHTML = `🎉 <b style="color:#10b981;">Tải lên hoàn tất!</b>${syncWarning}`;
                 showUploadSuccess(result.folderLink);
             } else {
                 pendingResumeData = result.resumeData || pendingResumeData;
