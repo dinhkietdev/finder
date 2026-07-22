@@ -1828,29 +1828,29 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         // final-only timestamps until the next CHECK is accepted.
         albumSettingsDatabase[folderId] = reopenSelection(albumSettingsDatabase[folderId]);
     }
-    // Keep the request alive briefly so Vercel can finish the small settings
-    // write before freezing the function, but never let a Firebase network
-    // stall block Desktop indefinitely.
-    let persistencePending = false;
-    let driveBrandingSaved = false;
-    try {
-        driveBrandingSaved = await Promise.race([
-            saveDriveBranding(folderId, albumSettingsDatabase[folderId].studioName),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Drive branding write timeout')), 7000))
-        ]);
-    } catch (error) {
-        console.warn('Không thể lưu tên Studio vào Drive:', JSON.stringify({ message: error.message, code: error.code }));
+    // Keep both remote writes inside one short deadline. They used to run
+    // sequentially with two 7-second waits; on Vercel that could exceed the
+    // function limit and turn a successful upload into HTTP 504. Supabase is
+    // the source of truth for the album settings, while Drive appProperties
+    // branding is best-effort and never blocks the configuration response.
+    const settingsWriteTimeoutMs = 3500;
+    const hasPersistentStore = Boolean(firebaseDb || isSupabaseConfigured());
+    const timeoutTask = (message) => new Promise((_, reject) => setTimeout(() => reject(new Error(message)), settingsWriteTimeoutMs));
+    const brandingTask = Promise.race([
+        saveDriveBranding(folderId, albumSettingsDatabase[folderId].studioName),
+        timeoutTask('Drive branding write timeout')
+    ]);
+    const persistenceTask = hasPersistentStore
+        ? Promise.race([persistAlbumSettings(folderId), timeoutTask('Settings write timeout')])
+        : Promise.resolve(null);
+    const [brandingResult, persistenceResult] = await Promise.allSettled([brandingTask, persistenceTask]);
+    const driveBrandingSaved = brandingResult.status === 'fulfilled' && Boolean(brandingResult.value);
+    const persistencePending = persistenceResult.status === 'rejected';
+    if (brandingResult.status === 'rejected') {
+        console.warn('Không thể lưu tên Studio vào Drive:', JSON.stringify({ message: brandingResult.reason?.message, code: brandingResult.reason?.code }));
     }
-    if (firebaseDb || isSupabaseConfigured()) {
-        try {
-            await Promise.race([
-                persistAlbumSettings(folderId),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Settings write timeout')), 7000))
-            ]);
-        } catch (error) {
-            persistencePending = true;
-            console.warn('Không thể lưu settings album:', JSON.stringify({ message: error.message, code: error.code }));
-        }
+    if (persistenceResult.status === 'rejected') {
+        console.warn('Không thể lưu settings album:', JSON.stringify({ message: persistenceResult.reason?.message, code: persistenceResult.reason?.code }));
     }
     res.json({ success: true, settings: publicAlbumSettings(albumSettingsDatabase[folderId]), managementToken: albumSettingsDatabase[folderId].managementToken, persistencePending, driveBrandingSaved });
 });

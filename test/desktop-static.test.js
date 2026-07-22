@@ -99,3 +99,13 @@ test('comparison lightbox supports shared zoom and pan', () => {
   assert.match(source, /elements\.compareStage\.addEventListener\('pointermove'/);
   assert.match(css, /\.compare-image\.compare-zoomed/);
 });
+
+test('album settings writes run in parallel with a bounded Vercel deadline', () => {
+  const source = fs.readFileSync('server.js', 'utf8');
+  const start = source.indexOf("app.post('/api/album/:folderId/settings'");
+  const end = source.indexOf("// Desktop history is cached locally", start);
+  const handler = source.slice(start, end);
+  assert.match(handler, /settingsWriteTimeoutMs = 3500/);
+  assert.match(handler, /Promise\.allSettled\(\[brandingTask, persistenceTask\]\)/);
+  assert.match(handler, /persistencePending/);
+});
