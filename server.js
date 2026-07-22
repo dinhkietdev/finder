@@ -922,6 +922,29 @@ async function persistAlbumSettings(folderId) {
     await firebaseDb.ref().update(updates);
 }
 
+// Settings/token writes only need one album. Loading every album row before
+// each Desktop upload is expensive once the workspace contains many large
+// liked-image partitions and can exceed the client's request deadline.
+async function loadSupabaseAlbumState(folderId) {
+    if (!isSupabaseConfigured()) return false;
+    const encodedId = encodeURIComponent(String(folderId));
+    const rows = await supabaseRequest(`albums?id=eq.${encodedId}&select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at&limit=1`);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    if (!row) return false;
+    const id = String(row.id || folderId);
+    const partition = row.state && typeof row.state === 'object' ? row.state : {};
+    const rowSettings = row.settings && typeof row.settings === 'object' ? { ...row.settings } : {};
+    if (!rowSettings.publicSlug && row.public_slug) rowSettings.publicSlug = row.public_slug;
+    if (!rowSettings.galleryType && row.gallery_type) rowSettings.galleryType = row.gallery_type;
+    likedImagesDatabase[id] = deserializeLikedImages({ [id]: partition.likedImages || {} })[id] || {};
+    checkNotesDatabase[id] = deserializeLikedImages({ [id]: partition.checkNotes || {} })[id] || {};
+    albumSettingsDatabase[id] = rowSettings;
+    if (row.history && typeof row.history === 'object') albumHistoryDatabase[id] = row.history.desktop || (row.history.id ? row.history : null);
+    if (row.is_finalized || partition.finalized === true) finalizedDatabase[id] = true;
+    else delete finalizedDatabase[id];
+    return true;
+}
+
 async function loadPersistentState() {
     if (isSupabaseConfigured()) {
         if (supabaseLoadPromise) return supabaseLoadPromise;
@@ -1708,13 +1731,17 @@ async function requireDriveCreationProof(req, res) {
 }
 
 app.post('/api/album/:folderId/settings', async (req, res) => {
+    const { folderId } = req.params;
     try {
-        await loadPersistentState();
+        // A first upload has a new Drive folder id. Read only that id instead
+        // of downloading the complete Supabase albums table. Existing albums
+        // are hydrated the same way so management-token checks stay intact.
+        if (isSupabaseConfigured()) await loadSupabaseAlbumState(folderId);
+        else await loadPersistentState();
     } catch (error) {
-        logStructuredEvent('album.settings.state_load_error', { requestId: req.requestId, folderId: req.params.folderId, message: error.message });
+        logStructuredEvent('album.settings.state_load_error', { requestId: req.requestId, folderId, message: error.message });
         return res.status(503).json({ success: false, code: 'PERSISTENT_STATE_UNAVAILABLE', requestId: req.requestId, error: 'Kho dữ liệu đang phản hồi chậm. Hãy thử lại sau ít giây.' });
     }
-    const { folderId } = req.params;
     // The first desktop upload creates the album settings and receives the
     // freshly generated management token in the response. Once settings
     // exist, the same endpoint is an update and must be authenticated.
@@ -2662,20 +2689,22 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
 });
 
 app.post('/api/album/:folderId/drive-token', async (req, res) => {
+    const { folderId } = req.params;
     try {
-        await loadPersistentState();
+        if (isSupabaseConfigured()) await loadSupabaseAlbumState(folderId);
+        else await loadPersistentState();
     } catch (error) {
-        logStructuredEvent('album.drive_token.state_load_error', { requestId: req.requestId, folderId: req.params.folderId, message: error.message });
+        logStructuredEvent('album.drive_token.state_load_error', { requestId: req.requestId, folderId, message: error.message });
         return res.status(503).json({ success: false, code: 'PERSISTENT_STATE_UNAVAILABLE', requestId: req.requestId, error: 'Kho dữ liệu đang phản hồi chậm. Hãy thử lại sau ít giây.' });
     }
-    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, req.params.folderId))) return;
+    if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     if ((!firebaseDb && !isSupabaseConfigured()) || !req.body?.tokens) return res.status(503).json({ error: 'Chưa cấu hình kho dữ liệu hoặc thiếu token.' });
     const metadata = req.body?.driveFolderId || req.body?.galleryType || req.body?.gallerySections
         ? { driveFolderId: normalizeDriveFolderId(req.body.driveFolderId, ''), galleryType: req.body.galleryType || 'selection', gallerySections: Array.isArray(req.body.gallerySections) ? req.body.gallerySections : [] }
         : null;
     const stored = { ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) };
     try {
-        await persistDriveTokenRecord(req.params.folderId, stored);
+        await persistDriveTokenRecord(folderId, stored);
         res.json({ success: true, encrypted: true });
     } catch (error) {
         const code = error.message === 'TOKEN_ENCRYPTION_NOT_CONFIGURED' ? 'TOKEN_ENCRYPTION_NOT_CONFIGURED' : 'DRIVE_TOKEN_STORE_FAILED';

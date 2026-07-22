@@ -123,6 +123,8 @@ test('Supabase REST writes abort instead of keeping Vercel functions open', () =
   assert.match(source, /SUPABASE_REQUEST_TIMEOUT_MS/);
   assert.match(source, /AbortSignal\.timeout\(SUPABASE_REQUEST_TIMEOUT_MS\)/);
   assert.match(source, /PERSISTENT_STATE_UNAVAILABLE/);
+  assert.match(source, /loadSupabaseAlbumState\(folderId\)/);
+  assert.match(source, /albums\?id=eq\./);
 });
 
 test('interrupted upload sessions can be cancelled without deleting Drive files', () => {
