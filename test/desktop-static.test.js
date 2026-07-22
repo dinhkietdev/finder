@@ -44,6 +44,11 @@ test('explicit limit saves reopen selection even when the value is unchanged', (
   const source = fs.readFileSync('server.js', 'utf8');
   assert.match(source, /if \(hasLimitUpdate && !isBackgroundSync\) \{/);
   assert.match(source, /Older desktop builds did not send `reopenSelection`/);
+  // The request body also has a `reopenSelection` field. Keep the imported
+  // state transition aliased so that field cannot shadow the function and
+  // leave the settings request pending until Desktop's timeout.
+  assert.match(source, /reopenSelection: reopenSelectionState/);
+  assert.match(source, /reopenSelectionState\(albumSettingsDatabase\[folderId\]\)/);
 });
 
 test('confirmed albums use the compact full thumbnail path', () => {

@@ -11,7 +11,7 @@ const { getDatabase } = require('firebase-admin/database');
 const { createObservability } = require('./server/observability');
 const { createRateLimitMiddleware } = require('./server/rate-limit');
 const { slugifyAlbumName, canonicalPublicSlug, normalizeDriveFolderId, escapeHtmlAttribute } = require('./server/public-slug');
-const { confirmSelection, confirmCheck, reopenSelection, WORKFLOW_STATUS } = require('./server/workflow-state');
+const { confirmSelection, confirmCheck, reopenSelection: reopenSelectionState, WORKFLOW_STATUS } = require('./server/workflow-state');
 
 const app = express();
 app.disable('x-powered-by');
@@ -1893,7 +1893,7 @@ app.post('/api/album/:folderId/settings', async (req, res) => {
         // though the customer is allowed to choose more images again. Keep
         // the previous CHECK files available for comparison, but clear the
         // final-only timestamps until the next CHECK is accepted.
-        albumSettingsDatabase[folderId] = reopenSelection(albumSettingsDatabase[folderId]);
+        albumSettingsDatabase[folderId] = reopenSelectionState(albumSettingsDatabase[folderId]);
     }
     // Keep both remote writes inside one short deadline. They used to run
     // sequentially with two 7-second waits; on Vercel that could exceed the
