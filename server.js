@@ -1098,6 +1098,7 @@ function supabaseFileStorageKey(fileName) {
 async function persistSupabaseLikeAtomically(folderId, fileName, value) {
     const result = await supabaseRequest('rpc/toggle_album_like', {
         method: 'POST',
+        timeoutMs: 5000,
         body: JSON.stringify({
             p_album_id: String(folderId),
             p_file_key: supabaseFileStorageKey(fileName),
@@ -1116,6 +1117,7 @@ async function persistSupabaseLikeAtomically(folderId, fileName, value) {
 async function persistSupabaseCheckNoteAtomically(folderId, fileName, note, settingsPatch) {
     const result = await supabaseRequest('rpc/merge_album_check_note', {
         method: 'POST',
+        timeoutMs: 5000,
         body: JSON.stringify({
             p_album_id: String(folderId),
             p_file_key: supabaseFileStorageKey(fileName),
