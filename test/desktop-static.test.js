@@ -154,6 +154,26 @@ test('album guest mutations use targeted loading and atomic Supabase merges', ()
   assert.match(migration, /create or replace function public\.merge_album_check_note/);
 });
 
+test('party gallery creation and section additions use targeted atomic mutations', () => {
+  const serverSource = fs.readFileSync('server.js', 'utf8');
+  const migration = fs.readFileSync('supabase/migrations/006_atomic_party_gallery_mutations.sql', 'utf8');
+  const createStart = serverSource.indexOf("app.post('/api/party-gallery'");
+  const createEnd = serverSource.indexOf("// Thêm một ngày/đợt ảnh", createStart);
+  const createRoute = serverSource.slice(createStart, createEnd);
+  const sectionStart = serverSource.indexOf("app.post('/api/party-gallery/:folderId/sections'");
+  const sectionEnd = serverSource.indexOf("app.get('/api/album/:folderId/settings'", sectionStart);
+  const sectionRoute = serverSource.slice(sectionStart, sectionEnd);
+  assert.doesNotMatch(createRoute, /await loadPersistentState\(\)/);
+  assert.match(createRoute, /withAlbumMutationLock\(folderId/);
+  assert.match(createRoute, /loadAlbumStateForMutation\(folderId\)/);
+  assert.match(createRoute, /persistSupabasePartyGalleryAtomically/);
+  assert.match(sectionRoute, /persistSupabasePartySectionAtomically/);
+  assert.doesNotMatch(sectionRoute, /await loadPersistentState\(\)/);
+  assert.match(migration, /create or replace function public\.upsert_party_gallery/);
+  assert.match(migration, /create or replace function public\.merge_party_gallery_section/);
+  assert.match(migration, /where a\.id = p_album_id[\s\S]*for update/);
+});
+
 test('interrupted upload sessions can be cancelled without deleting Drive files', () => {
   const main = fs.readFileSync('desk/main.js', 'utf8');
   const html = fs.readFileSync('desk/index.html', 'utf8');

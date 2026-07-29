@@ -1134,6 +1134,50 @@ async function persistSupabaseCheckNoteAtomically(folderId, fileName, note, sett
     return result || { success: true };
 }
 
+// Gallery/PSC metadata is also a per-album mutation.  Do not persist a stale
+// in-memory snapshot: the RPC locks the row and merges only the gallery fields
+// and section supplied by this request.  This protects the initial gallery
+// request from racing with a follow-up Vu quy/Thành hôn section request on a
+// different Vercel instance.
+async function persistSupabasePartyGalleryAtomically(folderId, payload) {
+    const result = await supabaseRequest('rpc/upsert_party_gallery', {
+        method: 'POST',
+        timeoutMs: 5000,
+        body: JSON.stringify({
+            p_album_id: String(folderId),
+            p_public_slug: payload.publicSlug || null,
+            p_drive_folder_id: payload.driveFolderId || null,
+            p_original_folder_id: payload.originalFolderId || payload.driveFolderId || null,
+            p_settings_patch: stripUndefined(payload.settings || {}),
+            p_section: stripUndefined(payload.section || null),
+            p_is_finalized: payload.isFinalized !== false,
+            p_workflow_status: payload.workflowStatus || 'completed'
+        })
+    });
+    if (result && result.success === false) {
+        const error = new Error(String(result.error || 'Không thể lưu gallery tiệc.'));
+        error.code = String(result.code || 'PARTY_GALLERY_CONFLICT');
+        error.details = result;
+        throw error;
+    }
+    return result || { success: true };
+}
+
+async function persistSupabasePartySectionAtomically(folderId, section) {
+    const result = await supabaseRequest('rpc/merge_party_gallery_section', {
+        method: 'POST',
+        timeoutMs: 5000,
+        body: JSON.stringify({ p_album_id: String(folderId), p_section: stripUndefined(section || {}) })
+    });
+    if (result && result.success === false) {
+        const error = new Error(String(result.error || 'Không thể lưu ngày/đợt ảnh gallery.'));
+        error.code = String(result.code || 'PARTY_GALLERY_CONFLICT');
+        error.details = result;
+        throw error;
+    }
+    return result || { success: true };
+}
+
 function deserializeLikedImages(likedImages) {
     return Object.fromEntries(Object.entries(likedImages).map(([folderId, files]) => [
         folderId,
@@ -2084,64 +2128,101 @@ app.post('/api/internal/cleanup-thumbnails', async (req, res) => {
 
 // Gallery giao ảnh tiệc/PSC độc lập. Ảnh được đọc trực tiếp từ thư mục Drive
 // đã chọn; không tạo ORIGINAL/CHECK và không đi qua luồng chọn ảnh.
-app.post('/api/party-gallery', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/party-gallery', asyncRoute(async (req, res) => {
     const driveFolderId = normalizeDriveFolderId(
         typeof req.body?.driveFolderId === 'string' ? req.body.driveFolderId : (typeof req.body?.folderId === 'string' ? req.body.folderId : ''),
         ''
     );
     const folderId = typeof req.body?.galleryId === 'string' && req.body.galleryId.trim() ? req.body.galleryId.trim() : driveFolderId;
     if (!driveFolderId) return res.status(400).json({ success: false, error: 'Thiếu thư mục Google Drive.' });
-    // Creating a new gallery does not have a token yet. Reusing an existing
-    // gallery id, however, is an update and must not overwrite its settings
-    // without the album's management token.
-    if (Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId)) {
-        if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
-    } else if (!(await requireDriveCreationProof(req, res))) {
-        return;
-    }
-    const folderName = String(req.body?.folderName || req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
-    const galleryName = String(req.body?.galleryName || folderName).trim() || folderName;
-    const sectionDriveFolderId = normalizeDriveFolderId(req.body?.sectionDriveFolderId, driveFolderId) || driveFolderId;
-    const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
-    const requestedSlug = slugifyAlbumName(req.body?.publicSlug || folderName);
-    // The slug contains the customer Drive root suffix, so it can be recovered
-    // from Drive even if the local/Firebase mapping is unavailable.
-    const driveTail = String(driveFolderId).slice(-6);
-    const publicSlug = canonicalPublicSlug(requestedSlug.endsWith(`-${canonicalPublicSlug(driveTail)}`) ? requestedSlug : `${requestedSlug}-${driveTail}`);
-    const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
-    const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
-    const sectionName = String(req.body?.sectionName || '').trim();
-    const managementToken = createManagementToken();
-    albumSettingsDatabase[folderId] = {
-        ...(albumSettingsDatabase[folderId] || {}),
-        isEnabled: true,
-        text: 'ẢNH TIỆC',
-        maxSelections: 0,
-        publicSlug,
-        clientName: folderName,
-        displayName: galleryName,
-        originalFolderId: driveFolderId,
-        driveFolderName: folderName,
-        gallerySections: [{ id: sectionDriveFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionDriveFolderId, createdAt }],
-        studioName,
-        galleryType: 'party',
-        partyGallery: true,
-        checkReady: false,
-        checkVersion: 0,
-        workflowStatus: 'completed',
-        finalizedAt: createdAt,
-        expiresAt,
-        expiresDays,
-        paymentStatus: req.body?.paymentStatus || 'unpaid',
-        paymentAmount: Number(req.body?.paymentAmount) || 0,
-        managementToken
-    };
-    finalizedDatabase[folderId] = true;
-    await persistState(folderId);
-    res.json({ success: true, folderId, driveFolderId, publicSlug, managementToken, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlug}`, expiresAt, expiresDays });
-});
+    // The gallery id is stable across upload retries. Serialize this route by
+    // that id, and hydrate only that album; never replace the process-wide
+    // snapshot with a full-table read while another section is being added.
+    return withAlbumMutationLock(folderId, async () => {
+        try {
+            await loadAlbumStateForMutation(folderId);
+        } catch (error) {
+            logStructuredEvent('party_gallery.state_load_error', { requestId: req.requestId, folderId, message: error.message });
+            return res.status(503).json({ success: false, code: 'PERSISTENT_STATE_UNAVAILABLE', requestId: req.requestId, error: 'Kho dữ liệu đang phản hồi chậm. Hãy thử lại sau ít giây.' });
+        }
+        // Creating a new gallery does not have a token yet. Reusing an
+        // existing gallery id is an update and must be authenticated.
+        if (Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId)) {
+            if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
+        } else if (!(await requireDriveCreationProof(req, res))) {
+            return;
+        }
+        const folderName = String(req.body?.folderName || req.body?.galleryName || 'Ảnh tiệc').trim() || 'Ảnh tiệc';
+        const galleryName = String(req.body?.galleryName || folderName).trim() || folderName;
+        const sectionDriveFolderId = normalizeDriveFolderId(req.body?.sectionDriveFolderId, driveFolderId) || driveFolderId;
+        const sectionName = String(req.body?.sectionName || '').trim();
+        const studioName = String(req.body?.studioName || 'Finder').trim().toUpperCase() || 'FINDER';
+        const requestedSlug = slugifyAlbumName(req.body?.publicSlug || folderName);
+        // The slug contains the customer Drive root suffix, so it can be recovered
+        // from Drive even if the local/Firebase mapping is unavailable.
+        const driveTail = String(driveFolderId).slice(-6);
+        const publicSlug = canonicalPublicSlug(requestedSlug.endsWith(`-${canonicalPublicSlug(driveTail)}`) ? requestedSlug : `${requestedSlug}-${driveTail}`);
+        const expiresDays = Math.min(3650, Math.max(1, Number(req.body?.expiresDays) || 60));
+        const createdAt = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + expiresDays * 86400000).toISOString();
+        const section = { id: sectionDriveFolderId, name: sectionName || 'Tất cả', driveFolderId: sectionDriveFolderId, createdAt };
+        const existing = albumSettingsDatabase[folderId] || {};
+        // Preserve a token and payment metadata when a desktop retry reuses an
+        // existing gallery id. The RPC merges these fields under a row lock.
+        const managementToken = existing.managementToken || createManagementToken();
+        const settingsPatch = {
+            isEnabled: true,
+            text: 'ẢNH TIỆC',
+            maxSelections: 0,
+            publicSlug,
+            clientName: folderName,
+            displayName: galleryName,
+            originalFolderId: driveFolderId,
+            driveFolderName: folderName,
+            studioName,
+            galleryType: 'party',
+            partyGallery: true,
+            checkReady: false,
+            checkVersion: 0,
+            workflowStatus: 'completed',
+            finalizedAt: createdAt,
+            expiresAt,
+            expiresDays,
+            paymentStatus: req.body?.paymentStatus ?? existing.paymentStatus ?? 'unpaid',
+            paymentAmount: Number(req.body?.paymentAmount ?? existing.paymentAmount) || 0,
+            paymentTotal: Number(req.body?.paymentTotal ?? existing.paymentTotal ?? req.body?.paymentAmount) || 0,
+            paymentDeposit: Number(req.body?.paymentDeposit ?? existing.paymentDeposit) || 0,
+            paymentPaid: Number(req.body?.paymentPaid ?? existing.paymentPaid) || 0,
+            paymentBalance: Number(req.body?.paymentBalance ?? existing.paymentBalance) || 0,
+            managementToken
+        };
+        let publicSlugResult = publicSlug;
+        if (isSupabaseConfigured()) {
+            const persisted = await persistSupabasePartyGalleryAtomically(folderId, {
+                publicSlug,
+                driveFolderId,
+                originalFolderId: driveFolderId,
+                settings: settingsPatch,
+                section,
+                isFinalized: true,
+                workflowStatus: 'completed'
+            });
+            const persistedSettings = persisted?.settings && typeof persisted.settings === 'object'
+                ? persisted.settings
+                : { ...existing, ...settingsPatch, gallerySections: [...(Array.isArray(existing.gallerySections) ? existing.gallerySections : []), section] };
+            albumSettingsDatabase[folderId] = persistedSettings;
+            finalizedDatabase[folderId] = true;
+            publicSlugResult = persisted?.publicSlug || persistedSettings.publicSlug || publicSlug;
+        } else {
+            const existingSections = Array.isArray(existing.gallerySections) ? existing.gallerySections : [];
+            const gallerySections = existingSections.filter(item => item?.driveFolderId !== sectionDriveFolderId).concat(section);
+            albumSettingsDatabase[folderId] = { ...existing, ...settingsPatch, gallerySections };
+            finalizedDatabase[folderId] = true;
+            await persistState(folderId);
+        }
+        return res.json({ success: true, folderId, driveFolderId, publicSlug: publicSlugResult, managementToken: albumSettingsDatabase[folderId]?.managementToken || managementToken, link: `https://${process.env.ONLINE_DOMAIN || 'finder-swart-pi.vercel.app'}/a/${publicSlugResult}`, expiresAt, expiresDays });
+    });
+}));
 
 // Thêm một ngày/đợt ảnh vào gallery tiệc hiện tại. Link publicSlug giữ nguyên;
 // chỉ bổ sung thư mục Drive và một mục hiển thị mới cho trang khách.
@@ -2154,11 +2235,20 @@ app.post('/api/party-gallery/:folderId/sections', albumMutationRoute(async (req,
     const driveFolderId = normalizeDriveFolderId(req.body?.driveFolderId, '');
     const name = String(req.body?.sectionName || '').trim();
     if (!driveFolderId || !name) return res.status(400).json({ success: false, error: 'Thiếu tên ngày hoặc thư mục Drive.' });
-    const sections = Array.isArray(settings.gallerySections) ? settings.gallerySections : [{ id: settings.originalFolderId || folderId, name: 'Ngày 1', driveFolderId: settings.originalFolderId || folderId }];
-    if (!sections.some(section => section.driveFolderId === driveFolderId)) sections.push({ id: driveFolderId, name, driveFolderId, createdAt: new Date().toISOString() });
-    settings.gallerySections = sections;
-    await persistState(folderId);
-    res.json({ success: true, gallerySections: sections, publicSlug: settings.publicSlug });
+    const section = { id: driveFolderId, name, driveFolderId, createdAt: new Date().toISOString() };
+    let sections;
+    if (isSupabaseConfigured()) {
+        const persisted = await persistSupabasePartySectionAtomically(folderId, section);
+        sections = Array.isArray(persisted?.gallerySections) ? persisted.gallerySections : [];
+        settings.gallerySections = sections;
+        if (persisted?.settings && typeof persisted.settings === 'object') albumSettingsDatabase[folderId] = persisted.settings;
+    } else {
+        sections = Array.isArray(settings.gallerySections) ? settings.gallerySections : [{ id: settings.originalFolderId || folderId, name: 'Ngày 1', driveFolderId: settings.originalFolderId || folderId }];
+        if (!sections.some(item => item.driveFolderId === driveFolderId)) sections.push(section);
+        settings.gallerySections = sections;
+        await persistState(folderId);
+    }
+    res.json({ success: true, gallerySections: sections, publicSlug: albumSettingsDatabase[folderId]?.publicSlug || settings.publicSlug });
 }));
 
 app.get('/api/album/:folderId/settings', async (req, res) => {
