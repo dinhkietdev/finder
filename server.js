@@ -19,6 +19,9 @@ app.disable('x-powered-by');
 // itself. Keep the album-creation endpoint from leaving the HTTP connection
 // open when a transition or persistence step throws unexpectedly.
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+const albumMutationRoute = (handler) => asyncRoute((req, res, next) =>
+    withAlbumMutationLock(req.params.folderId, () => handler(req, res, next))
+);
 const REQUIRE_SUPABASE_STORAGE = process.env.FINDER_REQUIRE_SUPABASE === '1'
     || process.env.NODE_ENV === 'production';
 const REQUEST_ID_HEADER = 'x-request-id';
@@ -179,6 +182,10 @@ let firebaseMigrationPromise = null;
 let supabaseUrl = '';
 let supabaseServiceKey = '';
 let supabaseLoadPromise = null;
+// Serialize album mutations that land on the same Vercel instance. Supabase
+// RPCs below provide the cross-instance atomic merge; this queue also keeps
+// the in-memory snapshot coherent for requests handled by one instance.
+const albumMutationQueues = new Map();
 const SUPABASE_REQUEST_TIMEOUT_MS = Math.max(3000, Math.min(30000, Number(process.env.FINDER_SUPABASE_REQUEST_TIMEOUT_MS) || 10000));
 // Control-plane requests must leave room for the remaining album-creation
 // stages (Drive proof and durable writes) inside the desktop's 12s deadline.
@@ -201,6 +208,22 @@ function promiseWithTimeout(task, timeoutMs, message, code = 'REQUEST_TIMEOUT') 
 
 function isSupabaseConfigured() {
     return Boolean(supabaseUrl && supabaseServiceKey);
+}
+
+function withAlbumMutationLock(folderId, task) {
+    const key = String(folderId || '');
+    const previous = albumMutationQueues.get(key) || Promise.resolve();
+    const queued = previous.catch(() => {}).then(task);
+    const tracked = queued.finally(() => {
+        if (albumMutationQueues.get(key) === tracked) albumMutationQueues.delete(key);
+    });
+    albumMutationQueues.set(key, tracked);
+    return tracked;
+}
+
+async function loadAlbumStateForMutation(folderId) {
+    if (isSupabaseConfigured()) return loadSupabaseAlbumState(folderId);
+    return loadPersistentState();
 }
 
 // OAuth callbacks may land on a different serverless instance than the one
@@ -953,11 +976,21 @@ async function persistAlbumSettings(folderId) {
 async function loadSupabaseAlbumState(folderId) {
     if (!isSupabaseConfigured()) return false;
     const encodedId = encodeURIComponent(String(folderId));
-    const rows = await supabaseRequest(`albums?id=eq.${encodedId}&select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at&limit=1`, {
+    const rows = await supabaseRequest(`albums?id=eq.${encodedId}&select=id,public_slug,gallery_type,settings,state,history,is_finalized,workflow_status,updated_at&limit=1`, {
         timeoutMs: ALBUM_STATE_REQUEST_TIMEOUT_MS
     });
     const row = Array.isArray(rows) ? rows[0] : null;
-    if (!row) return false;
+    if (!row) {
+        // Do not let a stale warm-instance snapshot make a deleted/unknown
+        // album appear to exist after a targeted lookup returns no row.
+        delete likedImagesDatabase[String(folderId)];
+        delete checkNotesDatabase[String(folderId)];
+        delete albumSettingsDatabase[String(folderId)];
+        delete finalizedDatabase[String(folderId)];
+        delete albumCacheDatabase[String(folderId)];
+        delete albumCheckCacheDatabase[String(folderId)];
+        return false;
+    }
     const id = String(row.id || folderId);
     const partition = row.state && typeof row.state === 'object' ? row.state : {};
     const rowSettings = row.settings && typeof row.settings === 'object' ? { ...row.settings } : {};
@@ -976,7 +1009,7 @@ async function loadPersistentState() {
     if (isSupabaseConfigured()) {
         if (supabaseLoadPromise) return supabaseLoadPromise;
         supabaseLoadPromise = (async () => {
-            const rows = await supabaseRequest('albums?select=id,public_slug,gallery_type,settings,state,is_finalized,workflow_status,updated_at');
+            const rows = await supabaseRequest('albums?select=id,public_slug,gallery_type,settings,state,history,is_finalized,workflow_status,updated_at');
             const liked = {}, notes = {}, settings = {}, finalized = {}, banned = [];
             const history = {};
             for (const row of Array.isArray(rows) ? rows : []) {
@@ -1056,6 +1089,47 @@ function serializeLikedImages(likedImages) {
             value
         ]))
     ]));
+}
+
+function supabaseFileStorageKey(fileName) {
+    return `file_${Buffer.from(String(fileName), 'utf8').toString('base64url')}`;
+}
+
+async function persistSupabaseLikeAtomically(folderId, fileName, value) {
+    const result = await supabaseRequest('rpc/toggle_album_like', {
+        method: 'POST',
+        body: JSON.stringify({
+            p_album_id: String(folderId),
+            p_file_key: supabaseFileStorageKey(fileName),
+            p_value: value
+        })
+    });
+    if (result && result.success === false) {
+        const error = new Error(String(result.error || 'Không thể lưu lựa chọn ảnh.'));
+        error.code = String(result.code || 'ALBUM_STATE_CONFLICT');
+        error.details = result;
+        throw error;
+    }
+    return result || { success: true };
+}
+
+async function persistSupabaseCheckNoteAtomically(folderId, fileName, note, settingsPatch) {
+    const result = await supabaseRequest('rpc/merge_album_check_note', {
+        method: 'POST',
+        body: JSON.stringify({
+            p_album_id: String(folderId),
+            p_file_key: supabaseFileStorageKey(fileName),
+            p_note: String(note || ''),
+            p_settings_patch: stripUndefined(settingsPatch || {})
+        })
+    });
+    if (result && result.success === false) {
+        const error = new Error(String(result.error || 'Không thể lưu ghi chú.'));
+        error.code = String(result.code || 'ALBUM_STATE_CONFLICT');
+        error.details = result;
+        throw error;
+    }
+    return result || { success: true };
 }
 
 function deserializeLikedImages(likedImages) {
@@ -1766,7 +1840,7 @@ async function requireDriveCreationProof(req, res) {
     }
 }
 
-app.post('/api/album/:folderId/settings', asyncRoute(async (req, res) => {
+app.post('/api/album/:folderId/settings', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
     try {
         // A first upload has a new Drive folder id. Read only that id instead
@@ -1928,9 +2002,9 @@ app.post('/api/album/:folderId/settings', asyncRoute(async (req, res) => {
 
 // Desktop history is cached locally for responsiveness, but its durable copy
 // now lives in Supabase instead of the legacy Firebase studioAlbumHistory node.
-app.post('/api/album/:folderId/manager-history', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/manager-history', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     if (!isSupabaseConfigured()) return res.status(503).json({ success: false, error: 'Supabase chưa được cấu hình.' });
     const incoming = req.body?.history;
@@ -1967,7 +2041,7 @@ app.post('/api/album/:folderId/manager-history', async (req, res) => {
     if (isSupabaseConfigured()) await persistSupabaseAlbumHistory(folderId);
     else await persistState(folderId);
     res.json({ success: true });
-});
+}));
 
 function cronRequestAuthorized(req) {
     const secret = String(process.env.CRON_SECRET || process.env.FINDER_CRON_SECRET || '').trim();
@@ -2069,9 +2143,9 @@ app.post('/api/party-gallery', async (req, res) => {
 
 // Thêm một ngày/đợt ảnh vào gallery tiệc hiện tại. Link publicSlug giữ nguyên;
 // chỉ bổ sung thư mục Drive và một mục hiển thị mới cho trang khách.
-app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/party-gallery/:folderId/sections', albumMutationRoute(async (req, res) => {
     const folderId = req.params.folderId;
+    await loadAlbumStateForMutation(folderId);
     const settings = albumSettingsDatabase[folderId];
     if (!settings || settings.galleryType !== 'party') return res.status(404).json({ success: false, error: 'Không tìm thấy gallery tiệc.' });
     if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
@@ -2083,11 +2157,11 @@ app.post('/api/party-gallery/:folderId/sections', async (req, res) => {
     settings.gallerySections = sections;
     await persistState(folderId);
     res.json({ success: true, gallerySections: sections, publicSlug: settings.publicSlug });
-});
+}));
 
 app.get('/api/album/:folderId/settings', async (req, res) => {
-    await loadPersistentState();
     const folderId = req.params.folderId;
+    await loadAlbumStateForMutation(folderId);
     if (albumExists(folderId)) issueGuestCapability(res, folderId);
     res.json({
         success: true,
@@ -2096,9 +2170,9 @@ app.get('/api/album/:folderId/settings', async (req, res) => {
     });
 });
 
-app.post('/api/album/:folderId/check', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/check', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!(await requireAlbumManagementOrDriveBootstrap(req, res, folderId))) return;
     if (!finalizedDatabase[folderId]) {
         return res.status(409).json({ success: false, code: 'SELECTION_NOT_CONFIRMED', error: 'Khách chưa chốt lựa chọn. Hãy hoàn tất bước chọn ảnh trước khi upload CHECK.' });
@@ -2124,11 +2198,11 @@ app.post('/api/album/:folderId/check', async (req, res) => {
     delete albumCheckCacheDatabase[folderId];
     await persistState(folderId);
     res.json({ success: true, checkReady: true, checkFolderId });
-});
+}));
 
-app.post('/api/album/:folderId/check/confirm', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/check/confirm', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
     if (!finalizedDatabase[folderId]) return res.status(409).json({ success: false, code: 'SELECTION_NOT_CONFIRMED', error: 'Album chưa được chốt lựa chọn.' });
@@ -2139,11 +2213,11 @@ app.post('/api/album/:folderId/check/confirm', async (req, res) => {
     albumSettingsDatabase[folderId] = completedSettings;
     await persistState(folderId);
     res.json({ success: true, completedAt: completedSettings.checkAcceptedAt, expiresAt: completedSettings.expiresAt, checkVersion: completedSettings.checkVersion || 1 });
-});
+}));
 
-app.post('/api/album/:folderId/finalize', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/finalize', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
     const settings = albumSettingsDatabase[folderId] || {};
@@ -2161,11 +2235,11 @@ app.post('/api/album/:folderId/finalize', async (req, res) => {
     albumSettingsDatabase[folderId] = confirmSelection(settings, selectionConfirmedAt);
     await persistState(folderId);
     res.json({ success: true, workflowStatus: WORKFLOW_STATUS.SELECTION_CONFIRMED, selectionConfirmedAt, isFinalized: true, expiresAt: null });
-});
+}));
 
-app.delete('/api/album/:folderId', async (req, res) => {
-    await loadPersistentState();
+app.delete('/api/album/:folderId', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!requireAlbumManagement(req, res, folderId)) return;
     if (!bannedAlbums.includes(folderId)) bannedAlbums.push(folderId);
     delete albumCacheDatabase[folderId];
@@ -2176,7 +2250,7 @@ app.delete('/api/album/:folderId', async (req, res) => {
     delete finalizedDatabase[folderId];
     await persistState(folderId, { deletePartition: true });
     res.json({ success: true, message: "Album đã bị hủy!" });
-});
+}));
 
 app.delete('/api/album/flush-all/data', async (req, res) => {
     if (process.env.FINDER_ENABLE_DANGER_ZONE !== '1') return res.status(403).json({ success: false, error: 'Tính năng xóa toàn bộ dữ liệu đang bị khóa.' });
@@ -2252,8 +2326,8 @@ app.post('/api/internal/firebase-migration/rollback', async (req, res) => {
 app.get('/api/album/:folderId', async (req, res) => {
     let albumStage = 'load-state';
     try {
-        await loadPersistentState();
         let { folderId } = req.params;
+        await loadAlbumStateForMutation(folderId);
         if (bannedAlbums.includes(folderId)) return res.status(403).json({ success: false, error: "Album đã bị hủy." });
         if (!Object.prototype.hasOwnProperty.call(albumSettingsDatabase, folderId) && !albumCacheDatabase[folderId]) {
             return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', requestId: req.requestId, error: 'Không tìm thấy album.' });
@@ -2724,7 +2798,7 @@ app.get('/api/album/:folderId/image/:fileId', async (req, res) => {
     }
 });
 
-app.post('/api/album/:folderId/drive-token', async (req, res) => {
+app.post('/api/album/:folderId/drive-token', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
     try {
         if (isSupabaseConfigured()) await loadSupabaseAlbumState(folderId);
@@ -2741,16 +2815,16 @@ app.post('/api/album/:folderId/drive-token', async (req, res) => {
     const stored = { ...req.body.tokens, ...(metadata ? { _finderMeta: metadata } : {}) };
     try {
         await persistDriveTokenRecord(folderId, stored);
-        res.json({ success: true, encrypted: true });
+    res.json({ success: true, encrypted: true });
     } catch (error) {
         const code = error.message === 'TOKEN_ENCRYPTION_NOT_CONFIGURED' ? 'TOKEN_ENCRYPTION_NOT_CONFIGURED' : 'DRIVE_TOKEN_STORE_FAILED';
         res.status(503).json({ success: false, code, error: code === 'TOKEN_ENCRYPTION_NOT_CONFIGURED' ? 'Máy chủ chưa cấu hình khóa mã hóa token Drive.' : 'Không thể lưu phiên Google Drive an toàn.' });
     }
-});
+}));
 
-app.post('/api/album/:folderId/toggle-like', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/toggle-like', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
     if (finalizedDatabase[folderId]) return res.status(403).json({ error: "Album đã chốt, không thể thay đổi." }); 
@@ -2758,7 +2832,25 @@ app.post('/api/album/:folderId/toggle-like', async (req, res) => {
     if (!isSafePublicImageName(fileName)) return res.status(400).json({ error: "Tên ảnh không hợp lệ." });
     if (!likedImagesDatabase[folderId]) likedImagesDatabase[folderId] = {};
 
-    // Luôn kiểm tra ở server để không thể vượt giới hạn chỉ bằng cách gọi API trực tiếp.
+    const nextLike = { isLiked: Boolean(isLiked), note: String(note || '') };
+    // Supabase performs the limit check and JSON merge in one row-level
+    // transaction. This prevents two Vercel instances from both reading the
+    // same old selection list and then overwriting each other's choice.
+    if (isSupabaseConfigured()) {
+        try {
+            await persistSupabaseLikeAtomically(folderId, fileName, nextLike);
+        } catch (error) {
+            if (error.code === 'SELECTION_LIMIT_REACHED') {
+                return res.status(400).json({ success: false, code: error.code, error: error.message });
+            }
+            throw error;
+        }
+        likedImagesDatabase[folderId][fileName] = nextLike;
+        return res.json({ success: true });
+    }
+
+    // Local/Firebase compatibility path: the per-album queue above prevents
+    // overlapping writes within the local process.
     const maxSelections = Number(albumSettingsDatabase[folderId]?.maxSelections) || 0;
     const existingLike = likedImagesDatabase[folderId][fileName];
     const wasLiked = typeof existingLike === 'object' ? !!existingLike?.isLiked : !!existingLike;
@@ -2773,36 +2865,49 @@ app.post('/api/album/:folderId/toggle-like', async (req, res) => {
             });
         }
     }
-    likedImagesDatabase[folderId][fileName] = { isLiked, note: note || "" };
+    likedImagesDatabase[folderId][fileName] = nextLike;
     await persistState(folderId);
     res.json({ success: true });
-});
+}));
 
 // Ghi chú hậu kỳ được tách khỏi thao tác chọn ảnh, vì album đã chốt vẫn phải
 // cho khách gửi yêu cầu chỉnh sửa thêm mà không mở lại danh sách lựa chọn.
-app.post('/api/album/:folderId/check-note', async (req, res) => {
-    await loadPersistentState();
+app.post('/api/album/:folderId/check-note', albumMutationRoute(async (req, res) => {
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!requireGuestCapability(req, res, folderId)) return;
     const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim() : '';
     if (!isSafePublicImageName(fileName)) return res.status(400).json({ success: false, error: 'Tên ảnh không hợp lệ.' });
+    const note = String(req.body?.note || '').trim();
+    const settingsPatch = note ? {
+        checkNeedsRevision: true,
+        lastCheckNoteAt: new Date().toISOString(),
+        workflowStatus: 'revision_requested'
+    } : {};
+    if (isSupabaseConfigured()) {
+        await persistSupabaseCheckNoteAtomically(folderId, fileName, note, settingsPatch);
+        if (!checkNotesDatabase[folderId]) checkNotesDatabase[folderId] = {};
+        checkNotesDatabase[folderId][fileName] = note;
+        if (note) {
+            albumSettingsDatabase[folderId] = { ...(albumSettingsDatabase[folderId] || {}), ...settingsPatch };
+        }
+        return res.json({ success: true, note });
+    }
     if (!checkNotesDatabase[folderId]) checkNotesDatabase[folderId] = {};
-    checkNotesDatabase[folderId][fileName] = String(req.body?.note || '').trim();
-    if (checkNotesDatabase[folderId][fileName]) {
+    checkNotesDatabase[folderId][fileName] = note;
+    if (note) {
         const settings = albumSettingsDatabase[folderId] || {};
-        settings.checkNeedsRevision = true;
-        settings.lastCheckNoteAt = new Date().toISOString();
-        settings.workflowStatus = 'revision_requested';
+        Object.assign(settings, settingsPatch);
         albumSettingsDatabase[folderId] = settings;
     }
     await persistState(folderId);
-    res.json({ success: true, note: checkNotesDatabase[folderId][fileName] });
-});
+    res.json({ success: true, note });
+}));
 
 app.get('/api/album/:folderId/liked/all', async (req, res) => {
-    await loadPersistentState();
     const { folderId } = req.params;
+    await loadAlbumStateForMutation(folderId);
     if (!albumExists(folderId)) return res.status(404).json({ success: false, code: 'ALBUM_NOT_FOUND', error: 'Không tìm thấy album.' });
     if (!hasAlbumManagementAccess(req, folderId) && !requireGuestCapability(req, res, folderId, { issueOnGet: true })) return;
     const currentAlbumLikes = likedImagesDatabase[folderId] || {};

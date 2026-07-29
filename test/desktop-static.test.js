@@ -49,7 +49,7 @@ test('explicit limit saves reopen selection even when the value is unchanged', (
   // leave the settings request pending until Desktop's timeout.
   assert.match(source, /reopenSelection: reopenSelectionState/);
   assert.match(source, /reopenSelectionState\(albumSettingsDatabase\[folderId\]\)/);
-  assert.match(source, /app\.post\('\/api\/album\/:folderId\/settings', asyncRoute\(async/);
+  assert.match(source, /app\.post\('\/api\/album\/:folderId\/settings', albumMutationRoute\(async/);
 });
 
 test('confirmed albums use the compact full thumbnail path', () => {
@@ -134,6 +134,24 @@ test('Supabase REST writes abort instead of keeping Vercel functions open', () =
   assert.match(source, /PERSISTENT_STATE_UNAVAILABLE/);
   assert.match(source, /loadSupabaseAlbumState\(folderId\)/);
   assert.match(source, /albums\?id=eq\./);
+});
+
+test('album guest mutations use targeted loading and atomic Supabase merges', () => {
+  const serverSource = fs.readFileSync('server.js', 'utf8');
+  const migration = fs.readFileSync('supabase/migrations/005_atomic_album_mutations.sql', 'utf8');
+  for (const routeName of ['toggle-like', 'check-note']) {
+    const start = serverSource.indexOf(`/api/album/:folderId/${routeName}`);
+    const end = serverSource.indexOf("app.", start + 10);
+    const handler = serverSource.slice(start, end > start ? end : start + 5000);
+    assert.doesNotMatch(handler, /await loadPersistentState\(\)/);
+    assert.match(handler, /loadAlbumStateForMutation\(folderId\)/);
+  }
+  assert.match(serverSource, /withAlbumMutationLock/);
+  assert.match(serverSource, /persistSupabaseLikeAtomically/);
+  assert.match(serverSource, /persistSupabaseCheckNoteAtomically/);
+  assert.match(migration, /create or replace function public\.toggle_album_like/);
+  assert.match(migration, /for update/);
+  assert.match(migration, /create or replace function public\.merge_album_check_note/);
 });
 
 test('interrupted upload sessions can be cancelled without deleting Drive files', () => {
